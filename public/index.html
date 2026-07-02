@@ -105,7 +105,8 @@
       <h2>Inscrição registrada!</h2>
       <p id="t-nome"></p>
       <div class="prot"><small>Seu protocolo</small><b id="t-prot"></b></div>
-      <p>Guarde este número. Em breve a etapa de pagamento da taxa será liberada.</p>
+      <p id="t-msg">Guarde este número.</p>
+      <a id="t-pagar" href="#" target="_blank" style="display:none;text-decoration:none;background:var(--verde);color:#fff;font-family:'Sora';font-weight:700;padding:15px;border-radius:10px;max-width:340px;margin:14px auto 0;">💳 Pagar taxa de inscrição</a>
       <button onclick="location.reload()">Fazer nova inscrição</button>
     </section>
   </main>
@@ -138,6 +139,15 @@
       if (!r.ok) throw new Error(j.erro || 'Não foi possível concluir a inscrição.');
       document.getElementById('t-nome').textContent = j.nome + ' — ' + j.cargo;
       document.getElementById('t-prot').textContent = j.protocolo;
+      const msg = document.getElementById('t-msg'), pagar = document.getElementById('t-pagar');
+      if (j.invoiceUrl) {
+        msg.textContent = 'Sua inscrição só é efetivada após o pagamento da taxa. Você pode pagar por Pix, boleto ou cartão:';
+        pagar.href = j.invoiceUrl; pagar.style.display = 'block';
+      } else if (j.avisoPagamento) {
+        msg.textContent = 'Guarde este número. O link para pagamento da taxa será enviado em instantes.';
+      } else if (j.cobrar === false) {
+        msg.textContent = 'Guarde este número. Sua inscrição foi registrada com sucesso.';
+      }
       form.style.display = 'none';
       document.getElementById('ticket').style.display = 'block';
       window.scrollTo({ top: 0, behavior: 'smooth' });
