@@ -1,0 +1,463 @@
+// ============================================================
+//  SELETRIX — Multi-concursos + inscrições + pagamento (ASAAS)
+//  - Vitrine pública lista concursos abertos
+//  - Cada concurso tem sua página (edital + ficha de inscrição)
+//  - Painel /admin: cria/edita concursos e vê inscritos por concurso
+//  - Pagamento via ASAAS (Pix/boleto/cartão) + webhook
+// ============================================================
+const express = require('express');
+const path = require('path');
+const crypto = require('crypto');
+const { Pool } = require('pg');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+app.use(express.json({ limit: '40mb' })); // PDFs/anexos chegam em base64
+app.use(express.urlencoded({ extended: true, limit: '40mb' }));
+app.use(express.static(path.join(__dirname, '..', 'public')));
+
+// ---- Banco --------------------------------------------------
+const temBanco = !!process.env.DATABASE_URL;
+const pool = temBanco ? new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DB_NO_SSL === '1' ? false : { rejectUnauthorized: false },
+}) : null;
+
+function slugify(s) {
+  return (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'concurso';
+}
+
+async function inicializarBanco() {
+  if (!pool) { console.warn('⚠️  DATABASE_URL não configurada.'); return; }
+  // Tabela de candidatos (já existia)
+  await pool.query(`CREATE TABLE IF NOT EXISTS candidatos (
+    id SERIAL PRIMARY KEY, protocolo TEXT UNIQUE, nome TEXT NOT NULL, cpf TEXT NOT NULL,
+    nascimento DATE, email TEXT, telefone TEXT, sexo TEXT, cargo TEXT NOT NULL,
+    pcd BOOLEAN DEFAULT FALSE, nome_social TEXT, cidade TEXT, uf TEXT,
+    status TEXT DEFAULT 'inscrito', criado_em TIMESTAMPTZ DEFAULT now());`);
+  for (const col of [
+    'asaas_customer_id TEXT', 'asaas_payment_id TEXT', 'invoice_url TEXT', 'concurso_id INT'
+  ]) {
+    await pool.query(`ALTER TABLE candidatos ADD COLUMN IF NOT EXISTS ${col}`);
+  }
+  // remove restrição antiga (cpf,cargo) que atrapalha multi-concurso
+  await pool.query(`ALTER TABLE candidatos DROP CONSTRAINT IF EXISTS candidatos_cpf_cargo_key`).catch(() => {});
+  // Tabela de concursos
+  await pool.query(`CREATE TABLE IF NOT EXISTS concursos (
+    id SERIAL PRIMARY KEY, slug TEXT UNIQUE, titulo TEXT, orgao TEXT, periodo TEXT,
+    taxa TEXT, prova TEXT, vagas TEXT, pdf_url TEXT,
+    taxa_valor NUMERIC DEFAULT 0, dias_vencimento INT DEFAULT 5,
+    cargos TEXT DEFAULT '[]', aberto BOOLEAN DEFAULT TRUE, criado_em TIMESTAMPTZ DEFAULT now());`);
+  // Config antiga (para migração)
+  await pool.query(`CREATE TABLE IF NOT EXISTS config (id INT PRIMARY KEY DEFAULT 1, dados TEXT NOT NULL);`);
+  // PDF do edital guardado no banco (permanente)
+  await pool.query(`CREATE TABLE IF NOT EXISTS edital_pdf (concurso_id INT PRIMARY KEY, filename TEXT, dados BYTEA, tamanho INT, criado_em TIMESTAMPTZ DEFAULT now());`);
+  // Campos extras do concurso (gratuito / títulos)
+  for (const col of ['gratuito BOOLEAN DEFAULT FALSE', 'pede_titulos BOOLEAN DEFAULT FALSE', "tipos_titulos TEXT DEFAULT '[]'"]) {
+    await pool.query(`ALTER TABLE concursos ADD COLUMN IF NOT EXISTS ${col}`);
+  }
+  // Anexos de títulos enviados pelos candidatos
+  await pool.query(`CREATE TABLE IF NOT EXISTS titulos (id SERIAL PRIMARY KEY, candidato_id INT, tipo TEXT, filename TEXT, mime TEXT, dados BYTEA, tamanho INT, criado_em TIMESTAMPTZ DEFAULT now());`);
+  // Login do candidato (CPF + senha) para a Área do Candidato
+  await pool.query(`CREATE TABLE IF NOT EXISTS candidato_login (cpf TEXT PRIMARY KEY, senha_hash TEXT, nome TEXT, criado_em TIMESTAMPTZ DEFAULT now());`);
+
+  // Migração: se não há concursos, cria o primeiro a partir da config antiga
+  const { rows: qc } = await pool.query('SELECT COUNT(*)::int n FROM concursos');
+  if (qc[0].n === 0) {
+    let cfg = { titulo: 'Edital nº 01/2026', orgao: '', periodo: '', taxa: '', prova: '', vagas: '', pdf_url: '', taxa_valor: 0, dias_vencimento: 5, cargos: ['Especialista', 'Mestre'] };
+    const { rows: rc } = await pool.query('SELECT dados FROM config WHERE id=1');
+    if (rc.length) { try { cfg = { ...cfg, ...JSON.parse(rc[0].dados) }; } catch {} }
+    const slug = slugify(cfg.titulo);
+    const ins = await pool.query(
+      `INSERT INTO concursos (slug,titulo,orgao,periodo,taxa,prova,vagas,pdf_url,taxa_valor,dias_vencimento,cargos,aberto)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,TRUE) RETURNING id`,
+      [slug, cfg.titulo, cfg.orgao, cfg.periodo, cfg.taxa, cfg.prova, cfg.vagas, cfg.pdf_url,
+       Number(cfg.taxa_valor) || 0, parseInt(cfg.dias_vencimento) || 5, JSON.stringify(cfg.cargos || [])]);
+    const cid = ins.rows[0].id;
+    await pool.query('UPDATE candidatos SET concurso_id=$1 WHERE concurso_id IS NULL', [cid]);
+    console.log('✅ Migração: concurso inicial criado (id ' + cid + ').');
+  }
+  console.log('✅ Banco pronto (concursos + candidatos).');
+}
+
+function parseConcurso(r) {
+  let cargos = []; try { cargos = JSON.parse(r.cargos || '[]'); } catch {}
+  let tipos = []; try { tipos = JSON.parse(r.tipos_titulos || '[]'); } catch {}
+  return {
+    id: r.id, slug: r.slug, titulo: r.titulo, orgao: r.orgao, periodo: r.periodo, taxa: r.taxa,
+    prova: r.prova, vagas: r.vagas, pdf_url: r.pdf_url, taxa_valor: Number(r.taxa_valor) || 0,
+    dias_vencimento: r.dias_vencimento || 5, cargos, aberto: r.aberto,
+    gratuito: !!r.gratuito, pede_titulos: !!r.pede_titulos, tipos_titulos: tipos,
+  };
+}
+async function lerConcursoPorChave(key) {
+  if (!pool) return null;
+  const numerico = /^\d+$/.test(String(key));
+  const { rows } = await pool.query(
+    `SELECT * FROM concursos WHERE ${numerico ? 'id=$1' : 'slug=$1'} LIMIT 1`, [key]);
+  return rows.length ? parseConcurso(rows[0]) : null;
+}
+
+// ---- ASAAS --------------------------------------------------
+const ASAAS_BASE = process.env.ASAAS_ENV === 'sandbox' ? 'https://sandbox.asaas.com/api/v3' : 'https://api.asaas.com/v3';
+const temAsaas = !!process.env.ASAAS_API_KEY;
+async function asaas(p, method, body) {
+  const r = await fetch(ASAAS_BASE + p, {
+    method, headers: { 'Content-Type': 'application/json', 'access_token': process.env.ASAAS_API_KEY, 'User-Agent': 'Seletrix' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error((j.errors && j.errors[0] && j.errors[0].description) || ('ASAAS HTTP ' + r.status));
+  return j;
+}
+async function criarCobranca(cand, concurso) {
+  const cliente = await asaas('/customers', 'POST', { name: cand.nome, cpfCnpj: cand.cpf, email: cand.email || undefined, mobilePhone: cand.telefone || undefined });
+  const dias = parseInt(concurso.dias_vencimento) || 5;
+  const due = new Date(Date.now() + dias * 86400000).toISOString().slice(0, 10);
+  const base = (process.env.PUBLIC_URL || '').trim();
+  const cobranca = await asaas('/payments', 'POST', {
+    customer: cliente.id, billingType: 'UNDEFINED', value: Number(concurso.taxa_valor),
+    dueDate: due, description: (concurso.titulo || 'Inscrição') + ' — ' + cand.cargo,
+    externalReference: cand.protocolo, callback: base ? { successUrl: base, autoRedirect: false } : undefined,
+  });
+  return { customerId: cliente.id, paymentId: cobranca.id, invoiceUrl: cobranca.invoiceUrl };
+}
+
+// ---- Utilidades --------------------------------------------
+const soDigitos = (s) => (s || '').replace(/\D/g, '');
+function cpfValido(cpf) {
+  cpf = soDigitos(cpf);
+  if (cpf.length !== 11 || /^(\d)\1{10}$/.test(cpf)) return false;
+  const calc = (b) => { let s = 0; for (let i = 0; i < b; i++) s += parseInt(cpf[i]) * (b + 1 - i); const r = (s * 10) % 11; return r === 10 ? 0 : r; };
+  return calc(9) === parseInt(cpf[9]) && calc(10) === parseInt(cpf[10]);
+}
+const emailValido = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e || '');
+function hashSenha(senha) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const dk = crypto.scryptSync(String(senha), salt, 32).toString('hex');
+  return salt + ':' + dk;
+}
+function verificaSenha(senha, armazenado) {
+  try {
+    const [salt, dk] = String(armazenado || '').split(':');
+    if (!salt || !dk) return false;
+    const calc = crypto.scryptSync(String(senha), salt, 32).toString('hex');
+    return crypto.timingSafeEqual(Buffer.from(calc, 'hex'), Buffer.from(dk, 'hex'));
+  } catch { return false; }
+}
+function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+
+// ---- Rotas públicas ----------------------------------------
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas }));
+
+app.get('/api/concursos', async (req, res) => {
+  if (!pool) return res.json({ concursos: [] });
+  const { rows } = await pool.query('SELECT * FROM concursos WHERE aberto=TRUE ORDER BY criado_em DESC');
+  res.json({ concursos: rows.map(parseConcurso).map((c) => ({ slug: c.slug, titulo: c.titulo, orgao: c.orgao, periodo: c.periodo, taxa: c.taxa, vagas: c.vagas, gratuito: c.gratuito })) });
+});
+
+app.get('/api/concurso/:chave', async (req, res) => {
+  const c = await lerConcursoPorChave(req.params.chave);
+  if (!c) return res.status(404).json({ erro: 'Concurso não encontrado.' });
+  res.json(c);
+});
+
+// Serve o PDF do edital (guardado no banco)
+app.get('/edital/:chave.pdf', async (req, res) => {
+  if (!pool) return res.status(503).send('Indisponível.');
+  const c = await lerConcursoPorChave(req.params.chave);
+  if (!c) return res.status(404).send('Concurso não encontrado.');
+  const { rows } = await pool.query('SELECT dados FROM edital_pdf WHERE concurso_id=$1', [c.id]);
+  if (!rows.length || !rows[0].dados) return res.status(404).send('Edital não enviado.');
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', 'inline; filename="edital.pdf"');
+  res.send(rows[0].dados);
+});
+
+app.post('/api/inscricao', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Sistema não conectado ao banco. Tente novamente.' });
+  try {
+    const b = req.body || {};
+    const concurso = await lerConcursoPorChave(b.concurso || '');
+    if (!concurso) return res.status(400).json({ erro: 'Concurso inválido.' });
+    if (!concurso.aberto) return res.status(400).json({ erro: 'As inscrições para este concurso estão encerradas.' });
+
+    const nome = (b.nome || '').trim(), cpf = soDigitos(b.cpf), cargo = (b.cargo || '').trim();
+    const email = (b.email || '').trim(), telefone = soDigitos(b.telefone);
+    if (nome.length < 3) return res.status(400).json({ erro: 'Informe o nome completo.' });
+    if (!cpfValido(cpf)) return res.status(400).json({ erro: 'CPF inválido. Confira os números.' });
+    if (!cargo) return res.status(400).json({ erro: 'Selecione o cargo desejado.' });
+    if (email && !emailValido(email)) return res.status(400).json({ erro: 'E-mail inválido.' });
+    if (telefone && telefone.length < 10) return res.status(400).json({ erro: 'Telefone/WhatsApp inválido.' });
+
+    const dup = await pool.query('SELECT protocolo FROM candidatos WHERE cpf=$1 AND concurso_id=$2 LIMIT 1', [cpf, concurso.id]);
+    if (dup.rows.length) return res.status(409).json({ erro: 'Este CPF já possui inscrição neste concurso. Protocolo: ' + dup.rows[0].protocolo });
+
+    // Senha de acesso à Área do Candidato (cria na 1ª inscrição; confere nas próximas)
+    const senha = String(b.senha || '');
+    if (senha.length < 4) return res.status(400).json({ erro: 'Crie uma senha de acesso com pelo menos 4 caracteres.' });
+    const lg = await pool.query('SELECT senha_hash FROM candidato_login WHERE cpf=$1', [cpf]);
+    if (lg.rows.length) {
+      if (!verificaSenha(senha, lg.rows[0].senha_hash))
+        return res.status(409).json({ erro: 'Este CPF já tem uma senha cadastrada. Use a mesma senha que você criou na primeira inscrição.' });
+    } else {
+      await pool.query('INSERT INTO candidato_login (cpf,senha_hash,nome) VALUES ($1,$2,$3) ON CONFLICT (cpf) DO NOTHING', [cpf, hashSenha(senha), nome]);
+    }
+
+    const r = await pool.query(
+      `INSERT INTO candidatos (nome,cpf,nascimento,email,telefone,sexo,cargo,pcd,nome_social,cidade,uf,concurso_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+      [nome, cpf, b.nascimento || null, email || null, telefone || null, b.sexo || null, cargo,
+       b.pcd === true || b.pcd === 'on' || b.pcd === 'sim', (b.nome_social || '').trim() || null,
+       (b.cidade || '').trim() || null, (b.uf || '').trim().toUpperCase() || null, concurso.id]);
+    const id = r.rows[0].id;
+    const protocolo = 'SLX2026' + String(id).padStart(5, '0');
+    await pool.query('UPDATE candidatos SET protocolo=$1 WHERE id=$2', [protocolo, id]);
+
+    // Anexos de títulos (se o concurso pedir)
+    if (concurso.pede_titulos && Array.isArray(b.titulos)) {
+      for (const t of b.titulos.slice(0, 5)) {
+        try {
+          let d = String(t.dataBase64 || ''); const v = d.indexOf(','); if (v > -1 && d.slice(0, v).includes('base64')) d = d.slice(v + 1);
+          if (!d) continue;
+          const buf = Buffer.from(d, 'base64');
+          if (buf.length > 5 * 1024 * 1024) continue;
+          const mime = buf.slice(0, 4).toString('latin1') === '%PDF' ? 'application/pdf'
+            : (buf[0] === 0xFF && buf[1] === 0xD8 ? 'image/jpeg'
+              : (buf[0] === 0x89 && buf[1] === 0x50 ? 'image/png' : ''));
+          if (!mime) continue;
+          await pool.query('INSERT INTO titulos (candidato_id,tipo,filename,mime,dados,tamanho) VALUES ($1,$2,$3,$4,$5,$6)',
+            [id, String(t.tipo || '').slice(0, 120), String(t.filename || 'arquivo').slice(0, 200), mime, buf, buf.length]);
+        } catch (e) { console.error('titulo:', e.message); }
+      }
+    }
+
+    const cobrar = temAsaas && !concurso.gratuito && Number(concurso.taxa_valor) > 0;
+    if (!cobrar) return res.json({ ok: true, protocolo, nome, cargo, invoiceUrl: null, cobrar: false });
+    try {
+      const pay = await criarCobranca({ nome, cpf, email, telefone, cargo, protocolo }, concurso);
+      await pool.query('UPDATE candidatos SET status=$1, asaas_customer_id=$2, asaas_payment_id=$3, invoice_url=$4 WHERE id=$5',
+        ['aguardando_pagamento', pay.customerId, pay.paymentId, pay.invoiceUrl, id]);
+      return res.json({ ok: true, protocolo, nome, cargo, invoiceUrl: pay.invoiceUrl, cobrar: true });
+    } catch (e) {
+      console.error('ASAAS falhou:', e.message);
+      await pool.query("UPDATE candidatos SET status='aguardando_pagamento' WHERE id=$1", [id]);
+      return res.json({ ok: true, protocolo, nome, cargo, invoiceUrl: null, cobrar: true, avisoPagamento: true });
+    }
+  } catch (e) {
+    console.error('Erro inscrição:', e.message);
+    return res.status(500).json({ erro: 'Não foi possível concluir a inscrição. Tente novamente.' });
+  }
+});
+
+// ---- Área do Candidato (login CPF + senha) -----------------
+app.post('/api/candidato/login', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const cpf = soDigitos((req.body || {}).cpf);
+  const senha = String((req.body || {}).senha || '');
+  if (!cpfValido(cpf) || !senha) return res.status(400).json({ erro: 'Informe CPF e senha.' });
+  const lg = await pool.query('SELECT senha_hash, nome FROM candidato_login WHERE cpf=$1', [cpf]);
+  if (!lg.rows.length || !verificaSenha(senha, lg.rows[0].senha_hash))
+    return res.status(401).json({ erro: 'CPF ou senha inválidos, ou você ainda não fez nenhuma inscrição.' });
+  const { rows } = await pool.query(
+    `SELECT k.protocolo, k.cargo, k.status, k.invoice_url, k.criado_em,
+            c.titulo AS concurso, c.gratuito, c.prova
+     FROM candidatos k LEFT JOIN concursos c ON c.id=k.concurso_id
+     WHERE k.cpf=$1 ORDER BY k.id DESC`, [cpf]);
+  res.json({ ok: true, nome: lg.rows[0].nome, inscricoes: rows });
+});
+
+// ---- Webhook ASAAS -----------------------------------------
+app.post('/webhook/asaas', async (req, res) => {
+  const token = process.env.ASAAS_WEBHOOK_TOKEN;
+  if (token && req.headers['asaas-access-token'] !== token) return res.status(401).json({ erro: 'token inválido' });
+  try {
+    const { event, payment } = req.body || {};
+    if (pool && payment && (event === 'PAYMENT_CONFIRMED' || event === 'PAYMENT_RECEIVED')) {
+      await pool.query("UPDATE candidatos SET status='pago' WHERE asaas_payment_id=$1 OR protocolo=$2", [payment.id, payment.externalReference || '']);
+    }
+  } catch (e) { console.error('Webhook erro:', e.message); }
+  res.json({ ok: true });
+});
+
+// ---- Painel (senha) ----------------------------------------
+function exigirSenha(req, res, next) {
+  const senha = process.env.ADMIN_PASSWORD;
+  if (!senha) return res.status(503).send('Defina ADMIN_PASSWORD.');
+  const [, b64] = (req.headers.authorization || '').split(' ');
+  const [, pass] = Buffer.from(b64 || '', 'base64').toString().split(':');
+  if (pass === senha) return next();
+  res.set('WWW-Authenticate', 'Basic realm="Seletrix Admin"');
+  return res.status(401).send('Acesso restrito.');
+}
+
+app.get('/admin/concursos.json', exigirSenha, async (req, res) => {
+  if (!pool) return res.json({ concursos: [] });
+  const { rows } = await pool.query(`
+    SELECT c.*, 
+      (SELECT COUNT(*)::int FROM candidatos k WHERE k.concurso_id=c.id) AS inscritos,
+      (SELECT COUNT(*)::int FROM candidatos k WHERE k.concurso_id=c.id AND k.status='pago') AS pagos
+    FROM concursos c ORDER BY c.criado_em DESC`);
+  res.json({ concursos: rows.map((r) => ({ ...parseConcurso(r), inscritos: r.inscritos, pagos: r.pagos })) });
+});
+
+app.post('/admin/concurso', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  try {
+    const b = req.body || {};
+    const lim = (v) => String(v == null ? '' : v).trim().slice(0, 300);
+    let cargos = (Array.isArray(b.cargos) ? b.cargos : []).map((c) => String(c).trim()).filter(Boolean).slice(0, 100);
+    let tipos = (Array.isArray(b.tipos_titulos) ? b.tipos_titulos : []).map((t) => String(t).trim()).filter(Boolean).slice(0, 50);
+    if (!lim(b.titulo)) return res.status(400).json({ erro: 'Informe o título do concurso.' });
+    if (!cargos.length) return res.status(400).json({ erro: 'Cadastre pelo menos um cargo.' });
+    const bool = (v) => v === true || v === 'true' || v === 'on';
+    const dados = {
+      titulo: lim(b.titulo), orgao: lim(b.orgao), periodo: lim(b.periodo), taxa: lim(b.taxa),
+      prova: lim(b.prova), vagas: lim(b.vagas), pdf_url: lim(b.pdf_url),
+      taxa_valor: Math.max(0, Number(String(b.taxa_valor).replace(',', '.')) || 0),
+      dias_vencimento: Math.max(1, parseInt(b.dias_vencimento) || 5),
+      aberto: bool(b.aberto), gratuito: bool(b.gratuito), pede_titulos: bool(b.pede_titulos),
+      cargos,
+    };
+    // slug único
+    let base = slugify(dados.titulo), slug = base, n = 2;
+    while (true) {
+      const q = await pool.query('SELECT id FROM concursos WHERE slug=$1 AND id<>$2', [slug, b.id || 0]);
+      if (!q.rows.length) break; slug = base + '-' + (n++);
+    }
+    if (b.id) {
+      await pool.query(`UPDATE concursos SET slug=$1,titulo=$2,orgao=$3,periodo=$4,taxa=$5,prova=$6,vagas=$7,pdf_url=$8,taxa_valor=$9,dias_vencimento=$10,cargos=$11,aberto=$12,gratuito=$13,pede_titulos=$14,tipos_titulos=$15 WHERE id=$16`,
+        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), b.id]);
+      return res.json({ ok: true, id: b.id, slug });
+    } else {
+      const ins = await pool.query(`INSERT INTO concursos (slug,titulo,orgao,periodo,taxa,prova,vagas,pdf_url,taxa_valor,dias_vencimento,cargos,aberto,gratuito,pede_titulos,tipos_titulos) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
+        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos)]);
+      return res.json({ ok: true, id: ins.rows[0].id, slug });
+    }
+  } catch (e) { console.error('concurso:', e.message); res.status(500).json({ erro: 'Não foi possível salvar.' }); }
+});
+
+// Upload do PDF do edital (base64) -> guarda no banco e aponta o pdf_url do concurso
+app.post('/admin/concurso/:id/edital', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  try {
+    const id = parseInt(req.params.id);
+    const c = await lerConcursoPorChave(String(id));
+    if (!c) return res.status(404).json({ erro: 'Concurso não encontrado.' });
+    let b64 = String((req.body || {}).dataBase64 || '');
+    const virg = b64.indexOf(',');
+    if (virg > -1 && b64.slice(0, virg).includes('base64')) b64 = b64.slice(virg + 1);
+    if (!b64) return res.status(400).json({ erro: 'Selecione um arquivo PDF.' });
+    const buf = Buffer.from(b64, 'base64');
+    if (buf.length < 4 || buf.slice(0, 4).toString('latin1') !== '%PDF')
+      return res.status(400).json({ erro: 'O arquivo precisa ser um PDF válido.' });
+    if (buf.length > 15 * 1024 * 1024) return res.status(400).json({ erro: 'PDF muito grande (máximo 15 MB).' });
+    await pool.query(
+      `INSERT INTO edital_pdf (concurso_id, filename, dados, tamanho) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (concurso_id) DO UPDATE SET filename=EXCLUDED.filename, dados=EXCLUDED.dados, tamanho=EXCLUDED.tamanho, criado_em=now()`,
+      [id, String((req.body || {}).filename || 'edital.pdf').slice(0, 200), buf, buf.length]);
+    const pdf_url = '/edital/' + c.slug + '.pdf';
+    await pool.query('UPDATE concursos SET pdf_url=$1 WHERE id=$2', [pdf_url, id]);
+    res.json({ ok: true, pdf_url });
+  } catch (e) { console.error('upload edital:', e.message); res.status(500).json({ erro: 'Não foi possível enviar o PDF.' }); }
+});
+
+// Títulos anexados por um candidato (listar + baixar)
+app.get('/admin/inscrito/:id/titulos.json', exigirSenha, async (req, res) => {
+  if (!pool) return res.json({ titulos: [] });
+  const { rows } = await pool.query('SELECT id,tipo,filename,mime,tamanho FROM titulos WHERE candidato_id=$1 ORDER BY id', [req.params.id]);
+  res.json({ titulos: rows });
+});
+app.get('/admin/titulo/:id', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Indisponível.');
+  const { rows } = await pool.query('SELECT filename,mime,dados FROM titulos WHERE id=$1', [req.params.id]);
+  if (!rows.length || !rows[0].dados) return res.status(404).send('Não encontrado.');
+  res.setHeader('Content-Type', rows[0].mime || 'application/octet-stream');
+  res.setHeader('Content-Disposition', 'inline; filename="' + String(rows[0].filename || 'arquivo').replace(/[^\w.\-]/g, '_') + '"');
+  res.send(rows[0].dados);
+});
+
+app.get('/admin/inscritos.json', exigirSenha, async (req, res) => {
+  if (!pool) return res.json({ inscritos: [] });
+  const cid = req.query.concurso;
+  const sel = 'SELECT k.*, c.titulo AS concurso, (SELECT COUNT(*)::int FROM titulos t WHERE t.candidato_id=k.id) AS titulos FROM candidatos k LEFT JOIN concursos c ON c.id=k.concurso_id';
+  const { rows } = cid
+    ? await pool.query(sel + ' WHERE k.concurso_id=$1 ORDER BY k.id DESC', [cid])
+    : await pool.query(sel + ' ORDER BY k.id DESC');
+  res.json({ inscritos: rows });
+});
+
+// Editar dados de uma inscrição (inclui status de pagamento)
+app.post('/admin/inscrito/:id', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  try {
+    const id = parseInt(req.params.id);
+    const b = req.body || {};
+    const nome = (b.nome || '').trim(), cpf = soDigitos(b.cpf), cargo = (b.cargo || '').trim();
+    if (nome.length < 3) return res.status(400).json({ erro: 'Informe o nome completo.' });
+    if (!cpfValido(cpf)) return res.status(400).json({ erro: 'CPF inválido.' });
+    if (!cargo) return res.status(400).json({ erro: 'Informe o cargo.' });
+    const status = ['inscrito', 'aguardando_pagamento', 'pago'].includes(b.status) ? b.status : null;
+    await pool.query(
+      `UPDATE candidatos SET nome=$1,cpf=$2,email=$3,telefone=$4,cargo=$5,cidade=$6,uf=$7,pcd=$8,sexo=$9,nome_social=$10,status=COALESCE($11,status) WHERE id=$12`,
+      [nome, cpf, (b.email || '').trim() || null, soDigitos(b.telefone) || null, cargo,
+       (b.cidade || '').trim() || null, (b.uf || '').trim().toUpperCase() || null,
+       b.pcd === true || b.pcd === 'true' || b.pcd === 'on', b.sexo || null,
+       (b.nome_social || '').trim() || null, status, id]);
+    res.json({ ok: true });
+  } catch (e) { console.error('editar inscrito:', e.message); res.status(500).json({ erro: 'Não foi possível salvar.' }); }
+});
+
+// Excluir uma inscrição (remove também os títulos anexados)
+app.delete('/admin/inscrito/:id', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  try {
+    const id = parseInt(req.params.id);
+    await pool.query('DELETE FROM titulos WHERE candidato_id=$1', [id]);
+    await pool.query('DELETE FROM candidatos WHERE id=$1', [id]);
+    res.json({ ok: true });
+  } catch (e) { console.error('excluir inscrito:', e.message); res.status(500).json({ erro: 'Não foi possível excluir.' }); }
+});
+
+app.get('/admin/inscritos.csv', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  const cid = req.query.concurso;
+  const { rows } = cid
+    ? await pool.query('SELECT k.*, c.titulo AS concurso FROM candidatos k LEFT JOIN concursos c ON c.id=k.concurso_id WHERE k.concurso_id=$1 ORDER BY k.id', [cid])
+    : await pool.query('SELECT k.*, c.titulo AS concurso FROM candidatos k LEFT JOIN concursos c ON c.id=k.concurso_id ORDER BY k.id');
+  const cols = ['protocolo', 'concurso', 'nome', 'cpf', 'nascimento', 'email', 'telefone', 'sexo', 'cargo', 'pcd', 'nome_social', 'cidade', 'uf', 'status', 'invoice_url', 'criado_em'];
+  const cab = ['Protocolo', 'Concurso', 'Nome', 'CPF', 'Nascimento', 'E-mail', 'Telefone', 'Sexo', 'Cargo', 'PcD', 'Nome social', 'Cidade', 'UF', 'Status', 'Link pagamento', 'Inscrito em'];
+  const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+  const linhas = rows.map((r) => cols.map((c) => {
+    if (c === 'pcd') return esc(r[c] ? 'Sim' : 'Não');
+    if (c === 'criado_em') return esc(new Date(r[c]).toLocaleString('pt-BR'));
+    return esc(r[c]);
+  }).join(';'));
+  const csv = '\uFEFF' + [cab.join(';'), ...linhas].join('\r\n');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="inscritos_seletrix.csv"');
+  res.send(csv);
+});
+
+app.post('/admin/cobranca/:id', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  if (!temAsaas) return res.status(400).json({ erro: 'Configure a chave do ASAAS.' });
+  try {
+    const { rows } = await pool.query('SELECT * FROM candidatos WHERE id=$1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ erro: 'Inscrito não encontrado.' });
+    const c = rows[0];
+    const concurso = await lerConcursoPorChave(String(c.concurso_id));
+    if (!concurso || Number(concurso.taxa_valor) <= 0) return res.status(400).json({ erro: 'Defina o valor da taxa do concurso (mín. R$ 5,00).' });
+    const pay = await criarCobranca({ nome: c.nome, cpf: c.cpf, email: c.email, telefone: c.telefone, cargo: c.cargo, protocolo: c.protocolo }, concurso);
+    await pool.query('UPDATE candidatos SET status=$1, asaas_customer_id=$2, asaas_payment_id=$3, invoice_url=$4 WHERE id=$5',
+      ['aguardando_pagamento', pay.customerId, pay.paymentId, pay.invoiceUrl, c.id]);
+    res.json({ ok: true, invoiceUrl: pay.invoiceUrl });
+  } catch (e) { console.error('cobranca:', e.message); res.status(500).json({ erro: e.message }); }
+});
+
+app.get('/admin', exigirSenha, (req, res) => res.send(PAINEL_HTML));
+const PAINEL_HTML = require('./painel.js');
+
+inicializarBanco().catch((e) => console.error('Falha banco:', e.message))
+  .finally(() => app.listen(PORT, () => console.log('🚀 Seletrix na porta ' + PORT + ' | ASAAS: ' + (temAsaas ? ASAAS_BASE : 'não configurado'))));
