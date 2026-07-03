@@ -388,6 +388,38 @@ app.get('/admin/inscritos.json', exigirSenha, async (req, res) => {
   res.json({ inscritos: rows });
 });
 
+// Editar dados de uma inscrição (inclui status de pagamento)
+app.post('/admin/inscrito/:id', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  try {
+    const id = parseInt(req.params.id);
+    const b = req.body || {};
+    const nome = (b.nome || '').trim(), cpf = soDigitos(b.cpf), cargo = (b.cargo || '').trim();
+    if (nome.length < 3) return res.status(400).json({ erro: 'Informe o nome completo.' });
+    if (!cpfValido(cpf)) return res.status(400).json({ erro: 'CPF inválido.' });
+    if (!cargo) return res.status(400).json({ erro: 'Informe o cargo.' });
+    const status = ['inscrito', 'aguardando_pagamento', 'pago'].includes(b.status) ? b.status : null;
+    await pool.query(
+      `UPDATE candidatos SET nome=$1,cpf=$2,email=$3,telefone=$4,cargo=$5,cidade=$6,uf=$7,pcd=$8,sexo=$9,nome_social=$10,status=COALESCE($11,status) WHERE id=$12`,
+      [nome, cpf, (b.email || '').trim() || null, soDigitos(b.telefone) || null, cargo,
+       (b.cidade || '').trim() || null, (b.uf || '').trim().toUpperCase() || null,
+       b.pcd === true || b.pcd === 'true' || b.pcd === 'on', b.sexo || null,
+       (b.nome_social || '').trim() || null, status, id]);
+    res.json({ ok: true });
+  } catch (e) { console.error('editar inscrito:', e.message); res.status(500).json({ erro: 'Não foi possível salvar.' }); }
+});
+
+// Excluir uma inscrição (remove também os títulos anexados)
+app.delete('/admin/inscrito/:id', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  try {
+    const id = parseInt(req.params.id);
+    await pool.query('DELETE FROM titulos WHERE candidato_id=$1', [id]);
+    await pool.query('DELETE FROM candidatos WHERE id=$1', [id]);
+    res.json({ ok: true });
+  } catch (e) { console.error('excluir inscrito:', e.message); res.status(500).json({ erro: 'Não foi possível excluir.' }); }
+});
+
 app.get('/admin/inscritos.csv', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).send('Banco não configurado.');
   const cid = req.query.concurso;
