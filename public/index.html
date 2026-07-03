@@ -3,63 +3,158 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Concursos abertos — Seletrix</title>
+<title>Seletrix — Concursos Públicos e Processos Seletivos</title>
+<meta name="description" content="Inscrições online para concursos públicos e processos seletivos. Seguras, transparentes e organizadas pela Seletrix.">
+<link rel="icon" href="/logo.png" type="image/png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  :root{--tinta:#0f3a4f;--tinta2:#0b2a3a;--aco:#2e6f8e;--ambar:#e8a23d;--verde:#1b8a5a;--papel:#f5f7f8;--branco:#fff;--linha:#dde6ea;--txt:#1b2a32;--suave:#5e7280}
+  :root{
+    --navy:#0b3a5e; --navy2:#0a2f4d; --azul:#12558a; --azul-claro:#2f7bb8;
+    --ouro:#c8a94b; --verde:#1f9d5b; --verde-bg:#e7f6ee;
+    --papel:#eef2f6; --branco:#ffffff; --linha:#dbe4ec;
+    --txt:#16242f; --suave:#5b7183; --sombra:0 10px 30px rgba(11,58,94,.08);
+  }
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:'Inter',-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--papel);color:var(--txt);line-height:1.5}
-  h1,h2,h3{font-family:'Sora',sans-serif}
-  a{color:var(--aco)}
-  header.topo{background:linear-gradient(135deg,var(--tinta),var(--tinta2));color:#fff;padding:30px 20px}
-  .topo .marca{font-family:'Sora';font-weight:700;font-size:1.35rem;letter-spacing:.3px}
-  .topo .sub{opacity:.85;font-size:.95rem;margin-top:4px}
-  .container{max-width:900px;margin:0 auto;padding:26px 16px 60px}
-  .container>h2{font-size:1.15rem;margin-bottom:4px}
-  .container>.leg{color:var(--suave);font-size:.92rem;margin-bottom:20px}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-  @media(max-width:640px){.grid{grid-template-columns:1fr}}
-  .conc{background:var(--branco);border:1px solid var(--linha);border-radius:14px;padding:20px;display:flex;flex-direction:column}
-  .conc .eyebrow{font-size:.7rem;letter-spacing:.14em;text-transform:uppercase;color:var(--ambar);font-weight:600}
-  .conc h3{font-size:1.1rem;margin:6px 0 2px}
-  .conc .orgao{color:var(--suave);font-size:.9rem;margin-bottom:12px}
-  .conc dl{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:.88rem;margin-bottom:16px}
-  .conc dt{color:var(--suave)}
-  .conc dd{font-weight:600;text-align:right}
-  .conc a.entrar{margin-top:auto;text-align:center;background:var(--verde);color:#fff;text-decoration:none;font-family:'Sora';font-weight:700;padding:13px;border-radius:10px}
-  .vazio{background:var(--branco);border:1px solid var(--linha);border-radius:14px;padding:40px 20px;text-align:center;color:var(--suave)}
+  html{scroll-behavior:smooth}
+  body{font-family:'Inter',-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--papel);color:var(--txt);line-height:1.55}
+  h1,h2,h3,.disp{font-family:'Sora',sans-serif;letter-spacing:-.01em}
+  a{color:var(--azul)}
+
+  /* faixa superior fina (detalhe institucional) */
+  .faixa{height:4px;background:linear-gradient(90deg,var(--navy),var(--azul) 55%,var(--ouro))}
+
+  /* barra de navegação */
+  .topbar{background:var(--branco);border-bottom:1px solid var(--linha)}
+  .topbar-in{max-width:1080px;margin:0 auto;padding:14px 20px;display:flex;align-items:center;justify-content:space-between}
+  .brand{display:flex;align-items:center;gap:11px}
+  .brand .emblema{height:42px;width:auto;flex:none;object-fit:contain}
+  .brand .nome{font-family:'Sora';font-weight:800;font-size:1.25rem;color:var(--navy);letter-spacing:-.02em}
+  .brand .sub{font-size:.7rem;color:var(--suave);letter-spacing:.06em;text-transform:uppercase;margin-top:-2px}
+  .area-link{display:inline-flex;align-items:center;gap:7px;background:var(--papel);border:1px solid var(--linha);color:var(--navy);text-decoration:none;font-weight:600;font-size:.9rem;padding:9px 16px;border-radius:9px;transition:.15s}
+  .area-link:hover{background:#e3ebf2}
+
+  /* herói institucional */
+  .hero{position:relative;background:linear-gradient(135deg,var(--navy),var(--navy2));color:#fff;overflow:hidden}
+  .hero::after{content:"";position:absolute;inset:0;opacity:.5;
+    background-image:radial-gradient(circle at 1px 1px, rgba(255,255,255,.10) 1px, transparent 0);background-size:22px 22px}
+  .hero-in{position:relative;max-width:1080px;margin:0 auto;padding:56px 20px 60px;text-align:center}
+  .hero .pill{display:inline-flex;align-items:center;gap:8px;background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.18);
+    padding:7px 16px;border-radius:999px;font-size:.82rem;font-weight:600;letter-spacing:.02em;margin-bottom:22px}
+  .hero .pill .dot{width:8px;height:8px;border-radius:50%;background:var(--ouro)}
+  .hero h1{font-size:2.35rem;font-weight:800;line-height:1.12;max-width:760px;margin:0 auto}
+  .hero p{margin:16px auto 0;max-width:560px;font-size:1.08rem;opacity:.9}
+  @media(max-width:620px){.hero h1{font-size:1.75rem}.hero-in{padding:42px 18px 46px}}
+
+  /* conteúdo */
+  .wrap{max-width:1080px;margin:0 auto;padding:44px 20px 30px}
+  .section-head{margin-bottom:22px}
+  .section-head h2{font-size:1.4rem;color:var(--navy);display:flex;align-items:center;gap:12px}
+  .section-head h2::before{content:"";width:5px;height:22px;background:var(--ouro);border-radius:3px;display:inline-block}
+  .section-head p{color:var(--suave);margin-top:6px;font-size:.98rem}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:20px}
+  @media(max-width:520px){.grid{grid-template-columns:1fr}}
+
+  .card{background:var(--branco);border:1px solid var(--linha);border-radius:16px;box-shadow:var(--sombra);
+    display:flex;flex-direction:column;overflow:hidden;transition:transform .16s, box-shadow .16s}
+  .card:hover{transform:translateY(-3px);box-shadow:0 16px 40px rgba(11,58,94,.14)}
+  .card-bar{height:6px;background:linear-gradient(90deg,var(--azul),var(--azul-claro))}
+  .card-body{padding:22px;display:flex;flex-direction:column;flex:1}
+  .card .orgao{font-size:.72rem;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--azul)}
+  .card h3{font-size:1.18rem;color:var(--navy);margin:8px 0 12px;line-height:1.25}
+  .badge{align-self:flex-start;display:inline-flex;align-items:center;gap:7px;background:var(--verde-bg);color:#0f6b41;
+    font-size:.76rem;font-weight:700;padding:5px 12px;border-radius:999px;margin-bottom:16px}
+  .badge .dot{width:7px;height:7px;border-radius:50%;background:var(--verde)}
+  .info{list-style:none;border-top:1px solid var(--linha);margin-top:auto}
+  .info li{display:flex;justify-content:space-between;gap:14px;padding:10px 0;border-bottom:1px solid var(--linha);font-size:.9rem}
+  .info li span{color:var(--suave)}
+  .info li strong{color:var(--txt);font-weight:600;text-align:right}
+  .cta{margin-top:18px;display:inline-flex;align-items:center;justify-content:center;gap:8px;
+    background:var(--navy);color:#fff;text-decoration:none;font-family:'Sora';font-weight:700;font-size:.96rem;
+    padding:13px 18px;border-radius:11px;transition:.15s}
+  .cta:hover{background:var(--azul)}
+
+  .empty{background:var(--branco);border:1px dashed var(--linha);border-radius:16px;padding:52px 24px;text-align:center;color:var(--suave)}
+  .empty .ico{font-size:34px;opacity:.5;margin-bottom:10px}
+
+  footer{border-top:1px solid var(--linha);background:var(--branco);margin-top:36px}
+  .foot-in{max-width:1080px;margin:0 auto;padding:26px 20px;display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between;align-items:center}
+  .foot-in .fb{display:flex;align-items:center;gap:10px}
+  .foot-in .fb .nome{font-family:'Sora';font-weight:800;color:var(--navy)}
+  .foot-in .fmeta{font-size:.82rem;color:var(--suave)}
+  .foot-in a{color:var(--azul);text-decoration:none;font-weight:600;font-size:.9rem}
 </style>
 </head>
 <body>
-<header class="topo">
-  <div class="marca">Seletrix</div>
-  <div class="sub">Organização de Processos Seletivos &nbsp;·&nbsp; <a href="/candidato.html" style="color:#cfe3ef">Área do Candidato →</a></div>
+<div class="faixa"></div>
+
+<header class="topbar">
+  <div class="topbar-in">
+    <div class="brand">
+      <img class="emblema" src="/logo.png" alt="Seletrix — Organização e Serviços" width="42" height="42">
+      <div>
+        <div class="nome">Seletrix</div>
+        <div class="sub">Organização e Serviços</div>
+      </div>
+    </div>
+    <a class="area-link" href="/candidato.html">👤 Área do Candidato</a>
+  </div>
 </header>
-<div class="container">
-  <h2>Concursos com inscrições abertas</h2>
-  <p class="leg">Escolha o concurso que deseja participar para ver o edital e se inscrever.</p>
+
+<section class="hero">
+  <div class="hero-in">
+    <div class="pill"><span class="dot"></span> Inscrições online, seguras e transparentes</div>
+    <h1>Concursos Públicos e Processos Seletivos</h1>
+    <p>Realize sua inscrição de forma simples e acompanhe todas as etapas em um só lugar.</p>
+  </div>
+</section>
+
+<main class="wrap">
+  <div class="section-head">
+    <h2>Concursos com inscrições abertas</h2>
+    <p>Selecione um concurso para ver o edital completo e realizar sua inscrição.</p>
+  </div>
   <div class="grid" id="grid"></div>
-  <div class="vazio" id="vazio" style="display:none">Nenhum concurso com inscrições abertas no momento.</div>
-</div>
+  <div class="empty" id="vazio" style="display:none">
+    <div class="ico">🗂️</div>
+    <p>No momento não há concursos com inscrições abertas.<br>Volte em breve para conferir as próximas oportunidades.</p>
+  </div>
+</main>
+
+<footer>
+  <div class="foot-in">
+    <div class="fb">
+      <span class="nome">Seletrix</span>
+      <span class="fmeta">· Organização de Processos Seletivos</span>
+    </div>
+    <div class="fmeta">© <span id="ano"></span> Seletrix · <a href="/candidato.html">Área do Candidato</a></div>
+  </div>
+</footer>
+
 <script>
+  document.getElementById('ano').textContent = new Date().getFullYear();
+  function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
   (async function(){
     try{
       const { concursos } = await (await fetch('/api/concursos')).json();
       const grid = document.getElementById('grid');
       if(!concursos.length){ document.getElementById('vazio').style.display='block'; return; }
       grid.innerHTML = concursos.map(function(c){
-        return '<div class="conc"><div class="eyebrow">Processo Seletivo</div>'
+        const taxa = c.gratuito ? 'Gratuita' : esc(c.taxa||'—');
+        return '<article class="card"><div class="card-bar"></div><div class="card-body">'
+          + '<div class="orgao">'+esc(c.orgao||'Processo Seletivo')+'</div>'
           + '<h3>'+esc(c.titulo)+'</h3>'
-          + '<div class="orgao">'+esc(c.orgao||'')+'</div>'
-          + '<dl><dt>Inscrições</dt><dd>'+esc(c.periodo||'—')+'</dd>'
-          + '<dt>Taxa</dt><dd>'+(c.gratuito?'Gratuita':esc(c.taxa||'—'))+'</dd>'
-          + '<dt>Vagas</dt><dd>'+esc(c.vagas||'—')+'</dd></dl>'
-          + '<a class="entrar" href="/concurso.html?c='+encodeURIComponent(c.slug)+'">Ver edital e inscrever-se</a></div>';
+          + '<span class="badge"><span class="dot"></span> Inscrições abertas</span>'
+          + '<ul class="info">'
+          + '<li><span>Inscrições</span><strong>'+esc(c.periodo||'—')+'</strong></li>'
+          + '<li><span>Taxa</span><strong>'+taxa+'</strong></li>'
+          + '<li><span>Vagas</span><strong>'+esc(c.vagas||'—')+'</strong></li>'
+          + '</ul>'
+          + '<a class="cta" href="/concurso.html?c='+encodeURIComponent(c.slug)+'">Ver edital e inscrever-se →</a>'
+          + '</div></article>';
       }).join('');
     }catch(e){ document.getElementById('vazio').style.display='block'; }
-    function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
-    window.esc=esc;
   })();
 </script>
 </body>
