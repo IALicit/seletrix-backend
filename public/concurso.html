@@ -97,6 +97,7 @@
         <div class="campo"><label>Nome social (se houver)</label><input name="nome_social" placeholder="Opcional"></div>
         <div class="campo check full"><input type="checkbox" name="pcd" id="pcd"><label for="pcd">Concorro às vagas reservadas a Pessoa com Deficiência (PcD)</label></div>
       </div>
+      <div id="titulos_wrap" style="display:none;flex-direction:column;gap:6px;margin-top:12px"></div>
       <button type="submit" id="enviar">Enviar inscrição</button>
       <p class="aviso">Ao enviar, você concorda com os termos do edital. Seus dados são usados apenas para fins deste processo seletivo.</p>
       <div class="msg erro" id="erro"></div>
@@ -114,6 +115,7 @@
 </div>
 <script>
   const slug = new URLSearchParams(location.search).get('c') || '';
+  let PEDE=false, TIPOS=[];
   const form = document.getElementById('form'), erro = document.getElementById('erro'), btn = document.getElementById('enviar');
   (async function(){
     if(!slug){ document.getElementById('ed-titulo').textContent='Concurso não informado'; return; }
@@ -124,20 +126,54 @@
       document.getElementById('ed-titulo').textContent = c.titulo || 'Processo Seletivo';
       document.getElementById('ed-orgao').textContent = c.orgao || '';
       document.getElementById('ed-periodo').textContent = c.periodo || '—';
-      document.getElementById('ed-taxa').textContent = c.taxa || '—';
+      document.getElementById('ed-taxa').textContent = c.gratuito ? 'Gratuita' : (c.taxa || '—');
       document.getElementById('ed-prova').textContent = c.prova || '—';
       document.getElementById('ed-vagas').textContent = c.vagas || '—';
       if(c.pdf_url){ const a=document.getElementById('ed-pdf'); a.href=c.pdf_url; a.style.display='block'; }
       const sel=document.getElementById('cargo');
       (c.cargos||[]).forEach(function(cg){ const o=document.createElement('option'); o.value=cg; o.textContent=cg; sel.appendChild(o); });
+      if(c.pede_titulos && (c.tipos_titulos||[]).length){
+        PEDE=true; TIPOS=c.tipos_titulos;
+        const wrap=document.getElementById('titulos_wrap'); wrap.style.display='flex';
+        wrap.innerHTML='<label style="font-weight:600">Títulos (anexos) — opcional</label><div id="titulos_lista"></div>'
+          +'<button type="button" id="add_titulo" style="width:auto;margin-top:10px;background:#eef3f5;color:#0f3a4f">+ Adicionar título</button>'
+          +'<p class="aviso">Formatos aceitos: PDF, JPG ou PNG. Até 5 arquivos, 5 MB cada.</p>';
+        document.getElementById('add_titulo').addEventListener('click', addTituloRow);
+        addTituloRow();
+      }
       if(!c.aberto){ btn.disabled=true; btn.textContent='Inscrições encerradas'; }
     }catch(e){ document.getElementById('ed-titulo').textContent='Concurso não encontrado'; btn.disabled=true; }
   })();
+
+  function addTituloRow(){
+    const lista=document.getElementById('titulos_lista');
+    if(lista.querySelectorAll('.titulo-row').length>=5){ alert('Máximo de 5 títulos.'); return; }
+    const div=document.createElement('div'); div.className='titulo-row';
+    div.style.cssText='display:flex;gap:8px;margin-bottom:8px;align-items:center;flex-wrap:wrap';
+    div.innerHTML='<select style="flex:1;min-width:150px">'+TIPOS.map(function(t){return '<option>'+String(t).replace(/</g,'&lt;')+'</option>';}).join('')+'</select>'
+      +'<input type="file" accept=".pdf,.jpg,.jpeg,.png">'
+      +'<button type="button" class="rm" style="width:auto;margin:0;padding:9px 13px;background:#fdecec;color:#a12626">Remover</button>';
+    div.querySelector('.rm').addEventListener('click', function(){ div.remove(); });
+    lista.appendChild(div);
+  }
+  async function coletarTitulos(){
+    const rows=document.querySelectorAll('#titulos_lista .titulo-row'); const out=[];
+    for(const row of rows){
+      const tipo=row.querySelector('select').value; const file=row.querySelector('input[type=file]').files[0];
+      if(!file) continue;
+      if(!tipo){ throw new Error('Selecione o tipo de cada título anexado.'); }
+      if(file.size>5*1024*1024){ throw new Error('Cada título deve ter no máximo 5 MB.'); }
+      const b64=await new Promise(function(res,rej){var rd=new FileReader();rd.onload=function(){res(rd.result);};rd.onerror=rej;rd.readAsDataURL(file);});
+      out.push({ tipo:tipo, filename:file.name, dataBase64:b64 });
+    }
+    return out;
+  }
 
   form.addEventListener('submit', async function(e){
     e.preventDefault(); erro.style.display='none';
     const dados = Object.fromEntries(new FormData(form).entries());
     dados.pcd = document.getElementById('pcd').checked; dados.concurso = slug;
+    if(PEDE){ try{ dados.titulos = await coletarTitulos(); }catch(err){ erro.textContent=err.message; erro.style.display='block'; return; } }
     btn.disabled=true; btn.textContent='Enviando...';
     try{
       const r = await fetch('/api/inscricao',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(dados)});

@@ -76,12 +76,25 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       <label style="margin-top:14px">Ou cole um link (opcional, se preferir)</label>
       <input id="c_pdf" placeholder="https://...">
       <div class="checkline"><input type="checkbox" id="c_aberto"><label for="c_aberto" style="margin:0">Inscrições abertas (aparece no site público)</label></div>
+      <div class="checkline"><input type="checkbox" id="c_gratuito"><label for="c_gratuito" style="margin:0">Inscrição gratuita (não gera cobrança de taxa)</label></div>
       <div style="margin-top:16px">
         <label>Cargos</label>
         <div id="lista_cargos"></div>
         <div style="display:flex;gap:8px;margin-top:8px">
           <input id="novo_cargo" placeholder="Ex.: Analista Administrativo" onkeydown="if(event.key==='Enter'){event.preventDefault();addCargo()}">
           <button class="sec" onclick="addCargo()">Adicionar</button>
+        </div>
+      </div>
+      <div style="margin-top:18px">
+        <div class="checkline"><input type="checkbox" id="c_pede_titulos" onchange="toggleTitulos()"><label for="c_pede_titulos" style="margin:0">Pedir envio de títulos (anexos) neste concurso</label></div>
+        <div id="bloco_titulos" style="display:none;margin-top:10px">
+          <label>Tipos de título aceitos</label>
+          <div id="lista_tipos"></div>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <input id="novo_tipo" placeholder="Ex.: Pós-graduação" onkeydown="if(event.key==='Enter'){event.preventDefault();addTipo()}">
+            <button class="sec" type="button" onclick="addTipo()">Adicionar</button>
+          </div>
+          <p class="hint">O candidato escolhe um desses tipos para cada arquivo (PDF, JPG ou PNG · até 5 arquivos · 5 MB cada).</p>
         </div>
       </div>
       <div style="margin-top:18px;display:flex;gap:10px">
@@ -99,14 +112,22 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       <p style="margin:14px 0" id="resumo_insc"></p>
       <p><a class="btn" id="btn_csv" href="#">⬇️ Baixar Excel (CSV)</a></p>
       <div class="scroll" style="margin-top:12px"><table>
-        <thead><tr><th>Protocolo</th><th>Nome</th><th>CPF</th><th>Cargo</th><th>Status</th><th>Pagamento</th><th>Data</th></tr></thead>
+        <thead><tr><th>Protocolo</th><th>Nome</th><th>CPF</th><th>Cargo</th><th>Status</th><th>Pagamento</th><th>Títulos</th><th>Data</th></tr></thead>
         <tbody id="linhas_insc"></tbody></table></div>
     </div>
   </section>
 </div>
+<div id="modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:12px;max-width:520px;width:92%;padding:20px;max-height:80vh;overflow:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h3 id="modal_titulo">Títulos anexados</h3><button class="sec" onclick="fecharModal()">Fechar</button>
+    </div>
+    <div id="modal_corpo"></div>
+  </div>
+</div>
 <script>
   const $ = (id) => document.getElementById(id);
-  let CONCURSOS = [], cargosEdit = [];
+  let CONCURSOS = [], cargosEdit = [], tiposEdit = [];
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
     document.querySelectorAll('.tab').forEach(x => x.classList.remove('on')); t.classList.add('on');
     ['concursos','inscritos'].forEach(s => $(s).style.display = s === t.dataset.t ? 'block' : 'none');
@@ -133,6 +154,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('form_titulo').textContent='Novo concurso'; $('c_id').value='';
     ['c_titulo','c_orgao','c_periodo','c_prova','c_vagas','c_taxa','c_valor','c_dias','c_pdf'].forEach(id=>$(id).value='');
     $('c_dias').value='5'; $('c_aberto').checked=true; cargosEdit=[]; renderCargos();
+    $('c_gratuito').checked=false; $('c_pede_titulos').checked=false; tiposEdit=[]; renderTipos(); toggleTitulos();
     if($('c_pdf_file')) $('c_pdf_file').value='';
     $('edital_atual').innerHTML='<i>Salve o concurso primeiro; depois o botão de enviar PDF fica disponível.</i>';
     $('form_concurso').style.display='block'; $('form_concurso').scrollIntoView({behavior:'smooth'});
@@ -144,6 +166,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('c_prova').value=c.prova||''; $('c_vagas').value=c.vagas||''; $('c_taxa').value=c.taxa||'';
     $('c_valor').value=c.taxa_valor||0; $('c_dias').value=c.dias_vencimento||5; $('c_pdf').value=c.pdf_url||'';
     $('c_aberto').checked=!!c.aberto; cargosEdit=(c.cargos||[]).slice(); renderCargos();
+    $('c_gratuito').checked=!!c.gratuito; $('c_pede_titulos').checked=!!c.pede_titulos; tiposEdit=(c.tipos_titulos||[]).slice(); renderTipos(); toggleTitulos();
     if($('c_pdf_file')) $('c_pdf_file').value='';
     $('edital_atual').innerHTML = c.pdf_url ? ('Edital atual: <a href="'+esc(c.pdf_url)+'" target="_blank">ver PDF</a> — envie outro abaixo para substituir.') : '<i>Nenhum edital enviado ainda.</i>';
     $('form_concurso').style.display='block'; $('form_concurso').scrollIntoView({behavior:'smooth'});
@@ -152,10 +175,15 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   function renderCargos(){ $('lista_cargos').innerHTML = cargosEdit.map((c,i)=>'<div class="cargo-item"><span>'+esc(c)+'</span><button class="del" onclick="removeCargo('+i+')">Remover</button></div>').join('')||'<p class="hint">Nenhum cargo.</p>'; }
   function addCargo(){ const v=$('novo_cargo').value.trim(); if(!v)return; cargosEdit.push(v); $('novo_cargo').value=''; renderCargos(); }
   function removeCargo(i){ cargosEdit.splice(i,1); renderCargos(); }
+  function toggleTitulos(){ $('bloco_titulos').style.display = $('c_pede_titulos').checked ? 'block' : 'none'; }
+  function renderTipos(){ $('lista_tipos').innerHTML = tiposEdit.map((t,i)=>'<div class="cargo-item"><span>'+esc(t)+'</span><button class="del" onclick="removeTipo('+i+')">Remover</button></div>').join('')||'<p class="hint">Nenhum tipo cadastrado.</p>'; }
+  function addTipo(){ const v=$('novo_tipo').value.trim(); if(!v)return; tiposEdit.push(v); $('novo_tipo').value=''; renderTipos(); }
+  function removeTipo(i){ tiposEdit.splice(i,1); renderTipos(); }
   async function salvarConcurso(){
     const payload={ id:$('c_id').value||undefined, titulo:$('c_titulo').value, orgao:$('c_orgao').value, periodo:$('c_periodo').value,
       prova:$('c_prova').value, vagas:$('c_vagas').value, taxa:$('c_taxa').value, taxa_valor:$('c_valor').value,
-      dias_vencimento:$('c_dias').value, pdf_url:$('c_pdf').value, aberto:$('c_aberto').checked, cargos:cargosEdit };
+      dias_vencimento:$('c_dias').value, pdf_url:$('c_pdf').value, aberto:$('c_aberto').checked,
+      gratuito:$('c_gratuito').checked, pede_titulos:$('c_pede_titulos').checked, tipos_titulos:tiposEdit, cargos:cargosEdit };
     const r=await fetch('/admin/concurso',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao salvar');return;}
     $('c_id').value=j.id; $('form_titulo').textContent='Editar concurso';
@@ -193,10 +221,17 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('resumo_insc').innerHTML = '<b>Total:</b> '+inscritos.length+' &nbsp; <b>Pagos:</b> '+pagos;
     $('linhas_insc').innerHTML = inscritos.map(r=>{
       const pag = r.invoice_url ? '<a href="'+esc(r.invoice_url)+'" target="_blank">abrir fatura</a>' : '<button class="mini" onclick="gerar('+r.id+')">Gerar cobrança</button>';
-      return '<tr><td>'+esc(r.protocolo)+'</td><td>'+esc(r.nome)+'</td><td>'+esc(r.cpf)+'</td><td>'+esc(r.cargo)+'</td><td>'+statusTag(r.status)+'</td><td>'+pag+'</td><td>'+new Date(r.criado_em).toLocaleString('pt-BR')+'</td></tr>';
-    }).join('') || '<tr><td colspan="7" style="text-align:center;color:#888;padding:18px">Nenhum inscrito.</td></tr>';
+      const tit = r.titulos>0 ? '<button class="mini" onclick="verTitulos('+r.id+')">Ver ('+r.titulos+')</button>' : '<span style="color:#aaa">—</span>';
+      return '<tr><td>'+esc(r.protocolo)+'</td><td>'+esc(r.nome)+'</td><td>'+esc(r.cpf)+'</td><td>'+esc(r.cargo)+'</td><td>'+statusTag(r.status)+'</td><td>'+pag+'</td><td>'+tit+'</td><td>'+new Date(r.criado_em).toLocaleString('pt-BR')+'</td></tr>';
+    }).join('') || '<tr><td colspan="8" style="text-align:center;color:#888;padding:18px">Nenhum inscrito.</td></tr>';
   }
   async function gerar(id){ if(!confirm('Gerar link de pagamento para este inscrito?'))return; const r=await fetch('/admin/cobranca/'+id,{method:'POST'}); const j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} carregarInscritos(); }
+  async function verTitulos(id){
+    const { titulos } = await (await fetch('/admin/inscrito/'+id+'/titulos.json')).json();
+    $('modal_corpo').innerHTML = titulos.length ? titulos.map(t=>'<div style="padding:9px 0;border-bottom:1px solid #eee"><b>'+esc(t.tipo||'Título')+'</b><br><a href="/admin/titulo/'+t.id+'" target="_blank">'+esc(t.filename)+'</a> <span style="color:#888">('+Math.round((t.tamanho||0)/1024)+' KB)</span></div>').join('') : '<p>Nenhum título anexado.</p>';
+    $('modal').style.display='flex';
+  }
+  function fecharModal(){ $('modal').style.display='none'; }
 
   carregarConcursos();
 </script></body></html>`;

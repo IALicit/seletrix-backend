@@ -11,8 +11,8 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-app.use(express.json({ limit: '20mb' })); // PDFs de edital chegam em base64
-app.use(express.urlencoded({ extended: true, limit: '20mb' }));
+app.use(express.json({ limit: '40mb' })); // PDFs/anexos chegam em base64
+app.use(express.urlencoded({ extended: true, limit: '40mb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 // ---- Banco --------------------------------------------------
@@ -52,6 +52,12 @@ async function inicializarBanco() {
   await pool.query(`CREATE TABLE IF NOT EXISTS config (id INT PRIMARY KEY DEFAULT 1, dados TEXT NOT NULL);`);
   // PDF do edital guardado no banco (permanente)
   await pool.query(`CREATE TABLE IF NOT EXISTS edital_pdf (concurso_id INT PRIMARY KEY, filename TEXT, dados BYTEA, tamanho INT, criado_em TIMESTAMPTZ DEFAULT now());`);
+  // Campos extras do concurso (gratuito / títulos)
+  for (const col of ['gratuito BOOLEAN DEFAULT FALSE', 'pede_titulos BOOLEAN DEFAULT FALSE', "tipos_titulos TEXT DEFAULT '[]'"]) {
+    await pool.query(`ALTER TABLE concursos ADD COLUMN IF NOT EXISTS ${col}`);
+  }
+  // Anexos de títulos enviados pelos candidatos
+  await pool.query(`CREATE TABLE IF NOT EXISTS titulos (id SERIAL PRIMARY KEY, candidato_id INT, tipo TEXT, filename TEXT, mime TEXT, dados BYTEA, tamanho INT, criado_em TIMESTAMPTZ DEFAULT now());`);
 
   // Migração: se não há concursos, cria o primeiro a partir da config antiga
   const { rows: qc } = await pool.query('SELECT COUNT(*)::int n FROM concursos');
@@ -74,10 +80,12 @@ async function inicializarBanco() {
 
 function parseConcurso(r) {
   let cargos = []; try { cargos = JSON.parse(r.cargos || '[]'); } catch {}
+  let tipos = []; try { tipos = JSON.parse(r.tipos_titulos || '[]'); } catch {}
   return {
     id: r.id, slug: r.slug, titulo: r.titulo, orgao: r.orgao, periodo: r.periodo, taxa: r.taxa,
     prova: r.prova, vagas: r.vagas, pdf_url: r.pdf_url, taxa_valor: Number(r.taxa_valor) || 0,
     dias_vencimento: r.dias_vencimento || 5, cargos, aberto: r.aberto,
+    gratuito: !!r.gratuito, pede_titulos: !!r.pede_titulos, tipos_titulos: tipos,
   };
 }
 async function lerConcursoPorChave(key) {
@@ -130,7 +138,7 @@ app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: te
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
   const { rows } = await pool.query('SELECT * FROM concursos WHERE aberto=TRUE ORDER BY criado_em DESC');
-  res.json({ concursos: rows.map(parseConcurso).map((c) => ({ slug: c.slug, titulo: c.titulo, orgao: c.orgao, periodo: c.periodo, taxa: c.taxa, vagas: c.vagas })) });
+  res.json({ concursos: rows.map(parseConcurso).map((c) => ({ slug: c.slug, titulo: c.titulo, orgao: c.orgao, periodo: c.periodo, taxa: c.taxa, vagas: c.vagas, gratuito: c.gratuito })) });
 });
 
 app.get('/api/concurso/:chave', async (req, res) => {
@@ -180,7 +188,25 @@ app.post('/api/inscricao', async (req, res) => {
     const protocolo = 'SLX2026' + String(id).padStart(5, '0');
     await pool.query('UPDATE candidatos SET protocolo=$1 WHERE id=$2', [protocolo, id]);
 
-    const cobrar = temAsaas && Number(concurso.taxa_valor) > 0;
+    // Anexos de títulos (se o concurso pedir)
+    if (concurso.pede_titulos && Array.isArray(b.titulos)) {
+      for (const t of b.titulos.slice(0, 5)) {
+        try {
+          let d = String(t.dataBase64 || ''); const v = d.indexOf(','); if (v > -1 && d.slice(0, v).includes('base64')) d = d.slice(v + 1);
+          if (!d) continue;
+          const buf = Buffer.from(d, 'base64');
+          if (buf.length > 5 * 1024 * 1024) continue;
+          const mime = buf.slice(0, 4).toString('latin1') === '%PDF' ? 'application/pdf'
+            : (buf[0] === 0xFF && buf[1] === 0xD8 ? 'image/jpeg'
+              : (buf[0] === 0x89 && buf[1] === 0x50 ? 'image/png' : ''));
+          if (!mime) continue;
+          await pool.query('INSERT INTO titulos (candidato_id,tipo,filename,mime,dados,tamanho) VALUES ($1,$2,$3,$4,$5,$6)',
+            [id, String(t.tipo || '').slice(0, 120), String(t.filename || 'arquivo').slice(0, 200), mime, buf, buf.length]);
+        } catch (e) { console.error('titulo:', e.message); }
+      }
+    }
+
+    const cobrar = temAsaas && !concurso.gratuito && Number(concurso.taxa_valor) > 0;
     if (!cobrar) return res.json({ ok: true, protocolo, nome, cargo, invoiceUrl: null, cobrar: false });
     try {
       const pay = await criarCobranca({ nome, cpf, email, telefone, cargo, protocolo }, concurso);
@@ -238,14 +264,16 @@ app.post('/admin/concurso', exigirSenha, async (req, res) => {
     const b = req.body || {};
     const lim = (v) => String(v == null ? '' : v).trim().slice(0, 300);
     let cargos = (Array.isArray(b.cargos) ? b.cargos : []).map((c) => String(c).trim()).filter(Boolean).slice(0, 100);
+    let tipos = (Array.isArray(b.tipos_titulos) ? b.tipos_titulos : []).map((t) => String(t).trim()).filter(Boolean).slice(0, 50);
     if (!lim(b.titulo)) return res.status(400).json({ erro: 'Informe o título do concurso.' });
     if (!cargos.length) return res.status(400).json({ erro: 'Cadastre pelo menos um cargo.' });
+    const bool = (v) => v === true || v === 'true' || v === 'on';
     const dados = {
       titulo: lim(b.titulo), orgao: lim(b.orgao), periodo: lim(b.periodo), taxa: lim(b.taxa),
       prova: lim(b.prova), vagas: lim(b.vagas), pdf_url: lim(b.pdf_url),
       taxa_valor: Math.max(0, Number(String(b.taxa_valor).replace(',', '.')) || 0),
       dias_vencimento: Math.max(1, parseInt(b.dias_vencimento) || 5),
-      aberto: b.aberto === true || b.aberto === 'true' || b.aberto === 'on',
+      aberto: bool(b.aberto), gratuito: bool(b.gratuito), pede_titulos: bool(b.pede_titulos),
       cargos,
     };
     // slug único
@@ -255,12 +283,12 @@ app.post('/admin/concurso', exigirSenha, async (req, res) => {
       if (!q.rows.length) break; slug = base + '-' + (n++);
     }
     if (b.id) {
-      await pool.query(`UPDATE concursos SET slug=$1,titulo=$2,orgao=$3,periodo=$4,taxa=$5,prova=$6,vagas=$7,pdf_url=$8,taxa_valor=$9,dias_vencimento=$10,cargos=$11,aberto=$12 WHERE id=$13`,
-        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, b.id]);
+      await pool.query(`UPDATE concursos SET slug=$1,titulo=$2,orgao=$3,periodo=$4,taxa=$5,prova=$6,vagas=$7,pdf_url=$8,taxa_valor=$9,dias_vencimento=$10,cargos=$11,aberto=$12,gratuito=$13,pede_titulos=$14,tipos_titulos=$15 WHERE id=$16`,
+        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), b.id]);
       return res.json({ ok: true, id: b.id, slug });
     } else {
-      const ins = await pool.query(`INSERT INTO concursos (slug,titulo,orgao,periodo,taxa,prova,vagas,pdf_url,taxa_valor,dias_vencimento,cargos,aberto) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
-        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto]);
+      const ins = await pool.query(`INSERT INTO concursos (slug,titulo,orgao,periodo,taxa,prova,vagas,pdf_url,taxa_valor,dias_vencimento,cargos,aberto,gratuito,pede_titulos,tipos_titulos) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
+        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos)]);
       return res.json({ ok: true, id: ins.rows[0].id, slug });
     }
   } catch (e) { console.error('concurso:', e.message); res.status(500).json({ erro: 'Não foi possível salvar.' }); }
@@ -291,12 +319,28 @@ app.post('/admin/concurso/:id/edital', exigirSenha, async (req, res) => {
   } catch (e) { console.error('upload edital:', e.message); res.status(500).json({ erro: 'Não foi possível enviar o PDF.' }); }
 });
 
+// Títulos anexados por um candidato (listar + baixar)
+app.get('/admin/inscrito/:id/titulos.json', exigirSenha, async (req, res) => {
+  if (!pool) return res.json({ titulos: [] });
+  const { rows } = await pool.query('SELECT id,tipo,filename,mime,tamanho FROM titulos WHERE candidato_id=$1 ORDER BY id', [req.params.id]);
+  res.json({ titulos: rows });
+});
+app.get('/admin/titulo/:id', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Indisponível.');
+  const { rows } = await pool.query('SELECT filename,mime,dados FROM titulos WHERE id=$1', [req.params.id]);
+  if (!rows.length || !rows[0].dados) return res.status(404).send('Não encontrado.');
+  res.setHeader('Content-Type', rows[0].mime || 'application/octet-stream');
+  res.setHeader('Content-Disposition', 'inline; filename="' + String(rows[0].filename || 'arquivo').replace(/[^\w.\-]/g, '_') + '"');
+  res.send(rows[0].dados);
+});
+
 app.get('/admin/inscritos.json', exigirSenha, async (req, res) => {
   if (!pool) return res.json({ inscritos: [] });
   const cid = req.query.concurso;
+  const sel = 'SELECT k.*, c.titulo AS concurso, (SELECT COUNT(*)::int FROM titulos t WHERE t.candidato_id=k.id) AS titulos FROM candidatos k LEFT JOIN concursos c ON c.id=k.concurso_id';
   const { rows } = cid
-    ? await pool.query('SELECT k.*, c.titulo AS concurso FROM candidatos k LEFT JOIN concursos c ON c.id=k.concurso_id WHERE k.concurso_id=$1 ORDER BY k.id DESC', [cid])
-    : await pool.query('SELECT k.*, c.titulo AS concurso FROM candidatos k LEFT JOIN concursos c ON c.id=k.concurso_id ORDER BY k.id DESC');
+    ? await pool.query(sel + ' WHERE k.concurso_id=$1 ORDER BY k.id DESC', [cid])
+    : await pool.query(sel + ' ORDER BY k.id DESC');
   res.json({ inscritos: rows });
 });
 

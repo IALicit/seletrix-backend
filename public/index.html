@@ -53,7 +53,7 @@
           + '<h3>'+esc(c.titulo)+'</h3>'
           + '<div class="orgao">'+esc(c.orgao||'')+'</div>'
           + '<dl><dt>Inscrições</dt><dd>'+esc(c.periodo||'—')+'</dd>'
-          + '<dt>Taxa</dt><dd>'+esc(c.taxa||'—')+'</dd>'
+          + '<dt>Taxa</dt><dd>'+(c.gratuito?'Gratuita':esc(c.taxa||'—'))+'</dd>'
           + '<dt>Vagas</dt><dd>'+esc(c.vagas||'—')+'</dd></dl>'
           + '<a class="entrar" href="/concurso.html?c='+encodeURIComponent(c.slug)+'">Ver edital e inscrever-se</a></div>';
       }).join('');
