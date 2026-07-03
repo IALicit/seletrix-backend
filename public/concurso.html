@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inscrição — Seletrix</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{--tinta:#0f3a4f;--tinta2:#0b2a3a;--aco:#2e6f8e;--ambar:#e8a23d;--verde:#1b8a5a;--papel:#f5f7f8;--branco:#fff;--linha:#dde6ea;--txt:#1b2a32;--suave:#5e7280}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Inter',-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--papel);color:var(--txt);line-height:1.5}
+  h1,h2,h3{font-family:'Sora',sans-serif}
+  a{color:var(--aco)}
+  header.topo{background:linear-gradient(135deg,var(--tinta),var(--tinta2));color:#fff;padding:22px 20px}
+  .topo .marca{font-family:'Sora';font-weight:700;font-size:1.2rem}
+  .topo .sub{opacity:.85;font-size:.85rem;margin-top:2px}
+  .topo a{color:#cfe3ef;font-size:.85rem;text-decoration:none}
+  .container{max-width:1040px;margin:0 auto;padding:22px 16px 60px;display:grid;grid-template-columns:340px 1fr;gap:22px;align-items:start}
+  @media(max-width:840px){.container{grid-template-columns:1fr}}
+  .edital{background:var(--branco);border:1px solid var(--linha);border-radius:14px;padding:20px;position:sticky;top:18px}
+  .edital .eyebrow{font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:var(--ambar);font-weight:600}
+  .edital h2{font-size:1.15rem;margin:6px 0 2px}
+  .edital .orgao{color:var(--suave);font-size:.9rem;margin-bottom:14px}
+  .edital dl{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;font-size:.9rem;margin-top:8px}
+  .edital dt{color:var(--suave)}
+  .edital dd{font-weight:600;text-align:right}
+  .edital .doc{display:block;margin-top:16px;text-align:center;background:#eef3f5;border-radius:9px;padding:11px;font-weight:600;text-decoration:none;color:var(--tinta);font-size:.9rem}
+  .form{background:var(--branco);border:1px solid var(--linha);border-radius:14px;padding:24px}
+  .form h1{font-size:1.3rem;margin-bottom:4px}
+  .form .intro{color:var(--suave);font-size:.92rem;margin-bottom:18px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:560px){.grid{grid-template-columns:1fr}}
+  .campo{display:flex;flex-direction:column;gap:6px}
+  .campo.full{grid-column:1/-1}
+  label{font-size:.82rem;font-weight:600;color:#33454f}
+  label .req{color:#c0392b}
+  input,select{padding:11px 12px;font-size:.98rem;border:1.5px solid var(--linha);border-radius:9px;background:#fff;font-family:inherit;color:var(--txt)}
+  input:focus,select:focus{outline:none;border-color:var(--aco);box-shadow:0 0 0 3px rgba(46,111,142,.12)}
+  .check{flex-direction:row;align-items:center;gap:9px}
+  .check input{width:18px;height:18px}
+  .check label{font-weight:500}
+  button{margin-top:20px;width:100%;background:var(--verde);color:#fff;border:none;border-radius:10px;padding:15px;font-size:1.02rem;font-weight:700;font-family:'Sora';cursor:pointer}
+  button:disabled{opacity:.6;cursor:default}
+  .aviso{font-size:.78rem;color:var(--suave);margin-top:12px}
+  .msg{display:none;margin-top:14px;padding:12px 14px;border-radius:10px;font-size:.9rem}
+  .msg.erro{display:block;background:#fdecec;color:#a12626;border:1px solid #f3c6c6}
+  .ticket{display:none;text-align:center;padding:10px 0}
+  .ticket .ok{width:62px;height:62px;border-radius:50%;background:#e7f6ee;color:var(--verde);display:flex;align-items:center;justify-content:center;font-size:34px;margin:0 auto 12px}
+  .ticket h2{font-size:1.25rem}
+  .ticket p{color:var(--suave);margin-top:6px}
+  .ticket .prot{margin:18px auto;max-width:340px;border:2px dashed var(--aco);border-radius:12px;padding:16px}
+  .ticket .prot small{display:block;color:var(--suave);font-size:.75rem;letter-spacing:.1em;text-transform:uppercase}
+  .ticket .prot b{font-family:'Sora';font-size:1.5rem;letter-spacing:.04em;color:var(--tinta)}
+  .ticket .pagar{display:none;text-decoration:none;background:var(--verde);color:#fff;font-family:'Sora';font-weight:700;padding:15px;border-radius:10px;max-width:340px;margin:14px auto 0}
+  .ticket .voltar{max-width:340px;margin:8px auto 0;background:var(--tinta)}
+</style>
+</head>
+<body>
+<header class="topo">
+  <div class="marca">Seletrix</div>
+  <div class="sub"><a href="/">← Voltar aos concursos</a></div>
+</header>
+<div class="container">
+  <aside class="edital">
+    <div class="eyebrow">Processo Seletivo</div>
+    <h2 id="ed-titulo">Carregando…</h2>
+    <div class="orgao" id="ed-orgao"></div>
+    <dl>
+      <dt>Inscrições</dt><dd id="ed-periodo">—</dd>
+      <dt>Taxa</dt><dd id="ed-taxa">—</dd>
+      <dt>Prova</dt><dd id="ed-prova">—</dd>
+      <dt>Vagas</dt><dd id="ed-vagas">—</dd>
+    </dl>
+    <a class="doc" id="ed-pdf" href="#" target="_blank" style="display:none">📄 Ler o edital completo (PDF)</a>
+  </aside>
+  <main>
+    <form class="form" id="form" novalidate>
+      <h1>Ficha de inscrição</h1>
+      <p class="intro">Preencha seus dados com atenção. Após enviar, você receberá um número de protocolo.</p>
+      <div class="grid">
+        <div class="campo full"><label>Nome completo <span class="req">*</span></label><input name="nome" required autocomplete="name" placeholder="Como no documento oficial"></div>
+        <div class="campo"><label>CPF <span class="req">*</span></label><input name="cpf" required inputmode="numeric" placeholder="000.000.000-00" maxlength="14"></div>
+        <div class="campo"><label>Data de nascimento</label><input name="nascimento" type="date"></div>
+        <div class="campo"><label>E-mail</label><input name="email" type="email" autocomplete="email" placeholder="voce@email.com"></div>
+        <div class="campo"><label>Telefone / WhatsApp</label><input name="telefone" inputmode="numeric" placeholder="(00) 00000-0000" maxlength="16"></div>
+        <div class="campo full"><label>Cargo pretendido <span class="req">*</span></label>
+          <select name="cargo" required id="cargo"><option value="" disabled selected>Selecione...</option></select>
+        </div>
+        <div class="campo"><label>Cidade</label><input name="cidade" placeholder="Sua cidade"></div>
+        <div class="campo"><label>UF</label>
+          <select name="uf"><option value="" selected>—</option><option>AC</option><option>AL</option><option>AP</option><option>AM</option><option>BA</option><option>CE</option><option>DF</option><option>ES</option><option>GO</option><option>MA</option><option>MT</option><option>MS</option><option>MG</option><option>PA</option><option>PB</option><option>PR</option><option>PE</option><option>PI</option><option>RJ</option><option>RN</option><option>RS</option><option>RO</option><option>RR</option><option>SC</option><option>SP</option><option>SE</option><option>TO</option></select>
+        </div>
+        <div class="campo"><label>Sexo</label>
+          <select name="sexo"><option value="" selected>—</option><option>Feminino</option><option>Masculino</option><option>Prefiro não informar</option></select>
+        </div>
+        <div class="campo"><label>Nome social (se houver)</label><input name="nome_social" placeholder="Opcional"></div>
+        <div class="campo check full"><input type="checkbox" name="pcd" id="pcd"><label for="pcd">Concorro às vagas reservadas a Pessoa com Deficiência (PcD)</label></div>
+      </div>
+      <button type="submit" id="enviar">Enviar inscrição</button>
+      <p class="aviso">Ao enviar, você concorda com os termos do edital. Seus dados são usados apenas para fins deste processo seletivo.</p>
+      <div class="msg erro" id="erro"></div>
+    </form>
+    <section class="form ticket" id="ticket">
+      <div class="ok">✓</div>
+      <h2>Inscrição registrada!</h2>
+      <p id="t-nome"></p>
+      <div class="prot"><small>Seu protocolo</small><b id="t-prot"></b></div>
+      <p id="t-msg">Guarde este número.</p>
+      <a id="t-pagar" class="pagar" href="#" target="_blank">💳 Pagar taxa de inscrição</a>
+      <button class="voltar" onclick="location.reload()">Fazer nova inscrição</button>
+    </section>
+  </main>
+</div>
+<script>
+  const slug = new URLSearchParams(location.search).get('c') || '';
+  const form = document.getElementById('form'), erro = document.getElementById('erro'), btn = document.getElementById('enviar');
+  (async function(){
+    if(!slug){ document.getElementById('ed-titulo').textContent='Concurso não informado'; return; }
+    try{
+      const r = await fetch('/api/concurso/'+encodeURIComponent(slug));
+      if(!r.ok) throw new Error('nao encontrado');
+      const c = await r.json();
+      document.getElementById('ed-titulo').textContent = c.titulo || 'Processo Seletivo';
+      document.getElementById('ed-orgao').textContent = c.orgao || '';
+      document.getElementById('ed-periodo').textContent = c.periodo || '—';
+      document.getElementById('ed-taxa').textContent = c.taxa || '—';
+      document.getElementById('ed-prova').textContent = c.prova || '—';
+      document.getElementById('ed-vagas').textContent = c.vagas || '—';
+      if(c.pdf_url){ const a=document.getElementById('ed-pdf'); a.href=c.pdf_url; a.style.display='block'; }
+      const sel=document.getElementById('cargo');
+      (c.cargos||[]).forEach(function(cg){ const o=document.createElement('option'); o.value=cg; o.textContent=cg; sel.appendChild(o); });
+      if(!c.aberto){ btn.disabled=true; btn.textContent='Inscrições encerradas'; }
+    }catch(e){ document.getElementById('ed-titulo').textContent='Concurso não encontrado'; btn.disabled=true; }
+  })();
+
+  form.addEventListener('submit', async function(e){
+    e.preventDefault(); erro.style.display='none';
+    const dados = Object.fromEntries(new FormData(form).entries());
+    dados.pcd = document.getElementById('pcd').checked; dados.concurso = slug;
+    btn.disabled=true; btn.textContent='Enviando...';
+    try{
+      const r = await fetch('/api/inscricao',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(dados)});
+      const j = await r.json();
+      if(!r.ok) throw new Error(j.erro||'Não foi possível concluir a inscrição.');
+      document.getElementById('t-nome').textContent = j.nome+' — '+j.cargo;
+      document.getElementById('t-prot').textContent = j.protocolo;
+      const msg=document.getElementById('t-msg'), pagar=document.getElementById('t-pagar');
+      if(j.invoiceUrl){ msg.textContent='Sua inscrição só é efetivada após o pagamento da taxa. Pague por Pix, boleto ou cartão:'; pagar.href=j.invoiceUrl; pagar.style.display='block'; }
+      else if(j.avisoPagamento){ msg.textContent='Guarde este número. O link para pagamento da taxa será enviado em instantes.'; }
+      else { msg.textContent='Guarde este número. Sua inscrição foi registrada com sucesso.'; }
+      form.style.display='none'; document.getElementById('ticket').style.display='block';
+      window.scrollTo({top:0,behavior:'smooth'});
+    }catch(err){ erro.textContent=err.message; erro.style.display='block'; }
+    finally{ btn.disabled=false; btn.textContent='Enviar inscrição'; }
+  });
+  const cpf=form.cpf, tel=form.telefone;
+  cpf.addEventListener('input',function(){ let v=cpf.value.replace(/\D/g,'').slice(0,11); v=v.replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d{1,2})$/,'$1-$2'); cpf.value=v; });
+  tel.addEventListener('input',function(){ let v=tel.value.replace(/\D/g,'').slice(0,11); if(v.length>6)v=v.replace(/(\d{2})(\d{5})(\d{0,4}).*/,'($1) $2-$3'); else if(v.length>2)v=v.replace(/(\d{2})(\d{0,5})/,'($1) $2'); tel.value=v.trim(); });
+</script>
+</body>
+</html>
