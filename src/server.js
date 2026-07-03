@@ -7,6 +7,7 @@
 // ============================================================
 const express = require('express');
 const path = require('path');
+const crypto = require('crypto');
 const { Pool } = require('pg');
 
 const app = express();
@@ -58,6 +59,8 @@ async function inicializarBanco() {
   }
   // Anexos de títulos enviados pelos candidatos
   await pool.query(`CREATE TABLE IF NOT EXISTS titulos (id SERIAL PRIMARY KEY, candidato_id INT, tipo TEXT, filename TEXT, mime TEXT, dados BYTEA, tamanho INT, criado_em TIMESTAMPTZ DEFAULT now());`);
+  // Login do candidato (CPF + senha) para a Área do Candidato
+  await pool.query(`CREATE TABLE IF NOT EXISTS candidato_login (cpf TEXT PRIMARY KEY, senha_hash TEXT, nome TEXT, criado_em TIMESTAMPTZ DEFAULT now());`);
 
   // Migração: se não há concursos, cria o primeiro a partir da config antiga
   const { rows: qc } = await pool.query('SELECT COUNT(*)::int n FROM concursos');
@@ -130,6 +133,19 @@ function cpfValido(cpf) {
   return calc(9) === parseInt(cpf[9]) && calc(10) === parseInt(cpf[10]);
 }
 const emailValido = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e || '');
+function hashSenha(senha) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const dk = crypto.scryptSync(String(senha), salt, 32).toString('hex');
+  return salt + ':' + dk;
+}
+function verificaSenha(senha, armazenado) {
+  try {
+    const [salt, dk] = String(armazenado || '').split(':');
+    if (!salt || !dk) return false;
+    const calc = crypto.scryptSync(String(senha), salt, 32).toString('hex');
+    return crypto.timingSafeEqual(Buffer.from(calc, 'hex'), Buffer.from(dk, 'hex'));
+  } catch { return false; }
+}
 function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
 // ---- Rotas públicas ----------------------------------------
@@ -178,6 +194,17 @@ app.post('/api/inscricao', async (req, res) => {
     const dup = await pool.query('SELECT protocolo FROM candidatos WHERE cpf=$1 AND concurso_id=$2 LIMIT 1', [cpf, concurso.id]);
     if (dup.rows.length) return res.status(409).json({ erro: 'Este CPF já possui inscrição neste concurso. Protocolo: ' + dup.rows[0].protocolo });
 
+    // Senha de acesso à Área do Candidato (cria na 1ª inscrição; confere nas próximas)
+    const senha = String(b.senha || '');
+    if (senha.length < 4) return res.status(400).json({ erro: 'Crie uma senha de acesso com pelo menos 4 caracteres.' });
+    const lg = await pool.query('SELECT senha_hash FROM candidato_login WHERE cpf=$1', [cpf]);
+    if (lg.rows.length) {
+      if (!verificaSenha(senha, lg.rows[0].senha_hash))
+        return res.status(409).json({ erro: 'Este CPF já tem uma senha cadastrada. Use a mesma senha que você criou na primeira inscrição.' });
+    } else {
+      await pool.query('INSERT INTO candidato_login (cpf,senha_hash,nome) VALUES ($1,$2,$3) ON CONFLICT (cpf) DO NOTHING', [cpf, hashSenha(senha), nome]);
+    }
+
     const r = await pool.query(
       `INSERT INTO candidatos (nome,cpf,nascimento,email,telefone,sexo,cargo,pcd,nome_social,cidade,uf,concurso_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
@@ -222,6 +249,23 @@ app.post('/api/inscricao', async (req, res) => {
     console.error('Erro inscrição:', e.message);
     return res.status(500).json({ erro: 'Não foi possível concluir a inscrição. Tente novamente.' });
   }
+});
+
+// ---- Área do Candidato (login CPF + senha) -----------------
+app.post('/api/candidato/login', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const cpf = soDigitos((req.body || {}).cpf);
+  const senha = String((req.body || {}).senha || '');
+  if (!cpfValido(cpf) || !senha) return res.status(400).json({ erro: 'Informe CPF e senha.' });
+  const lg = await pool.query('SELECT senha_hash, nome FROM candidato_login WHERE cpf=$1', [cpf]);
+  if (!lg.rows.length || !verificaSenha(senha, lg.rows[0].senha_hash))
+    return res.status(401).json({ erro: 'CPF ou senha inválidos, ou você ainda não fez nenhuma inscrição.' });
+  const { rows } = await pool.query(
+    `SELECT k.protocolo, k.cargo, k.status, k.invoice_url, k.criado_em,
+            c.titulo AS concurso, c.gratuito, c.prova
+     FROM candidatos k LEFT JOIN concursos c ON c.id=k.concurso_id
+     WHERE k.cpf=$1 ORDER BY k.id DESC`, [cpf]);
+  res.json({ ok: true, nome: lg.rows[0].nome, inscricoes: rows });
 });
 
 // ---- Webhook ASAAS -----------------------------------------

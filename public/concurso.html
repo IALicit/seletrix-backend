@@ -59,7 +59,7 @@
 <body>
 <header class="topo">
   <div class="marca">Seletrix</div>
-  <div class="sub"><a href="/">← Voltar aos concursos</a></div>
+  <div class="sub"><a href="/">← Voltar aos concursos</a> &nbsp;·&nbsp; <a href="/candidato.html">Área do Candidato</a></div>
 </header>
 <div class="container">
   <aside class="edital">
@@ -84,6 +84,7 @@
         <div class="campo"><label>Data de nascimento</label><input name="nascimento" type="date"></div>
         <div class="campo"><label>E-mail</label><input name="email" type="email" autocomplete="email" placeholder="voce@email.com"></div>
         <div class="campo"><label>Telefone / WhatsApp</label><input name="telefone" inputmode="numeric" placeholder="(00) 00000-0000" maxlength="16"></div>
+        <div class="campo full"><label>Crie uma senha de acesso <span class="req">*</span></label><input name="senha" type="password" required minlength="4" placeholder="Mínimo 4 caracteres" autocomplete="new-password"><span style="font-size:.75rem;color:var(--suave)">Guarde esta senha: com ela e seu CPF você acompanha a inscrição na Área do Candidato.</span></div>
         <div class="campo full"><label>Cargo pretendido <span class="req">*</span></label>
           <select name="cargo" required id="cargo"><option value="" disabled selected>Selecione...</option></select>
         </div>
@@ -109,6 +110,7 @@
       <div class="prot"><small>Seu protocolo</small><b id="t-prot"></b></div>
       <p id="t-msg">Guarde este número.</p>
       <a id="t-pagar" class="pagar" href="#" target="_blank">💳 Pagar taxa de inscrição</a>
+      <p style="margin-top:14px"><a href="/candidato.html">Acompanhar minha inscrição (Área do Candidato) →</a></p>
       <button class="voltar" onclick="location.reload()">Fazer nova inscrição</button>
     </section>
   </main>
