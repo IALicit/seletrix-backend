@@ -67,8 +67,14 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
         <div><label>Valor da taxa p/ cobrança (R$) — mín. 5,00</label><input id="c_valor" inputmode="decimal" placeholder="80.00"></div>
         <div><label>Dias para pagar (vencimento)</label><input id="c_dias" inputmode="numeric" placeholder="5"></div>
       </div>
-      <label>Link do edital completo (PDF)</label>
-      <input id="c_pdf" placeholder="https://... (ex.: https://seletrix-backend.onrender.com/edital.pdf)">
+      <label>Edital em PDF</label>
+      <div id="edital_atual" class="hint" style="margin-bottom:8px"></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="file" id="c_pdf_file" accept="application/pdf" style="border:none;padding:0">
+        <button class="sec" type="button" onclick="enviarEdital()">Enviar PDF</button>
+      </div>
+      <label style="margin-top:14px">Ou cole um link (opcional, se preferir)</label>
+      <input id="c_pdf" placeholder="https://...">
       <div class="checkline"><input type="checkbox" id="c_aberto"><label for="c_aberto" style="margin:0">Inscrições abertas (aparece no site público)</label></div>
       <div style="margin-top:16px">
         <label>Cargos</label>
@@ -127,6 +133,8 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('form_titulo').textContent='Novo concurso'; $('c_id').value='';
     ['c_titulo','c_orgao','c_periodo','c_prova','c_vagas','c_taxa','c_valor','c_dias','c_pdf'].forEach(id=>$(id).value='');
     $('c_dias').value='5'; $('c_aberto').checked=true; cargosEdit=[]; renderCargos();
+    if($('c_pdf_file')) $('c_pdf_file').value='';
+    $('edital_atual').innerHTML='<i>Salve o concurso primeiro; depois o botão de enviar PDF fica disponível.</i>';
     $('form_concurso').style.display='block'; $('form_concurso').scrollIntoView({behavior:'smooth'});
   }
   function editarConcurso(id){
@@ -136,6 +144,8 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('c_prova').value=c.prova||''; $('c_vagas').value=c.vagas||''; $('c_taxa').value=c.taxa||'';
     $('c_valor').value=c.taxa_valor||0; $('c_dias').value=c.dias_vencimento||5; $('c_pdf').value=c.pdf_url||'';
     $('c_aberto').checked=!!c.aberto; cargosEdit=(c.cargos||[]).slice(); renderCargos();
+    if($('c_pdf_file')) $('c_pdf_file').value='';
+    $('edital_atual').innerHTML = c.pdf_url ? ('Edital atual: <a href="'+esc(c.pdf_url)+'" target="_blank">ver PDF</a> — envie outro abaixo para substituir.') : '<i>Nenhum edital enviado ainda.</i>';
     $('form_concurso').style.display='block'; $('form_concurso').scrollIntoView({behavior:'smooth'});
   }
   function fecharForm(){ $('form_concurso').style.display='none'; }
@@ -148,8 +158,29 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       dias_vencimento:$('c_dias').value, pdf_url:$('c_pdf').value, aberto:$('c_aberto').checked, cargos:cargosEdit };
     const r=await fetch('/admin/concurso',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao salvar');return;}
+    $('c_id').value=j.id; $('form_titulo').textContent='Editar concurso';
+    if(!$('edital_atual').innerHTML || $('edital_atual').innerHTML.indexOf('Salve o concurso')>-1)
+      $('edital_atual').innerHTML='<i>Concurso salvo. Agora você já pode enviar o PDF do edital abaixo.</i>';
     $('ok_conc').style.display='block'; setTimeout(()=>$('ok_conc').style.display='none',2500);
-    await carregarConcursos(); fecharForm();
+    await carregarConcursos();
+  }
+  async function enviarEdital(){
+    const id=$('c_id').value;
+    if(!id){ alert('Salve o concurso primeiro; depois envie o PDF do edital.'); return; }
+    const f=$('c_pdf_file').files[0];
+    if(!f){ alert('Escolha um arquivo PDF no botão "Escolher arquivo".'); return; }
+    if(f.type && f.type!=='application/pdf'){ alert('O arquivo precisa ser um PDF.'); return; }
+    if(f.size > 15*1024*1024){ alert('PDF muito grande (máximo 15 MB).'); return; }
+    $('edital_atual').innerHTML='<i>Enviando PDF...</i>';
+    try{
+      const b64=await new Promise((res,rej)=>{const rd=new FileReader();rd.onload=()=>res(rd.result);rd.onerror=rej;rd.readAsDataURL(f);});
+      const r=await fetch('/admin/concurso/'+id+'/edital',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename:f.name,dataBase64:b64})});
+      const j=await r.json(); if(!r.ok){ $('edital_atual').innerHTML='<i>Falha no envio.</i>'; alert(j.erro||'Erro ao enviar'); return; }
+      $('c_pdf').value=j.pdf_url;
+      $('edital_atual').innerHTML='Edital enviado ✓ (<a href="'+esc(j.pdf_url)+'" target="_blank">ver PDF</a>)';
+      await carregarConcursos();
+      alert('Edital enviado com sucesso!');
+    }catch(e){ $('edital_atual').innerHTML='<i>Falha no envio.</i>'; alert('Não foi possível ler o arquivo.'); }
   }
 
   function statusTag(s){ if(s==='pago')return '<span class="tag pago">Pago</span>'; if(s==='aguardando_pagamento')return '<span class="tag aguard">Aguardando</span>'; return '<span class="tag insc">Inscrito</span>'; }

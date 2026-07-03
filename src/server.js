@@ -11,8 +11,8 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '20mb' })); // PDFs de edital chegam em base64
+app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 // ---- Banco --------------------------------------------------
@@ -50,6 +50,8 @@ async function inicializarBanco() {
     cargos TEXT DEFAULT '[]', aberto BOOLEAN DEFAULT TRUE, criado_em TIMESTAMPTZ DEFAULT now());`);
   // Config antiga (para migração)
   await pool.query(`CREATE TABLE IF NOT EXISTS config (id INT PRIMARY KEY DEFAULT 1, dados TEXT NOT NULL);`);
+  // PDF do edital guardado no banco (permanente)
+  await pool.query(`CREATE TABLE IF NOT EXISTS edital_pdf (concurso_id INT PRIMARY KEY, filename TEXT, dados BYTEA, tamanho INT, criado_em TIMESTAMPTZ DEFAULT now());`);
 
   // Migração: se não há concursos, cria o primeiro a partir da config antiga
   const { rows: qc } = await pool.query('SELECT COUNT(*)::int n FROM concursos');
@@ -135,6 +137,18 @@ app.get('/api/concurso/:chave', async (req, res) => {
   const c = await lerConcursoPorChave(req.params.chave);
   if (!c) return res.status(404).json({ erro: 'Concurso não encontrado.' });
   res.json(c);
+});
+
+// Serve o PDF do edital (guardado no banco)
+app.get('/edital/:chave.pdf', async (req, res) => {
+  if (!pool) return res.status(503).send('Indisponível.');
+  const c = await lerConcursoPorChave(req.params.chave);
+  if (!c) return res.status(404).send('Concurso não encontrado.');
+  const { rows } = await pool.query('SELECT dados FROM edital_pdf WHERE concurso_id=$1', [c.id]);
+  if (!rows.length || !rows[0].dados) return res.status(404).send('Edital não enviado.');
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', 'inline; filename="edital.pdf"');
+  res.send(rows[0].dados);
 });
 
 app.post('/api/inscricao', async (req, res) => {
@@ -250,6 +264,31 @@ app.post('/admin/concurso', exigirSenha, async (req, res) => {
       return res.json({ ok: true, id: ins.rows[0].id, slug });
     }
   } catch (e) { console.error('concurso:', e.message); res.status(500).json({ erro: 'Não foi possível salvar.' }); }
+});
+
+// Upload do PDF do edital (base64) -> guarda no banco e aponta o pdf_url do concurso
+app.post('/admin/concurso/:id/edital', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  try {
+    const id = parseInt(req.params.id);
+    const c = await lerConcursoPorChave(String(id));
+    if (!c) return res.status(404).json({ erro: 'Concurso não encontrado.' });
+    let b64 = String((req.body || {}).dataBase64 || '');
+    const virg = b64.indexOf(',');
+    if (virg > -1 && b64.slice(0, virg).includes('base64')) b64 = b64.slice(virg + 1);
+    if (!b64) return res.status(400).json({ erro: 'Selecione um arquivo PDF.' });
+    const buf = Buffer.from(b64, 'base64');
+    if (buf.length < 4 || buf.slice(0, 4).toString('latin1') !== '%PDF')
+      return res.status(400).json({ erro: 'O arquivo precisa ser um PDF válido.' });
+    if (buf.length > 15 * 1024 * 1024) return res.status(400).json({ erro: 'PDF muito grande (máximo 15 MB).' });
+    await pool.query(
+      `INSERT INTO edital_pdf (concurso_id, filename, dados, tamanho) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (concurso_id) DO UPDATE SET filename=EXCLUDED.filename, dados=EXCLUDED.dados, tamanho=EXCLUDED.tamanho, criado_em=now()`,
+      [id, String((req.body || {}).filename || 'edital.pdf').slice(0, 200), buf, buf.length]);
+    const pdf_url = '/edital/' + c.slug + '.pdf';
+    await pool.query('UPDATE concursos SET pdf_url=$1 WHERE id=$2', [pdf_url, id]);
+    res.json({ ok: true, pdf_url });
+  } catch (e) { console.error('upload edital:', e.message); res.status(500).json({ erro: 'Não foi possível enviar o PDF.' }); }
 });
 
 app.get('/admin/inscritos.json', exigirSenha, async (req, res) => {
