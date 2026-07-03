@@ -112,7 +112,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       <p style="margin:14px 0" id="resumo_insc"></p>
       <p><a class="btn" id="btn_csv" href="#">⬇️ Baixar Excel (CSV)</a></p>
       <div class="scroll" style="margin-top:12px"><table>
-        <thead><tr><th>Protocolo</th><th>Nome</th><th>CPF</th><th>Cargo</th><th>Status</th><th>Pagamento</th><th>Títulos</th><th>Data</th></tr></thead>
+        <thead><tr><th>Protocolo</th><th>Nome</th><th>CPF</th><th>Cargo</th><th>Status</th><th>Pagamento</th><th>Títulos</th><th>Data</th><th>Ações</th></tr></thead>
         <tbody id="linhas_insc"></tbody></table></div>
     </div>
   </section>
@@ -125,9 +125,37 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     <div id="modal_corpo"></div>
   </div>
 </div>
+<div id="modal_edit" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:12px;max-width:620px;width:94%;padding:22px;max-height:88vh;overflow:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <h3>Editar inscrição</h3><button class="sec" onclick="fecharEdit()">Fechar</button>
+    </div>
+    <input type="hidden" id="ei_id">
+    <div class="grid2">
+      <div><label>Nome completo</label><input id="ei_nome"></div>
+      <div><label>CPF</label><input id="ei_cpf"></div>
+      <div><label>E-mail</label><input id="ei_email"></div>
+      <div><label>Telefone</label><input id="ei_tel"></div>
+      <div><label>Cargo</label><input id="ei_cargo"></div>
+      <div><label>Sexo</label><input id="ei_sexo"></div>
+      <div><label>Cidade</label><input id="ei_cidade"></div>
+      <div><label>UF</label><input id="ei_uf"></div>
+      <div><label>Nome social</label><input id="ei_social"></div>
+      <div><label>Status de pagamento</label>
+        <select id="ei_status"><option value="inscrito">Inscrito</option><option value="aguardando_pagamento">Aguardando pagamento</option><option value="pago">Pago</option></select>
+      </div>
+    </div>
+    <div class="checkline"><input type="checkbox" id="ei_pcd"><label for="ei_pcd" style="margin:0">Pessoa com Deficiência (PcD)</label></div>
+    <p class="hint">Atenção: mudar o status para "Pago" manualmente confirma a inscrição sem passar pelo ASAAS. Use apenas em casos especiais.</p>
+    <div style="margin-top:16px;display:flex;gap:10px">
+      <button onclick="salvarInscrito()">Salvar alterações</button>
+      <button class="sec" onclick="fecharEdit()">Cancelar</button>
+    </div>
+  </div>
+</div>
 <script>
   const $ = (id) => document.getElementById(id);
-  let CONCURSOS = [], cargosEdit = [], tiposEdit = [];
+  let CONCURSOS = [], cargosEdit = [], tiposEdit = [], INSCRITOS = [];
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
     document.querySelectorAll('.tab').forEach(x => x.classList.remove('on')); t.classList.add('on');
     ['concursos','inscritos'].forEach(s => $(s).style.display = s === t.dataset.t ? 'block' : 'none');
@@ -217,13 +245,15 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('btn_csv').href = '/admin/inscritos.csv' + (cid?('?concurso='+cid):'');
     const url='/admin/inscritos.json'+(cid?('?concurso='+cid):'');
     const { inscritos } = await (await fetch(url)).json();
+    INSCRITOS = inscritos;
     const pagos = inscritos.filter(r=>r.status==='pago').length;
     $('resumo_insc').innerHTML = '<b>Total:</b> '+inscritos.length+' &nbsp; <b>Pagos:</b> '+pagos;
     $('linhas_insc').innerHTML = inscritos.map(r=>{
       const pag = r.invoice_url ? '<a href="'+esc(r.invoice_url)+'" target="_blank">abrir fatura</a>' : '<button class="mini" onclick="gerar('+r.id+')">Gerar cobrança</button>';
       const tit = r.titulos>0 ? '<button class="mini" onclick="verTitulos('+r.id+')">Ver ('+r.titulos+')</button>' : '<span style="color:#aaa">—</span>';
-      return '<tr><td>'+esc(r.protocolo)+'</td><td>'+esc(r.nome)+'</td><td>'+esc(r.cpf)+'</td><td>'+esc(r.cargo)+'</td><td>'+statusTag(r.status)+'</td><td>'+pag+'</td><td>'+tit+'</td><td>'+new Date(r.criado_em).toLocaleString('pt-BR')+'</td></tr>';
-    }).join('') || '<tr><td colspan="8" style="text-align:center;color:#888;padding:18px">Nenhum inscrito.</td></tr>';
+      const acoes = '<button class="mini" onclick="editarInscrito('+r.id+')">Editar</button> <button class="del" style="padding:6px 10px" onclick="excluirInscrito('+r.id+')">Excluir</button>';
+      return '<tr><td>'+esc(r.protocolo)+'</td><td>'+esc(r.nome)+'</td><td>'+esc(r.cpf)+'</td><td>'+esc(r.cargo)+'</td><td>'+statusTag(r.status)+'</td><td>'+pag+'</td><td>'+tit+'</td><td>'+new Date(r.criado_em).toLocaleString('pt-BR')+'</td><td>'+acoes+'</td></tr>';
+    }).join('') || '<tr><td colspan="9" style="text-align:center;color:#888;padding:18px">Nenhum inscrito.</td></tr>';
   }
   async function gerar(id){ if(!confirm('Gerar link de pagamento para este inscrito?'))return; const r=await fetch('/admin/cobranca/'+id,{method:'POST'}); const j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} carregarInscritos(); }
   async function verTitulos(id){
@@ -232,6 +262,30 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('modal').style.display='flex';
   }
   function fecharModal(){ $('modal').style.display='none'; }
+  function editarInscrito(id){
+    const r = INSCRITOS.find(x=>x.id===id); if(!r)return;
+    $('ei_id').value=r.id; $('ei_nome').value=r.nome||''; $('ei_cpf').value=r.cpf||'';
+    $('ei_email').value=r.email||''; $('ei_tel').value=r.telefone||''; $('ei_cargo').value=r.cargo||'';
+    $('ei_cidade').value=r.cidade||''; $('ei_uf').value=r.uf||''; $('ei_sexo').value=r.sexo||'';
+    $('ei_social').value=r.nome_social||''; $('ei_pcd').checked=!!r.pcd; $('ei_status').value=r.status||'inscrito';
+    $('modal_edit').style.display='flex';
+  }
+  function fecharEdit(){ $('modal_edit').style.display='none'; }
+  async function salvarInscrito(){
+    const id=$('ei_id').value;
+    const payload={ nome:$('ei_nome').value, cpf:$('ei_cpf').value, email:$('ei_email').value, telefone:$('ei_tel').value,
+      cargo:$('ei_cargo').value, cidade:$('ei_cidade').value, uf:$('ei_uf').value, sexo:$('ei_sexo').value,
+      nome_social:$('ei_social').value, pcd:$('ei_pcd').checked, status:$('ei_status').value };
+    const r=await fetch('/admin/inscrito/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao salvar');return;}
+    fecharEdit(); carregarInscritos();
+  }
+  async function excluirInscrito(id){
+    if(!confirm('Excluir esta inscrição? A ação é irreversível e remove também os títulos anexados.'))return;
+    const r=await fetch('/admin/inscrito/'+id,{method:'DELETE'});
+    const j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao excluir');return;}
+    carregarInscritos();
+  }
 
   carregarConcursos();
 </script></body></html>`;
