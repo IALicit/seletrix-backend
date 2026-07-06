@@ -33,6 +33,10 @@
   .badge{display:inline-block;padding:4px 12px;border-radius:999px;font-size:.8rem;font-weight:700}
   .b-pago{background:#e7f6ee;color:#0f6b41}.b-aguard{background:#fff4e0;color:#8a5a00}.b-insc{background:#eef1f4;color:#456}
   .pagar{display:inline-block;margin-top:12px;background:var(--verde);color:#fff;text-decoration:none;font-weight:700;padding:11px 16px;border-radius:9px;font-size:.9rem}
+  .insc .acoes{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+  .insc .acoes a{margin-top:0}
+  .verconc{display:inline-block;background:#eef3f5;color:var(--tinta);text-decoration:none;font-weight:700;padding:11px 16px;border-radius:9px;font-size:.9rem;border:1px solid var(--linha)}
+  .verconc:hover{background:#e3ecf1}
   .topo-user{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
   .sair{background:none;border:none;color:var(--aco);cursor:pointer;font-weight:600;width:auto;margin:0;padding:0;font-size:.9rem}
 </style>
@@ -89,10 +93,13 @@
       $('ola').textContent = 'Olá, '+(j.nome||'candidato')+'!';
       $('lista').innerHTML = j.inscricoes.length ? j.inscricoes.map(function(r){
         const s=statusInfo(r);
+        var acoes = '';
+        if(s.pagar) acoes += '<a class="pagar" href="'+esc(r.invoice_url)+'" target="_blank">💳 Pagar / 2ª via</a>';
+        if(r.slug) acoes += '<a class="verconc" href="/concurso.html?c='+encodeURIComponent(r.slug)+'">📄 Ver etapas e documentos →</a>';
         return '<div class="insc"><h3>'+esc(r.concurso||'Concurso')+'</h3>'
           +'<div class="meta">Protocolo <b>'+esc(r.protocolo)+'</b> &middot; '+esc(r.cargo)+(r.prova?(' &middot; Prova: '+esc(r.prova)):'')+'</div>'
           + s.badge
-          + (s.pagar ? '<br><a class="pagar" href="'+esc(r.invoice_url)+'" target="_blank">💳 Pagar / 2ª via</a>' : '')
+          + '<div class="acoes">'+acoes+'</div>'
           + '</div>';
       }).join('') : '<div class="card">Você ainda não tem inscrições.</div>';
       $('login').style.display='none'; $('painel').style.display='block';

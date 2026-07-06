@@ -323,7 +323,7 @@ app.post('/api/candidato/login', async (req, res) => {
     return res.status(401).json({ erro: 'CPF ou senha inválidos, ou você ainda não fez nenhuma inscrição.' });
   const { rows } = await pool.query(
     `SELECT k.protocolo, k.cargo, k.status, k.invoice_url, k.criado_em,
-            c.titulo AS concurso, c.gratuito, c.prova
+            c.titulo AS concurso, c.slug AS slug, c.gratuito, c.prova
      FROM candidatos k LEFT JOIN concursos c ON c.id=k.concurso_id
      WHERE k.cpf=$1 ORDER BY k.id DESC`, [cpf]);
   res.json({ ok: true, nome: lg.rows[0].nome, inscricoes: rows });
