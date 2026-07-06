@@ -137,9 +137,15 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
             <button class="sec" type="button" onclick="addTipo()">Adicionar</button>
           </div>
           <p class="hint">O candidato escolhe um desses tipos ao enviar cada arquivo, na Área do Candidato (PDF, JPG ou PNG · até 5 MB cada).</p>
-          <div class="grid2" style="margin-top:12px">
-            <div><label>Envio de títulos — início</label><input id="c_tit_inicio" type="date"></div>
-            <div><label>Envio de títulos — fim</label><input id="c_tit_fim" type="date"></div>
+          <label style="margin-top:12px">Envio de títulos — início</label>
+          <div class="grid2">
+            <div><label>Data</label><input id="c_tit_ini_data" type="date"></div>
+            <div><label>Hora</label><input id="c_tit_ini_hora" type="time"></div>
+          </div>
+          <label style="margin-top:10px">Envio de títulos — fim</label>
+          <div class="grid2">
+            <div><label>Data</label><input id="c_tit_fim_data" type="date"></div>
+            <div><label>Hora</label><input id="c_tit_fim_hora" type="time"></div>
           </div>
           <p class="hint">O candidato só consegue enviar títulos entre essas datas. Em branco = liberado enquanto "Pedir títulos" estiver ligado.</p>
         </div>
@@ -229,6 +235,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     if (t.dataset.t === 'inscritos') carregarInscritos();
   });
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+  function combinaDT(data, hora, horaPadrao){ if(!data) return ''; return data+'T'+((hora||horaPadrao)).slice(0,5); }
   function sitTag(c){
     var t = c.situacao==='abertas' ? '<span class="tag on">Inscrições abertas</span>'
       : c.situacao==='andamento' ? '<span class="tag aguard">Em andamento</span>'
@@ -257,7 +264,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     ['c_titulo','c_orgao','c_periodo','c_prova','c_vagas','c_taxa','c_valor','c_dias','c_pdf','c_data_inicio','c_data_fim','c_data_encerramento'].forEach(id=>$(id).value='');
     $('c_dias').value='5'; $('c_aberto').checked=true; cargosEdit=[]; renderCargos();
     $('c_gratuito').checked=false; $('c_pede_titulos').checked=false; tiposEdit=[]; renderTipos(); toggleTitulos();
-    $('c_tit_inicio').value=''; $('c_tit_fim').value='';
+    $('c_tit_ini_data').value=''; $('c_tit_ini_hora').value=''; $('c_tit_fim_data').value=''; $('c_tit_fim_hora').value='';
     if($('c_brasao_file')) $('c_brasao_file').value='';
     $('brasao_atual').innerHTML='<i>Salve o concurso primeiro para enviar o brasão.</i>';
     if($('c_pdf_file')) $('c_pdf_file').value='';
@@ -273,7 +280,9 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('c_data_inicio').value=c.data_inicio||''; $('c_data_fim').value=c.data_fim||''; $('c_data_encerramento').value=c.data_encerramento||'';
     $('c_aberto').checked=!!c.aberto; cargosEdit=(c.cargos||[]).slice(); renderCargos();
     $('c_gratuito').checked=!!c.gratuito; $('c_pede_titulos').checked=!!c.pede_titulos; tiposEdit=(c.tipos_titulos||[]).slice(); renderTipos(); toggleTitulos();
-    $('c_tit_inicio').value=c.titulos_inicio||''; $('c_tit_fim').value=c.titulos_fim||'';
+    var _ti=(c.titulos_inicio||'').split('T'), _tf=(c.titulos_fim||'').split('T');
+    $('c_tit_ini_data').value=_ti[0]||''; $('c_tit_ini_hora').value=(_ti[1]||'').slice(0,5);
+    $('c_tit_fim_data').value=_tf[0]||''; $('c_tit_fim_hora').value=(_tf[1]||'').slice(0,5);
     if($('c_brasao_file')) $('c_brasao_file').value='';
     $('brasao_atual').innerHTML = c.brasao_url ? ('Brasão atual: <img src="'+esc(c.brasao_url)+'?t='+Date.now()+'" style="height:26px;vertical-align:middle;border-radius:4px"> — envie outro para substituir') : '<i>Nenhum brasão enviado.</i>';
     if($('c_pdf_file')) $('c_pdf_file').value='';
@@ -294,7 +303,8 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       dias_vencimento:$('c_dias').value, pdf_url:$('c_pdf').value, aberto:$('c_aberto').checked,
       data_inicio:$('c_data_inicio').value, data_fim:$('c_data_fim').value, data_encerramento:$('c_data_encerramento').value,
       gratuito:$('c_gratuito').checked, pede_titulos:$('c_pede_titulos').checked, tipos_titulos:tiposEdit, cargos:cargosEdit,
-      titulos_inicio:$('c_tit_inicio').value, titulos_fim:$('c_tit_fim').value };
+      titulos_inicio: combinaDT($('c_tit_ini_data').value, $('c_tit_ini_hora').value, '00:00'),
+      titulos_fim: combinaDT($('c_tit_fim_data').value, $('c_tit_fim_hora').value, '23:59') };
     const r=await fetch('/admin/concurso',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao salvar');return;}
     $('c_id').value=j.id; $('form_titulo').textContent='Editar concurso';
