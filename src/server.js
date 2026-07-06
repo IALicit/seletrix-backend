@@ -62,6 +62,10 @@ async function inicializarBanco() {
   for (const col of ['data_inicio DATE', 'data_fim DATE', 'data_encerramento DATE']) {
     await pool.query(`ALTER TABLE concursos ADD COLUMN IF NOT EXISTS ${col}`);
   }
+  // Janela de envio de títulos (o candidato só envia nesse período)
+  for (const col of ['titulos_inicio DATE', 'titulos_fim DATE']) {
+    await pool.query(`ALTER TABLE concursos ADD COLUMN IF NOT EXISTS ${col}`);
+  }
   // Anexos de títulos enviados pelos candidatos
   await pool.query(`CREATE TABLE IF NOT EXISTS titulos (id SERIAL PRIMARY KEY, candidato_id INT, tipo TEXT, filename TEXT, mime TEXT, dados BYTEA, tamanho INT, criado_em TIMESTAMPTZ DEFAULT now());`);
   // Login do candidato (CPF + senha) para a Área do Candidato
@@ -102,17 +106,26 @@ function calcPode(di, df, hoje) {
   if (df && hoje > df) return false; // já encerrou
   return true;
 }
+function calcTitulos(pede, ti, tf, hoje) {
+  if (!pede) return { status: 'sem', pode: false };
+  if (ti && hoje < ti) return { status: 'antes', pode: false };
+  if (tf && hoje > tf) return { status: 'depois', pode: false };
+  return { status: 'aberto', pode: true };
+}
 function parseConcurso(r) {
   let cargos = []; try { cargos = JSON.parse(r.cargos || '[]'); } catch {}
   let tipos = []; try { tipos = JSON.parse(r.tipos_titulos || '[]'); } catch {}
   const di = r.data_inicio || null, df = r.data_fim || null, de = r.data_encerramento || null;
+  const ti = r.titulos_inicio || null, tf = r.titulos_fim || null;
   const hoje = hojeBR();
+  const tc = calcTitulos(!!r.pede_titulos, ti, tf, hoje);
   return {
     id: r.id, slug: r.slug, titulo: r.titulo, orgao: r.orgao, periodo: r.periodo, taxa: r.taxa,
     prova: r.prova, vagas: r.vagas, pdf_url: r.pdf_url, taxa_valor: Number(r.taxa_valor) || 0,
     dias_vencimento: r.dias_vencimento || 5, cargos, aberto: r.aberto,
     gratuito: !!r.gratuito, pede_titulos: !!r.pede_titulos, tipos_titulos: tipos,
     data_inicio: di, data_fim: df, data_encerramento: de,
+    titulos_inicio: ti, titulos_fim: tf, titulos_status: tc.status, pode_titulos: tc.pode,
     situacao: calcSituacao(di, df, de, hoje), pode_inscrever: calcPode(di, df, hoje),
   };
 }
@@ -333,11 +346,71 @@ app.post('/api/candidato/login', async (req, res) => {
   if (!lg.rows.length || !verificaSenha(senha, lg.rows[0].senha_hash))
     return res.status(401).json({ erro: 'CPF ou senha inválidos, ou você ainda não fez nenhuma inscrição.' });
   const { rows } = await pool.query(
-    `SELECT k.protocolo, k.cargo, k.status, k.invoice_url, k.criado_em,
-            c.titulo AS concurso, c.slug AS slug, c.gratuito, c.prova
+    `SELECT k.id, k.protocolo, k.cargo, k.status, k.invoice_url, k.criado_em,
+            c.titulo AS concurso, c.slug, c.gratuito, c.prova,
+            c.pede_titulos, c.tipos_titulos, c.titulos_inicio, c.titulos_fim
      FROM candidatos k LEFT JOIN concursos c ON c.id=k.concurso_id
      WHERE k.cpf=$1 ORDER BY k.id DESC`, [cpf]);
-  res.json({ ok: true, nome: lg.rows[0].nome, inscricoes: rows });
+  const ids = rows.map((r) => r.id);
+  const porCand = {};
+  if (ids.length) {
+    const t = await pool.query('SELECT id, candidato_id, tipo, filename FROM titulos WHERE candidato_id = ANY($1) ORDER BY id', [ids]);
+    t.rows.forEach((x) => { (porCand[x.candidato_id] = porCand[x.candidato_id] || []).push({ id: x.id, tipo: x.tipo, filename: x.filename }); });
+  }
+  const hoje = hojeBR();
+  const inscricoes = rows.map((r) => {
+    let tipos = []; try { tipos = JSON.parse(r.tipos_titulos || '[]'); } catch {}
+    const ti = r.titulos_inicio || null, tf = r.titulos_fim || null;
+    const tc = calcTitulos(!!r.pede_titulos, ti, tf, hoje);
+    return {
+      id: r.id, protocolo: r.protocolo, cargo: r.cargo, status: r.status, invoice_url: r.invoice_url, criado_em: r.criado_em,
+      concurso: r.concurso, slug: r.slug, gratuito: r.gratuito, prova: r.prova,
+      pede_titulos: !!r.pede_titulos, tipos_titulos: tipos, titulos_inicio: ti, titulos_fim: tf,
+      titulos_status: tc.status, pode_titulos: tc.pode, titulos: porCand[r.id] || [],
+    };
+  });
+  res.json({ ok: true, nome: lg.rows[0].nome, inscricoes });
+});
+
+// Candidato envia um título (só dentro da janela)
+async function autenticaCandidato(b) {
+  const cpf = soDigitos((b || {}).cpf), senha = String((b || {}).senha || '');
+  if (!cpfValido(cpf) || !senha) return null;
+  const lg = await pool.query('SELECT senha_hash FROM candidato_login WHERE cpf=$1', [cpf]);
+  if (!lg.rows.length || !verificaSenha(senha, lg.rows[0].senha_hash)) return null;
+  return cpf;
+}
+app.post('/api/candidato/titulo', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const b = req.body || {};
+  const cpf = await autenticaCandidato(b);
+  if (!cpf) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
+  const cand = await pool.query('SELECT id, concurso_id FROM candidatos WHERE id=$1 AND cpf=$2', [parseInt(b.inscricao_id), cpf]);
+  if (!cand.rows.length) return res.status(404).json({ erro: 'Inscrição não encontrada.' });
+  const concurso = await lerConcursoPorChave(String(cand.rows[0].concurso_id));
+  if (!concurso || !concurso.pode_titulos) return res.status(403).json({ erro: 'O envio de títulos não está aberto neste período.' });
+  const cnt = await pool.query('SELECT COUNT(*)::int n FROM titulos WHERE candidato_id=$1', [cand.rows[0].id]);
+  if (cnt.rows[0].n >= 10) return res.status(400).json({ erro: 'Limite de 10 títulos por inscrição atingido.' });
+  const buf = decodeB64(b.dataBase64);
+  if (!buf) return res.status(400).json({ erro: 'Selecione um arquivo.' });
+  const mime = mimeDe(buf);
+  if (!mime) return res.status(400).json({ erro: 'Formato inválido. Envie PDF, JPG ou PNG.' });
+  if (buf.length > 5 * 1024 * 1024) return res.status(400).json({ erro: 'Arquivo muito grande (máx. 5 MB).' });
+  await pool.query('INSERT INTO titulos (candidato_id,tipo,filename,mime,dados,tamanho) VALUES ($1,$2,$3,$4,$5,$6)',
+    [cand.rows[0].id, String(b.tipo || '').slice(0, 120), String(b.filename || 'arquivo').slice(0, 200), mime, buf, buf.length]);
+  res.json({ ok: true });
+});
+app.post('/api/candidato/titulo/excluir', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const b = req.body || {};
+  const cpf = await autenticaCandidato(b);
+  if (!cpf) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
+  const t = await pool.query('SELECT t.id, k.concurso_id FROM titulos t JOIN candidatos k ON k.id=t.candidato_id WHERE t.id=$1 AND k.cpf=$2', [parseInt(b.titulo_id), cpf]);
+  if (!t.rows.length) return res.status(404).json({ erro: 'Título não encontrado.' });
+  const concurso = await lerConcursoPorChave(String(t.rows[0].concurso_id));
+  if (!concurso || !concurso.pode_titulos) return res.status(403).json({ erro: 'Fora do período de envio; não é possível remover.' });
+  await pool.query('DELETE FROM titulos WHERE id=$1', [t.rows[0].id]);
+  res.json({ ok: true });
 });
 
 // ---- Webhook ASAAS -----------------------------------------
@@ -392,6 +465,7 @@ app.post('/admin/concurso', exigirSenha, async (req, res) => {
       dias_vencimento: Math.max(1, parseInt(b.dias_vencimento) || 5),
       aberto: bool(b.aberto), gratuito: bool(b.gratuito), pede_titulos: bool(b.pede_titulos),
       data_inicio: dnull(b.data_inicio), data_fim: dnull(b.data_fim), data_encerramento: dnull(b.data_encerramento),
+      titulos_inicio: dnull(b.titulos_inicio), titulos_fim: dnull(b.titulos_fim),
       cargos,
     };
     // slug único
@@ -401,12 +475,12 @@ app.post('/admin/concurso', exigirSenha, async (req, res) => {
       if (!q.rows.length) break; slug = base + '-' + (n++);
     }
     if (b.id) {
-      await pool.query(`UPDATE concursos SET slug=$1,titulo=$2,orgao=$3,periodo=$4,taxa=$5,prova=$6,vagas=$7,pdf_url=$8,taxa_valor=$9,dias_vencimento=$10,cargos=$11,aberto=$12,gratuito=$13,pede_titulos=$14,tipos_titulos=$15,data_inicio=$16,data_fim=$17,data_encerramento=$18 WHERE id=$19`,
-        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), dados.data_inicio, dados.data_fim, dados.data_encerramento, b.id]);
+      await pool.query(`UPDATE concursos SET slug=$1,titulo=$2,orgao=$3,periodo=$4,taxa=$5,prova=$6,vagas=$7,pdf_url=$8,taxa_valor=$9,dias_vencimento=$10,cargos=$11,aberto=$12,gratuito=$13,pede_titulos=$14,tipos_titulos=$15,data_inicio=$16,data_fim=$17,data_encerramento=$18,titulos_inicio=$19,titulos_fim=$20 WHERE id=$21`,
+        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), dados.data_inicio, dados.data_fim, dados.data_encerramento, dados.titulos_inicio, dados.titulos_fim, b.id]);
       return res.json({ ok: true, id: b.id, slug });
     } else {
-      const ins = await pool.query(`INSERT INTO concursos (slug,titulo,orgao,periodo,taxa,prova,vagas,pdf_url,taxa_valor,dias_vencimento,cargos,aberto,gratuito,pede_titulos,tipos_titulos,data_inicio,data_fim,data_encerramento) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
-        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), dados.data_inicio, dados.data_fim, dados.data_encerramento]);
+      const ins = await pool.query(`INSERT INTO concursos (slug,titulo,orgao,periodo,taxa,prova,vagas,pdf_url,taxa_valor,dias_vencimento,cargos,aberto,gratuito,pede_titulos,tipos_titulos,data_inicio,data_fim,data_encerramento,titulos_inicio,titulos_fim) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING id`,
+        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), dados.data_inicio, dados.data_fim, dados.data_encerramento, dados.titulos_inicio, dados.titulos_fim]);
       return res.json({ ok: true, id: ins.rows[0].id, slug });
     }
   } catch (e) { console.error('concurso:', e.message); res.status(500).json({ erro: 'Não foi possível salvar.' }); }

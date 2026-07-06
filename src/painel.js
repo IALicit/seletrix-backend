@@ -129,7 +129,12 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
             <input id="novo_tipo" placeholder="Ex.: Pós-graduação" onkeydown="if(event.key==='Enter'){event.preventDefault();addTipo()}">
             <button class="sec" type="button" onclick="addTipo()">Adicionar</button>
           </div>
-          <p class="hint">O candidato escolhe um desses tipos para cada arquivo (PDF, JPG ou PNG · até 5 arquivos · 5 MB cada).</p>
+          <p class="hint">O candidato escolhe um desses tipos ao enviar cada arquivo, na Área do Candidato (PDF, JPG ou PNG · até 5 MB cada).</p>
+          <div class="grid2" style="margin-top:12px">
+            <div><label>Envio de títulos — início</label><input id="c_tit_inicio" type="date"></div>
+            <div><label>Envio de títulos — fim</label><input id="c_tit_fim" type="date"></div>
+          </div>
+          <p class="hint">O candidato só consegue enviar títulos entre essas datas. Em branco = liberado enquanto "Pedir títulos" estiver ligado.</p>
         </div>
       </div>
       <div style="margin-top:18px;display:flex;gap:10px">
@@ -245,6 +250,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     ['c_titulo','c_orgao','c_periodo','c_prova','c_vagas','c_taxa','c_valor','c_dias','c_pdf','c_data_inicio','c_data_fim','c_data_encerramento'].forEach(id=>$(id).value='');
     $('c_dias').value='5'; $('c_aberto').checked=true; cargosEdit=[]; renderCargos();
     $('c_gratuito').checked=false; $('c_pede_titulos').checked=false; tiposEdit=[]; renderTipos(); toggleTitulos();
+    $('c_tit_inicio').value=''; $('c_tit_fim').value='';
     if($('c_pdf_file')) $('c_pdf_file').value='';
     $('edital_atual').innerHTML='<i>Salve o concurso primeiro; depois o botão de enviar PDF fica disponível.</i>';
     $('form_concurso').style.display='block'; $('form_concurso').scrollIntoView({behavior:'smooth'});
@@ -258,6 +264,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('c_data_inicio').value=c.data_inicio||''; $('c_data_fim').value=c.data_fim||''; $('c_data_encerramento').value=c.data_encerramento||'';
     $('c_aberto').checked=!!c.aberto; cargosEdit=(c.cargos||[]).slice(); renderCargos();
     $('c_gratuito').checked=!!c.gratuito; $('c_pede_titulos').checked=!!c.pede_titulos; tiposEdit=(c.tipos_titulos||[]).slice(); renderTipos(); toggleTitulos();
+    $('c_tit_inicio').value=c.titulos_inicio||''; $('c_tit_fim').value=c.titulos_fim||'';
     if($('c_pdf_file')) $('c_pdf_file').value='';
     $('edital_atual').innerHTML = c.pdf_url ? ('Edital atual: <a href="'+esc(c.pdf_url)+'" target="_blank">ver PDF</a> — envie outro abaixo para substituir.') : '<i>Nenhum edital enviado ainda.</i>';
     $('form_concurso').style.display='block'; $('form_concurso').scrollIntoView({behavior:'smooth'});
@@ -275,7 +282,8 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       prova:$('c_prova').value, vagas:$('c_vagas').value, taxa:$('c_taxa').value, taxa_valor:$('c_valor').value,
       dias_vencimento:$('c_dias').value, pdf_url:$('c_pdf').value, aberto:$('c_aberto').checked,
       data_inicio:$('c_data_inicio').value, data_fim:$('c_data_fim').value, data_encerramento:$('c_data_encerramento').value,
-      gratuito:$('c_gratuito').checked, pede_titulos:$('c_pede_titulos').checked, tipos_titulos:tiposEdit, cargos:cargosEdit };
+      gratuito:$('c_gratuito').checked, pede_titulos:$('c_pede_titulos').checked, tipos_titulos:tiposEdit, cargos:cargosEdit,
+      titulos_inicio:$('c_tit_inicio').value, titulos_fim:$('c_tit_fim').value };
     const r=await fetch('/admin/concurso',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao salvar');return;}
     $('c_id').value=j.id; $('form_titulo').textContent='Editar concurso';
