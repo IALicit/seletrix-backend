@@ -66,6 +66,10 @@ async function inicializarBanco() {
   await pool.query(`CREATE TABLE IF NOT EXISTS titulos (id SERIAL PRIMARY KEY, candidato_id INT, tipo TEXT, filename TEXT, mime TEXT, dados BYTEA, tamanho INT, criado_em TIMESTAMPTZ DEFAULT now());`);
   // Login do candidato (CPF + senha) para a Área do Candidato
   await pool.query(`CREATE TABLE IF NOT EXISTS candidato_login (cpf TEXT PRIMARY KEY, senha_hash TEXT, nome TEXT, criado_em TIMESTAMPTZ DEFAULT now());`);
+  // Etapas do concurso + arquivos de cada etapa + documentos avulsos (retificações)
+  await pool.query(`CREATE TABLE IF NOT EXISTS etapas (id SERIAL PRIMARY KEY, concurso_id INT, nome TEXT, ordem INT DEFAULT 0, criado_em TIMESTAMPTZ DEFAULT now());`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS etapa_arquivos (id SERIAL PRIMARY KEY, etapa_id INT, filename TEXT, mime TEXT, dados BYTEA, tamanho INT, criado_em TIMESTAMPTZ DEFAULT now());`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS documentos (id SERIAL PRIMARY KEY, concurso_id INT, titulo TEXT, filename TEXT, mime TEXT, dados BYTEA, tamanho INT, criado_em TIMESTAMPTZ DEFAULT now());`);
 
   // Migração: se não há concursos, cria o primeiro a partir da config antiga
   const { rows: qc } = await pool.query('SELECT COUNT(*)::int n FROM concursos');
@@ -162,6 +166,24 @@ function verificaSenha(senha, armazenado) {
   } catch { return false; }
 }
 function escapeHtml(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+function mimeDe(buf) {
+  if (!buf || buf.length < 4) return '';
+  if (buf.slice(0, 4).toString('latin1') === '%PDF') return 'application/pdf';
+  if (buf[0] === 0xFF && buf[1] === 0xD8) return 'image/jpeg';
+  if (buf[0] === 0x89 && buf[1] === 0x50) return 'image/png';
+  return '';
+}
+function decodeB64(dataBase64) {
+  let d = String(dataBase64 || ''); const v = d.indexOf(',');
+  if (v > -1 && d.slice(0, v).includes('base64')) d = d.slice(v + 1);
+  return d ? Buffer.from(d, 'base64') : null;
+}
+function servirArquivo(res, row) {
+  if (!row || !row.dados) { res.status(404).send('Não encontrado.'); return; }
+  res.setHeader('Content-Type', row.mime || 'application/octet-stream');
+  res.setHeader('Content-Disposition', 'inline; filename="' + String(row.filename || 'arquivo').replace(/[^\w.\-]/g, '_') + '"');
+  res.send(row.dados);
+}
 
 // ---- Rotas públicas ----------------------------------------
 app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas }));
@@ -188,6 +210,30 @@ app.get('/edital/:chave.pdf', async (req, res) => {
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', 'inline; filename="edital.pdf"');
   res.send(rows[0].dados);
+});
+
+// Etapas + documentos de um concurso (público, só metadados)
+app.get('/api/concurso/:chave/etapas', async (req, res) => {
+  if (!pool) return res.json({ etapas: [], documentos: [] });
+  const c = await lerConcursoPorChave(req.params.chave);
+  if (!c) return res.status(404).json({ etapas: [], documentos: [] });
+  const et = await pool.query('SELECT id,nome FROM etapas WHERE concurso_id=$1 ORDER BY ordem,id', [c.id]);
+  const ar = await pool.query('SELECT ea.id,ea.etapa_id,ea.filename,ea.mime FROM etapa_arquivos ea JOIN etapas e ON e.id=ea.etapa_id WHERE e.concurso_id=$1 ORDER BY ea.id', [c.id]);
+  const dc = await pool.query('SELECT id,titulo,filename,mime FROM documentos WHERE concurso_id=$1 ORDER BY id DESC', [c.id]);
+  const etapas = et.rows.map((e) => ({ nome: e.nome, arquivos: ar.rows.filter((a) => a.etapa_id === e.id).map((a) => ({ id: a.id, filename: a.filename, mime: a.mime })) }));
+  res.json({ etapas, documentos: dc.rows });
+});
+
+// Download público dos arquivos de etapa e documentos
+app.get('/arquivo/etapa/:id', async (req, res) => {
+  if (!pool) return res.status(503).send('Indisponível.');
+  const { rows } = await pool.query('SELECT filename,mime,dados FROM etapa_arquivos WHERE id=$1', [req.params.id]);
+  servirArquivo(res, rows[0]);
+});
+app.get('/arquivo/documento/:id', async (req, res) => {
+  if (!pool) return res.status(503).send('Indisponível.');
+  const { rows } = await pool.query('SELECT filename,mime,dados FROM documentos WHERE id=$1', [req.params.id]);
+  servirArquivo(res, rows[0]);
 });
 
 app.post('/api/inscricao', async (req, res) => {
@@ -471,6 +517,72 @@ app.post('/admin/cobranca/:id', exigirSenha, async (req, res) => {
       ['aguardando_pagamento', pay.customerId, pay.paymentId, pay.invoiceUrl, c.id]);
     res.json({ ok: true, invoiceUrl: pay.invoiceUrl });
   } catch (e) { console.error('cobranca:', e.message); res.status(500).json({ erro: e.message }); }
+});
+
+// ---- Etapas / Documentos (admin) ---------------------------
+app.get('/admin/concurso/:id/etapas.json', exigirSenha, async (req, res) => {
+  if (!pool) return res.json({ etapas: [], documentos: [] });
+  const cid = parseInt(req.params.id);
+  const et = await pool.query('SELECT id,nome,ordem FROM etapas WHERE concurso_id=$1 ORDER BY ordem,id', [cid]);
+  const ar = await pool.query('SELECT ea.id,ea.etapa_id,ea.filename,ea.mime,ea.tamanho FROM etapa_arquivos ea JOIN etapas e ON e.id=ea.etapa_id WHERE e.concurso_id=$1 ORDER BY ea.id', [cid]);
+  const dc = await pool.query('SELECT id,titulo,filename,mime,tamanho FROM documentos WHERE concurso_id=$1 ORDER BY id DESC', [cid]);
+  const etapas = et.rows.map((e) => ({ id: e.id, nome: e.nome, arquivos: ar.rows.filter((a) => a.etapa_id === e.id) }));
+  res.json({ etapas, documentos: dc.rows });
+});
+app.post('/admin/concurso/:id/etapa', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const cid = parseInt(req.params.id);
+  const nome = String((req.body || {}).nome || '').trim().slice(0, 120);
+  if (!nome) return res.status(400).json({ erro: 'Informe o nome da etapa.' });
+  const o = await pool.query('SELECT COALESCE(MAX(ordem),0)+1 AS n FROM etapas WHERE concurso_id=$1', [cid]);
+  const r = await pool.query('INSERT INTO etapas (concurso_id,nome,ordem) VALUES ($1,$2,$3) RETURNING id', [cid, nome, o.rows[0].n]);
+  res.json({ ok: true, id: r.rows[0].id });
+});
+app.post('/admin/etapa/:id/rename', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const nome = String((req.body || {}).nome || '').trim().slice(0, 120);
+  if (!nome) return res.status(400).json({ erro: 'Informe o nome.' });
+  await pool.query('UPDATE etapas SET nome=$1 WHERE id=$2', [nome, req.params.id]);
+  res.json({ ok: true });
+});
+app.delete('/admin/etapa/:id', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const id = parseInt(req.params.id);
+  await pool.query('DELETE FROM etapa_arquivos WHERE etapa_id=$1', [id]);
+  await pool.query('DELETE FROM etapas WHERE id=$1', [id]);
+  res.json({ ok: true });
+});
+app.post('/admin/etapa/:id/arquivo', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const buf = decodeB64((req.body || {}).dataBase64);
+  if (!buf) return res.status(400).json({ erro: 'Selecione um arquivo.' });
+  const mime = mimeDe(buf);
+  if (!mime) return res.status(400).json({ erro: 'Formato inválido. Envie PDF, JPG ou PNG.' });
+  if (buf.length > 10 * 1024 * 1024) return res.status(400).json({ erro: 'Arquivo muito grande (máx. 10 MB).' });
+  await pool.query('INSERT INTO etapa_arquivos (etapa_id,filename,mime,dados,tamanho) VALUES ($1,$2,$3,$4,$5)',
+    [parseInt(req.params.id), String((req.body || {}).filename || 'arquivo').slice(0, 200), mime, buf, buf.length]);
+  res.json({ ok: true });
+});
+app.delete('/admin/arquivo/:id', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  await pool.query('DELETE FROM etapa_arquivos WHERE id=$1', [req.params.id]);
+  res.json({ ok: true });
+});
+app.post('/admin/concurso/:id/documento', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const buf = decodeB64((req.body || {}).dataBase64);
+  if (!buf) return res.status(400).json({ erro: 'Selecione um arquivo.' });
+  const mime = mimeDe(buf);
+  if (!mime) return res.status(400).json({ erro: 'Formato inválido. Envie PDF, JPG ou PNG.' });
+  if (buf.length > 10 * 1024 * 1024) return res.status(400).json({ erro: 'Arquivo muito grande (máx. 10 MB).' });
+  await pool.query('INSERT INTO documentos (concurso_id,titulo,filename,mime,dados,tamanho) VALUES ($1,$2,$3,$4,$5,$6)',
+    [parseInt(req.params.id), String((req.body || {}).titulo || '').slice(0, 160), String((req.body || {}).filename || 'arquivo').slice(0, 200), mime, buf, buf.length]);
+  res.json({ ok: true });
+});
+app.delete('/admin/documento/:id', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  await pool.query('DELETE FROM documentos WHERE id=$1', [req.params.id]);
+  res.json({ ok: true });
 });
 
 app.get('/admin', exigirSenha, (req, res) => res.send(PAINEL_HTML));

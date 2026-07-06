@@ -54,6 +54,14 @@
   .ticket .prot b{font-family:'Sora';font-size:1.5rem;letter-spacing:.04em;color:var(--tinta)}
   .ticket .pagar{display:none;text-decoration:none;background:var(--verde);color:#fff;font-family:'Sora';font-weight:700;padding:15px;border-radius:10px;max-width:340px;margin:14px auto 0}
   .ticket .voltar{max-width:340px;margin:8px auto 0;background:var(--tinta)}
+  .etapas{max-width:1040px;margin:0 auto;padding:6px 16px 50px}
+  .etapas h2{color:var(--tinta);font-size:1.3rem;margin-bottom:6px}
+  .etapas .leg{color:var(--suave);font-size:.92rem;margin-bottom:16px}
+  .etapa{background:var(--branco);border:1px solid var(--linha);border-radius:12px;padding:16px 18px;margin-bottom:12px}
+  .etapa h3{color:var(--tinta);font-size:1.05rem;margin-bottom:10px}
+  .etapas .arq{display:flex;align-items:center;gap:9px;padding:11px 13px;border:1px solid var(--linha);border-radius:9px;margin-bottom:8px;text-decoration:none;color:var(--txt);background:#f6fafc;font-size:.92rem}
+  .etapas .arq:hover{background:#eaf3f8;border-color:var(--aco)}
+  .doc-sec h3{color:var(--tinta);font-size:1.1rem;margin:24px 0 10px}
 </style>
 </head>
 <body>
@@ -115,6 +123,16 @@
     </section>
   </main>
 </div>
+
+<section class="etapas" id="etapas_wrap" style="display:none">
+  <h2>Etapas do concurso</h2>
+  <p class="leg">Acompanhe aqui os documentos de cada fase do processo seletivo.</p>
+  <div id="etapas_lista"></div>
+  <div class="doc-sec" id="docs_box" style="display:none">
+    <h3>Documentos e Retificações</h3>
+    <div id="docs_lista"></div>
+  </div>
+</section>
 <script>
   const slug = new URLSearchParams(location.search).get('c') || '';
   let PEDE=false, TIPOS=[];
@@ -201,6 +219,34 @@
   const cpf=form.cpf, tel=form.telefone;
   cpf.addEventListener('input',function(){ let v=cpf.value.replace(/\D/g,'').slice(0,11); v=v.replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d{1,2})$/,'$1-$2'); cpf.value=v; });
   tel.addEventListener('input',function(){ let v=tel.value.replace(/\D/g,'').slice(0,11); if(v.length>6)v=v.replace(/(\d{2})(\d{5})(\d{0,4}).*/,'($1) $2-$3'); else if(v.length>2)v=v.replace(/(\d{2})(\d{0,5})/,'($1) $2'); tel.value=v.trim(); });
+
+  // Etapas e documentos do concurso
+  (async function(){
+    if(!slug) return;
+    function escp(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+    try{
+      var d = await (await fetch('/api/concurso/'+encodeURIComponent(slug)+'/etapas')).json();
+      var temEtapas = d.etapas && d.etapas.length, temDocs = d.documentos && d.documentos.length;
+      if(!temEtapas && !temDocs) return;
+      document.getElementById('etapas_wrap').style.display='block';
+      if(temEtapas){
+        document.getElementById('etapas_lista').innerHTML = d.etapas.map(function(e){
+          var arqs = e.arquivos.length ? e.arquivos.map(function(a){
+            var ic = a.mime==='application/pdf' ? '📄' : '🖼️';
+            return '<a class="arq" href="/arquivo/etapa/'+a.id+'" target="_blank"><span>'+ic+'</span> '+escp(a.filename)+'</a>';
+          }).join('') : '<p style="color:var(--suave);font-size:.88rem">Ainda sem arquivos nesta etapa.</p>';
+          return '<div class="etapa"><h3>'+escp(e.nome)+'</h3>'+arqs+'</div>';
+        }).join('');
+      }
+      if(temDocs){
+        document.getElementById('docs_box').style.display='block';
+        document.getElementById('docs_lista').innerHTML = d.documentos.map(function(x){
+          var ic = x.mime==='application/pdf' ? '📄' : '🖼️';
+          return '<a class="arq" href="/arquivo/documento/'+x.id+'" target="_blank"><span>'+ic+'</span> '+escp(x.titulo||x.filename)+'</a>';
+        }).join('');
+      }
+    }catch(e){}
+  })();
 </script>
 </body>
 </html>

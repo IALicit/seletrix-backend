@@ -58,6 +58,12 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
  .row-actions{display:flex;gap:8px;align-items:center}
  .checkline{display:flex;align-items:center;gap:9px;margin-top:14px}
  .checkline input{width:auto}
+ .etapa-box{border:1px solid var(--linha);border-radius:12px;padding:14px;margin-bottom:12px;background:#fff}
+ .etapa-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+ .arq-item{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--linha);font-size:.88rem}
+ .arq-item span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ .add-arq{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
+ .add-etapa{display:flex;gap:8px;margin:12px 0}
 </style></head><body>
 <div class="faixa"></div>
 <header>
@@ -182,6 +188,26 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     </div>
   </div>
 </div>
+<div id="modal_etapas" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:12px;max-width:660px;width:94%;padding:22px;max-height:88vh;overflow:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <h3>Etapas &amp; Documentos — <span id="me_titulo"></span></h3><button class="sec" onclick="fecharEtapas()">Fechar</button>
+    </div>
+    <input type="hidden" id="me_cid">
+    <p class="hint">Crie etapas (ex.: Lista de Inscritos, Locais de Prova, Gabarito) e envie os arquivos de cada uma. PDF, JPG ou PNG (até 10 MB).</p>
+    <div id="me_etapas" style="margin-top:12px"></div>
+    <div class="add-etapa"><input id="me_nova_etapa" placeholder="Nome da nova etapa (ex.: Locais de Prova)" onkeydown="if(event.key==='Enter'){event.preventDefault();addEtapa()}"><button onclick="addEtapa()">+ Etapa</button></div>
+    <hr style="margin:18px 0;border:none;border-top:1px solid var(--linha)">
+    <h3 style="font-size:1.05rem">Documentos e Retificações</h3>
+    <p class="hint">Arquivos avulsos (ex.: retificação do edital), sem ser etapa.</p>
+    <div id="me_docs" style="margin-top:8px"></div>
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center">
+      <input id="me_doc_titulo" placeholder="Título (ex.: Retificação nº 01)" style="flex:1;min-width:180px">
+      <input type="file" id="me_doc_file" accept=".pdf,.jpg,.jpeg,.png">
+      <button class="sec" onclick="enviarDoc()">Enviar documento</button>
+    </div>
+  </div>
+</div>
 <script>
   const $ = (id) => document.getElementById(id);
   let CONCURSOS = [], cargosEdit = [], tiposEdit = [], INSCRITOS = [];
@@ -209,7 +235,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
           <div class="meta">\${esc(c.orgao||'')} &middot; \${c.inscritos} inscritos (\${c.pagos} pagos) &middot; taxa \${esc(c.taxa||'-')}</div>
           <div class="meta">Link: <a href="/concurso.html?c=\${esc(c.slug)}" target="_blank">/concurso.html?c=\${esc(c.slug)}</a></div>
         </div>
-        <div class="row-actions"><button class="mini" onclick='editarConcurso(\${JSON.stringify(c.id)})'>Editar</button></div>
+        <div class="row-actions"><button class="mini" onclick='abrirEtapas(\${JSON.stringify(c.id)})'>Etapas / Docs</button><button class="mini" onclick='editarConcurso(\${JSON.stringify(c.id)})'>Editar</button></div>
       </div>\`).join('') || '<p class="hint">Nenhum concurso ainda. Clique em "Novo concurso".</p>';
     // popular filtro de inscritos
     $('filtro_concurso').innerHTML = '<option value="">Todos os concursos</option>' + concursos.map(c=>'<option value="'+c.id+'">'+esc(c.titulo)+'</option>').join('');
@@ -324,6 +350,46 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     const j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao excluir');return;}
     carregarInscritos();
   }
+
+  function toB64(file){ return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res(r.result);};r.onerror=rej;r.readAsDataURL(file);}); }
+  function abrirEtapas(id){ var c=CONCURSOS.find(function(x){return x.id===id;}); $('me_cid').value=id; $('me_titulo').textContent=c?c.titulo:''; $('modal_etapas').style.display='flex'; carregarEtapas(); }
+  function fecharEtapas(){ $('modal_etapas').style.display='none'; }
+  async function carregarEtapas(){
+    var id=$('me_cid').value;
+    var d=await (await fetch('/admin/concurso/'+id+'/etapas.json')).json();
+    $('me_etapas').innerHTML = (d.etapas&&d.etapas.length) ? d.etapas.map(function(e){
+      var arqs = e.arquivos.length ? e.arquivos.map(function(a){
+        return '<div class="arq-item"><span>'+esc(a.filename)+'</span><a href="/arquivo/etapa/'+a.id+'" target="_blank">ver</a><button class="del" onclick="delArq('+a.id+')">Excluir</button></div>';
+      }).join('') : '<p class="hint">Nenhum arquivo nesta etapa.</p>';
+      return '<div class="etapa-box"><div class="etapa-head"><b>'+esc(e.nome)+'</b><button class="del" onclick="delEtapa('+e.id+')">Excluir etapa</button></div>'
+        + arqs
+        + '<div class="add-arq"><input type="file" id="arq_'+e.id+'" accept=".pdf,.jpg,.jpeg,.png"><button class="sec" onclick="enviarArqEtapa('+e.id+')">Enviar arquivo</button></div></div>';
+    }).join('') : '<p class="hint">Nenhuma etapa criada ainda.</p>';
+    $('me_docs').innerHTML = (d.documentos&&d.documentos.length) ? d.documentos.map(function(x){
+      return '<div class="arq-item"><span>'+esc(x.titulo||x.filename)+'</span><a href="/arquivo/documento/'+x.id+'" target="_blank">ver</a><button class="del" onclick="delDoc('+x.id+')">Excluir</button></div>';
+    }).join('') : '<p class="hint">Nenhum documento avulso.</p>';
+  }
+  async function addEtapa(){
+    var nome=$('me_nova_etapa').value.trim(); if(!nome){alert('Digite o nome da etapa.');return;}
+    var r=await fetch('/admin/concurso/'+$('me_cid').value+'/etapa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nome:nome})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} $('me_nova_etapa').value=''; carregarEtapas();
+  }
+  async function delEtapa(id){ if(!confirm('Excluir esta etapa e todos os arquivos dela?'))return; var r=await fetch('/admin/etapa/'+id,{method:'DELETE'}); var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} carregarEtapas(); }
+  async function enviarArqEtapa(id){
+    var inp=document.getElementById('arq_'+id); var f=inp.files[0];
+    if(!f){alert('Escolha um arquivo.');return;} if(f.size>10*1024*1024){alert('Máximo 10 MB.');return;}
+    var b64=await toB64(f);
+    var r=await fetch('/admin/etapa/'+id+'/arquivo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename:f.name,dataBase64:b64})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} carregarEtapas();
+  }
+  async function delArq(id){ if(!confirm('Excluir este arquivo?'))return; var r=await fetch('/admin/arquivo/'+id,{method:'DELETE'}); var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} carregarEtapas(); }
+  async function enviarDoc(){
+    var f=$('me_doc_file').files[0]; if(!f){alert('Escolha um arquivo.');return;} if(f.size>10*1024*1024){alert('Máximo 10 MB.');return;}
+    var b64=await toB64(f);
+    var r=await fetch('/admin/concurso/'+$('me_cid').value+'/documento',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({titulo:$('me_doc_titulo').value,filename:f.name,dataBase64:b64})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} $('me_doc_titulo').value=''; $('me_doc_file').value=''; carregarEtapas();
+  }
+  async function delDoc(id){ if(!confirm('Excluir este documento?'))return; var r=await fetch('/admin/documento/'+id,{method:'DELETE'}); var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} carregarEtapas(); }
 
   carregarConcursos();
 </script></body></html>`;
