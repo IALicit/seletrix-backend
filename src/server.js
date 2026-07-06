@@ -91,11 +91,17 @@ async function inicializarBanco() {
 }
 
 function hojeBR() { return new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10); }
-function calcSituacao(df, de, hoje) {
-  if (df) { if (de && hoje > de) return 'encerrado'; if (hoje > df) return 'andamento'; return 'abertas'; }
+function calcSituacao(di, df, de, hoje) {
+  if (de && hoje > de) return 'encerrado';
+  if (df && hoje > df) return 'andamento';
+  if (di && hoje < di) return 'em_breve';
   return 'abertas';
 }
-function calcPode(di, df, hoje) { if (df) { return (!di || hoje >= di) && hoje <= df; } return true; }
+function calcPode(di, df, hoje) {
+  if (di && hoje < di) return false; // ainda não começou
+  if (df && hoje > df) return false; // já encerrou
+  return true;
+}
 function parseConcurso(r) {
   let cargos = []; try { cargos = JSON.parse(r.cargos || '[]'); } catch {}
   let tipos = []; try { tipos = JSON.parse(r.tipos_titulos || '[]'); } catch {}
@@ -107,7 +113,7 @@ function parseConcurso(r) {
     dias_vencimento: r.dias_vencimento || 5, cargos, aberto: r.aberto,
     gratuito: !!r.gratuito, pede_titulos: !!r.pede_titulos, tipos_titulos: tipos,
     data_inicio: di, data_fim: df, data_encerramento: de,
-    situacao: calcSituacao(df, de, hoje), pode_inscrever: calcPode(di, df, hoje),
+    situacao: calcSituacao(di, df, de, hoje), pode_inscrever: calcPode(di, df, hoje),
   };
 }
 async function lerConcursoPorChave(key) {
@@ -186,7 +192,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'datas-v2' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -242,7 +248,12 @@ app.post('/api/inscricao', async (req, res) => {
     const b = req.body || {};
     const concurso = await lerConcursoPorChave(b.concurso || '');
     if (!concurso) return res.status(400).json({ erro: 'Concurso inválido.' });
-    if (!concurso.pode_inscrever) return res.status(400).json({ erro: 'As inscrições para este concurso não estão abertas no momento.' });
+    if (!concurso.pode_inscrever) {
+      const msg = concurso.situacao === 'em_breve' ? 'As inscrições para este concurso ainda não começaram.'
+        : (concurso.situacao === 'encerrado' ? 'Este processo seletivo foi encerrado.'
+          : 'As inscrições para este concurso estão encerradas.');
+      return res.status(400).json({ erro: msg });
+    }
 
     const nome = (b.nome || '').trim(), cpf = soDigitos(b.cpf), cargo = (b.cargo || '').trim();
     const email = (b.email || '').trim(), telefone = soDigitos(b.telefone);
