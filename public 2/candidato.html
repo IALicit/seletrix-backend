@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Área do Candidato — Seletrix</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{--tinta:#0f3a4f;--tinta2:#0b2a3a;--aco:#2e6f8e;--ambar:#e8a23d;--verde:#1b8a5a;--papel:#f5f7f8;--branco:#fff;--linha:#dde6ea;--txt:#1b2a32;--suave:#5e7280}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Inter',-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--papel);color:var(--txt);line-height:1.5}
+  h1,h2,h3{font-family:'Sora',sans-serif}
+  a{color:var(--aco)}
+  header.topo{background:linear-gradient(135deg,var(--tinta),var(--tinta2));color:#fff;padding:24px 20px}
+  .topo .marca{font-family:'Sora';font-weight:700;font-size:1.2rem}
+  .topo .sub{opacity:.85;font-size:.85rem;margin-top:2px}
+  .topo a{color:#cfe3ef;text-decoration:none}
+  .container{max-width:680px;margin:0 auto;padding:26px 16px 60px}
+  .card{background:var(--branco);border:1px solid var(--linha);border-radius:14px;padding:24px}
+  h2{font-size:1.2rem;margin-bottom:4px}
+  .leg{color:var(--suave);font-size:.92rem;margin-bottom:18px}
+  label{display:block;font-size:.82rem;font-weight:600;color:#33454f;margin:12px 0 6px}
+  input{width:100%;padding:12px;font-size:1rem;border:1.5px solid var(--linha);border-radius:9px}
+  input:focus{outline:none;border-color:var(--aco);box-shadow:0 0 0 3px rgba(46,111,142,.12)}
+  button{margin-top:18px;width:100%;background:var(--verde);color:#fff;border:none;border-radius:10px;padding:14px;font-size:1rem;font-weight:700;font-family:'Sora';cursor:pointer}
+  button:disabled{opacity:.6}
+  .msg{display:none;margin-top:14px;padding:12px 14px;border-radius:10px;font-size:.9rem}
+  .msg.erro{display:block;background:#fdecec;color:#a12626;border:1px solid #f3c6c6}
+  .insc{border:1px solid var(--linha);border-radius:12px;padding:18px;margin-bottom:14px}
+  .insc h3{font-size:1.05rem}
+  .insc .meta{color:var(--suave);font-size:.88rem;margin:2px 0 10px}
+  .badge{display:inline-block;padding:4px 12px;border-radius:999px;font-size:.8rem;font-weight:700}
+  .b-pago{background:#e7f6ee;color:#0f6b41}.b-aguard{background:#fff4e0;color:#8a5a00}.b-insc{background:#eef1f4;color:#456}
+  .pagar{display:inline-block;margin-top:12px;background:var(--verde);color:#fff;text-decoration:none;font-weight:700;padding:11px 16px;border-radius:9px;font-size:.9rem}
+  .insc .acoes{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+  .insc .acoes a{margin-top:0}
+  .verconc{display:inline-block;background:#eef3f5;color:var(--tinta);text-decoration:none;font-weight:700;padding:11px 16px;border-radius:9px;font-size:.9rem;border:1px solid var(--linha)}
+  .verconc:hover{background:#e3ecf1}
+  .topo-user{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+  .sair{background:none;border:none;color:var(--aco);cursor:pointer;font-weight:600;width:auto;margin:0;padding:0;font-size:.9rem}
+</style>
+</head>
+<body>
+<header class="topo">
+  <div class="marca">Seletrix</div>
+  <div class="sub"><a href="/">← Voltar aos concursos</a></div>
+</header>
+<div class="container">
+  <!-- Login -->
+  <div class="card" id="login">
+    <h2>Área do Candidato</h2>
+    <p class="leg">Entre com seu CPF e a senha que você criou na inscrição para acompanhar sua situação.</p>
+    <form id="form-login">
+      <label>CPF</label>
+      <input id="cpf" inputmode="numeric" placeholder="000.000.000-00" maxlength="14" autocomplete="username">
+      <label>Senha</label>
+      <input id="senha" type="password" placeholder="Sua senha" autocomplete="current-password">
+      <button type="submit" id="btn-entrar">Entrar</button>
+      <div class="msg erro" id="erro"></div>
+    </form>
+  </div>
+
+  <!-- Painel do candidato -->
+  <div id="painel" style="display:none">
+    <div class="topo-user">
+      <h2 id="ola">Olá!</h2>
+      <button class="sair" onclick="location.reload()">Sair</button>
+    </div>
+    <div id="lista"></div>
+  </div>
+</div>
+<script>
+  const $ = (id)=>document.getElementById(id);
+  const cpf=$('cpf');
+  cpf.addEventListener('input',function(){ let v=cpf.value.replace(/\D/g,'').slice(0,11); v=v.replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d{1,2})$/,'$1-$2'); cpf.value=v; });
+  function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+
+  function statusInfo(r){
+    if(r.status==='pago') return {badge:'<span class="badge b-pago">Pago ✓</span>', pagar:false};
+    if(r.gratuito) return {badge:'<span class="badge b-insc">Inscrição gratuita</span>', pagar:false};
+    if(r.status==='aguardando_pagamento') return {badge:'<span class="badge b-aguard">Aguardando pagamento</span>', pagar:!!r.invoice_url};
+    return {badge:'<span class="badge b-insc">Inscrito</span>', pagar:!!r.invoice_url};
+  }
+
+  $('form-login').addEventListener('submit', async function(e){
+    e.preventDefault(); $('erro').style.display='none';
+    const btn=$('btn-entrar'); btn.disabled=true; btn.textContent='Entrando...';
+    try{
+      const r=await fetch('/api/candidato/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf:cpf.value,senha:$('senha').value})});
+      const j=await r.json();
+      if(!r.ok) throw new Error(j.erro||'Não foi possível entrar.');
+      $('ola').textContent = 'Olá, '+(j.nome||'candidato')+'!';
+      $('lista').innerHTML = j.inscricoes.length ? j.inscricoes.map(function(r){
+        const s=statusInfo(r);
+        var acoes = '';
+        if(s.pagar) acoes += '<a class="pagar" href="'+esc(r.invoice_url)+'" target="_blank">💳 Pagar / 2ª via</a>';
+        if(r.slug) acoes += '<a class="verconc" href="/concurso.html?c='+encodeURIComponent(r.slug)+'&ver=etapas">📄 Ver etapas e documentos →</a>';
+        return '<div class="insc"><h3>'+esc(r.concurso||'Concurso')+'</h3>'
+          +'<div class="meta">Protocolo <b>'+esc(r.protocolo)+'</b> &middot; '+esc(r.cargo)+(r.prova?(' &middot; Prova: '+esc(r.prova)):'')+'</div>'
+          + s.badge
+          + '<div class="acoes">'+acoes+'</div>'
+          + '</div>';
+      }).join('') : '<div class="card">Você ainda não tem inscrições.</div>';
+      $('login').style.display='none'; $('painel').style.display='block';
+      window.scrollTo({top:0,behavior:'smooth'});
+    }catch(err){ $('erro').textContent=err.message; $('erro').style.display='block'; }
+    finally{ btn.disabled=false; btn.textContent='Entrar'; }
+  });
+</script>
+</body>
+</html>
