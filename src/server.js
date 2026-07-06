@@ -216,7 +216,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'datas-v2' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'relatorios-v1' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -717,6 +717,100 @@ app.delete('/admin/documento/:id', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
   await pool.query('DELETE FROM documentos WHERE id=$1', [req.params.id]);
   res.json({ ok: true });
+});
+
+// ---- Relatórios (admin) ------------------------------------
+function filtrosInscritos(q) {
+  const where = ['k.concurso_id=$1']; const params = [parseInt(q.concurso)];
+  if (q.cargo) { params.push(q.cargo); where.push('k.cargo=$' + params.length); }
+  if (q.pagamento === 'pagos') where.push("k.status='pago'");
+  else if (q.pagamento === 'naopagos') where.push("k.status<>'pago'");
+  if (q.pcd === 'sim') where.push('k.pcd=TRUE');
+  else if (q.pcd === 'nao') where.push('k.pcd=FALSE');
+  return { where: where.join(' AND '), params };
+}
+function mascaraCpf(cpf) { cpf = soDigitos(cpf); if (cpf.length !== 11) return cpf || ''; return '***.' + cpf.slice(3, 6) + '.' + cpf.slice(6, 9) + '-**'; }
+function situacaoTxt(r, gratuito) { return (r.status === 'pago' || gratuito) ? 'Confirmada' : 'Aguardando pagamento'; }
+function resumoFiltros(q) {
+  const p = [];
+  if (q.cargo) p.push('Cargo: ' + q.cargo);
+  p.push('Pagamento: ' + (q.pagamento === 'pagos' ? 'somente pagos' : q.pagamento === 'naopagos' ? 'somente não pagos' : 'todos'));
+  if (q.pcd === 'sim') p.push('somente PcD'); else if (q.pcd === 'nao') p.push('exceto PcD');
+  return p.join(' · ');
+}
+
+app.get('/admin/relatorio/inscritos.json', exigirSenha, async (req, res) => {
+  if (!pool || !req.query.concurso) return res.json({ total: 0 });
+  const f = filtrosInscritos(req.query);
+  const { rows } = await pool.query('SELECT COUNT(*)::int total FROM candidatos k WHERE ' + f.where, f.params);
+  res.json({ total: rows[0].total });
+});
+
+app.get('/admin/relatorio/inscritos.csv', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  const concurso = await lerConcursoPorChave(String(req.query.concurso || ''));
+  if (!concurso) return res.status(400).send('Concurso inválido.');
+  const f = filtrosInscritos(req.query);
+  const { rows } = await pool.query('SELECT * FROM candidatos k WHERE ' + f.where + ' ORDER BY nome', f.params);
+  const completa = req.query.versao === 'completa';
+  const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+  let cab, linha;
+  if (completa) {
+    cab = ['Protocolo', 'Nome', 'CPF', 'Nascimento', 'E-mail', 'Telefone', 'Sexo', 'Cargo', 'PcD', 'Nome social', 'Cidade', 'UF', 'Situação'];
+    linha = (r) => [r.protocolo, r.nome, r.cpf, r.nascimento, r.email, r.telefone, r.sexo, r.cargo, (r.pcd ? 'Sim' : 'Não'), r.nome_social, r.cidade, r.uf, situacaoTxt(r, concurso.gratuito)];
+  } else {
+    cab = ['Nome', 'Inscrição', 'CPF', 'Cargo', 'Situação'];
+    linha = (r) => [r.nome, r.protocolo, mascaraCpf(r.cpf), r.cargo, situacaoTxt(r, concurso.gratuito)];
+  }
+  const csv = '\uFEFF' + [cab.join(';'), ...rows.map((r) => linha(r).map(esc).join(';'))].join('\r\n');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="lista_inscritos.csv"');
+  res.send(csv);
+});
+
+app.get('/admin/relatorio/inscritos.html', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  const concurso = await lerConcursoPorChave(String(req.query.concurso || ''));
+  if (!concurso) return res.status(400).send('Concurso inválido.');
+  const f = filtrosInscritos(req.query);
+  const { rows } = await pool.query('SELECT * FROM candidatos k WHERE ' + f.where + ' ORDER BY nome', f.params);
+  const completa = req.query.versao === 'completa';
+  const e = escapeHtml;
+  const brasao = concurso.brasao_url ? `<img src="${concurso.brasao_url}" alt="" style="height:64px;width:64px;object-fit:contain">` : '';
+  const agora = new Date(Date.now() - 3 * 3600 * 1000).toLocaleString('pt-BR');
+  let thead, tbody;
+  if (completa) {
+    thead = '<th>#</th><th>Nome</th><th>CPF</th><th>Nasc.</th><th>Cargo</th><th>PcD</th><th>Cidade/UF</th><th>Protocolo</th><th>Situação</th>';
+    tbody = rows.map((r, i) => `<tr><td>${i + 1}</td><td>${e(r.nome)}</td><td>${e(r.cpf)}</td><td>${e(r.nascimento || '')}</td><td>${e(r.cargo)}</td><td>${r.pcd ? 'Sim' : 'Não'}</td><td>${e((r.cidade || '') + (r.uf ? '/' + r.uf : ''))}</td><td>${e(r.protocolo)}</td><td>${e(situacaoTxt(r, concurso.gratuito))}</td></tr>`).join('');
+  } else {
+    thead = '<th>#</th><th>Nome</th><th>CPF</th><th>Cargo</th><th>Inscrição</th><th>Situação</th>';
+    tbody = rows.map((r, i) => `<tr><td>${i + 1}</td><td>${e(r.nome)}</td><td>${e(mascaraCpf(r.cpf))}</td><td>${e(r.cargo)}</td><td>${e(r.protocolo)}</td><td>${e(situacaoTxt(r, concurso.gratuito))}</td></tr>`).join('');
+  }
+  const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Lista de Inscritos</title>
+<style>
+ *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,Helvetica,sans-serif}
+ body{color:#16242f;padding:28px;font-size:13px}
+ .barra-print{background:#0b3a5e;color:#fff;padding:12px 18px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+ .barra-print button{background:#fff;color:#0b3a5e;border:none;padding:9px 16px;border-radius:7px;font-weight:700;cursor:pointer;font-size:14px}
+ .cab{display:flex;align-items:center;gap:16px;border-bottom:3px solid #0b3a5e;padding-bottom:14px;margin-bottom:6px}
+ .cab .org{font-size:12px;color:#5b7183;text-transform:uppercase;letter-spacing:.05em;font-weight:700}
+ .cab h1{font-size:18px;color:#0b3a5e;margin-top:2px}
+ .cab h2{font-size:14px;color:#16242f;font-weight:600;margin-top:2px}
+ .meta{color:#5b7183;font-size:12px;margin:10px 0 16px}
+ table{width:100%;border-collapse:collapse;font-size:12px}
+ th,td{border:1px solid #cdd8df;padding:6px 8px;text-align:left}
+ th{background:#eef3f6;color:#0b3a5e}
+ tr:nth-child(even) td{background:#f7fafc}
+ .rodape{margin-top:16px;color:#5b7183;font-size:11px;display:flex;justify-content:space-between}
+ @media print{.barra-print{display:none}body{padding:0}}
+</style></head><body>
+<div class="barra-print"><span>Confira e use <b>Imprimir → Salvar como PDF</b>.</span><button onclick="window.print()">🖨️ Imprimir / Salvar PDF</button></div>
+<div class="cab">${brasao}<div><div class="org">${e(concurso.orgao || 'Processo Seletivo')}</div><h1>${e(concurso.titulo || '')}</h1><h2>Lista de Inscritos${completa ? ' (uso interno)' : ''}</h2></div></div>
+<div class="meta">Filtros: ${e(resumoFiltros(req.query) || 'todos')} &nbsp;·&nbsp; Total: <b>${rows.length}</b> inscritos &nbsp;·&nbsp; Emitido em ${e(agora)}</div>
+<table><thead><tr>${thead}</tr></thead><tbody>${tbody || '<tr><td colspan="9" style="text-align:center;padding:16px">Nenhum inscrito com esses filtros.</td></tr>'}</tbody></table>
+<div class="rodape"><span>${e(concurso.titulo || '')} — Lista de Inscritos</span><span>Gerado pelo Seletrix</span></div>
+</body></html>`;
+  res.send(html);
 });
 
 app.get('/admin', exigirSenha, (req, res) => res.send(PAINEL_HTML));
