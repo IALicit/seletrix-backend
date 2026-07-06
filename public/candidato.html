@@ -37,6 +37,18 @@
   .insc .acoes a{margin-top:0}
   .verconc{display:inline-block;background:#eef3f5;color:var(--tinta);text-decoration:none;font-weight:700;padding:11px 16px;border-radius:9px;font-size:.9rem;border:1px solid var(--linha)}
   .verconc:hover{background:#e3ecf1}
+  .titulos-box{margin-top:16px;padding-top:14px;border-top:1px dashed var(--linha)}
+  .titulos-box h4{font-size:.98rem;color:var(--tinta);margin-bottom:8px}
+  .tit-per{font-size:.85rem;color:var(--suave);margin-bottom:10px}
+  .tit-item{display:flex;align-items:center;gap:10px;justify-content:space-between;padding:8px 10px;border:1px solid var(--linha);border-radius:8px;margin-bottom:7px;font-size:.88rem;background:#f7fafc}
+  .tit-item span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tit-del{background:none;border:none;color:#a12626;cursor:pointer;font-weight:600;font-size:.82rem}
+  .tit-vazio{font-size:.86rem;color:var(--suave);margin-bottom:8px}
+  .tit-add{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
+  .tit-add select{padding:9px;border:1.5px solid var(--linha);border-radius:8px;min-width:150px}
+  .tit-btn{background:var(--verde);color:#fff;border:none;border-radius:8px;padding:10px 15px;font-weight:700;cursor:pointer;font-size:.88rem}
+  .tit-hint{font-size:.78rem;color:var(--suave);margin-top:6px}
+  .tit-fechado{font-size:.9rem;color:#8a5a00;background:#fdf0d9;border-radius:8px;padding:10px 12px;margin-top:6px}
   .topo-user{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
   .sair{background:none;border:none;color:var(--aco);cursor:pointer;font-weight:600;width:auto;margin:0;padding:0;font-size:.9rem}
 </style>
@@ -82,6 +94,71 @@
     if(r.status==='aguardando_pagamento') return {badge:'<span class="badge b-aguard">Aguardando pagamento</span>', pagar:!!r.invoice_url};
     return {badge:'<span class="badge b-insc">Inscrito</span>', pagar:!!r.invoice_url};
   }
+  var SESSAO={cpf:'',senha:''};
+  function toB64(file){ return new Promise(function(res,rej){var rd=new FileReader();rd.onload=function(){res(rd.result);};rd.onerror=rej;rd.readAsDataURL(file);}); }
+  function fmt(iso){ if(!iso) return '—'; var p=String(iso).slice(0,10).split('-'); return p.length===3?(p[2]+'/'+p[1]+'/'+p[0]):iso; }
+
+  function titulosBlock(r){
+    if(!r.pede_titulos) return '';
+    var enviados = (r.titulos||[]).map(function(t){
+      return '<div class="tit-item"><span>📎 '+esc(t.tipo||'Título')+' — '+esc(t.filename)+'</span>'
+        + (r.pode_titulos ? '<button class="tit-del" onclick="delTitulo('+t.id+')">remover</button>' : '')
+        + '</div>';
+    }).join('') || '<p class="tit-vazio">Nenhum título enviado ainda.</p>';
+    var per = (r.titulos_inicio||r.titulos_fim) ? ('<div class="tit-per">Período de envio: <b>'+fmt(r.titulos_inicio)+'</b> a <b>'+fmt(r.titulos_fim)+'</b></div>') : '';
+    var acao;
+    if(r.pode_titulos){
+      acao = '<div class="tit-add">'
+        + '<select id="tt_'+r.id+'">'+ (r.tipos_titulos||[]).map(function(x){return '<option>'+esc(x)+'</option>';}).join('') +'</select>'
+        + '<input type="file" id="tf_'+r.id+'" accept=".pdf,.jpg,.jpeg,.png">'
+        + '<button class="tit-btn" onclick="enviarTitulo('+r.id+')">Enviar título</button></div>'
+        + '<p class="tit-hint">Escolha o tipo e o arquivo (PDF, JPG ou PNG · até 5 MB).</p>';
+    } else {
+      var aviso = r.titulos_status==='antes' ? '⏳ O envio de títulos ainda não começou.'
+        : (r.titulos_status==='depois' ? '🔒 O prazo de envio de títulos foi encerrado.' : 'Envio de títulos indisponível no momento.');
+      acao = '<p class="tit-fechado">'+aviso+'</p>';
+    }
+    return '<div class="titulos-box"><h4>Envio de títulos</h4>'+per+enviados+acao+'</div>';
+  }
+  function cardInsc(r){
+    var s=statusInfo(r);
+    var acoes = '';
+    if(s.pagar) acoes += '<a class="pagar" href="'+esc(r.invoice_url)+'" target="_blank">💳 Pagar / 2ª via</a>';
+    if(r.slug) acoes += '<a class="verconc" href="/concurso.html?c='+encodeURIComponent(r.slug)+'&ver=etapas">📄 Ver etapas e documentos →</a>';
+    return '<div class="insc"><h3>'+esc(r.concurso||'Concurso')+'</h3>'
+      +'<div class="meta">Protocolo <b>'+esc(r.protocolo)+'</b> &middot; '+esc(r.cargo)+(r.prova?(' &middot; Prova: '+esc(r.prova)):'')+'</div>'
+      + s.badge
+      + '<div class="acoes">'+acoes+'</div>'
+      + titulosBlock(r)
+      + '</div>';
+  }
+  function render(j){
+    $('ola').textContent = 'Olá, '+(j.nome||'candidato')+'!';
+    $('lista').innerHTML = j.inscricoes.length ? j.inscricoes.map(cardInsc).join('') : '<div class="card">Você ainda não tem inscrições.</div>';
+    $('login').style.display='none'; $('painel').style.display='block';
+  }
+  async function recarregar(){
+    try{
+      var r=await fetch('/api/candidato/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(SESSAO)});
+      var j=await r.json(); if(r.ok) render(j);
+    }catch(e){}
+  }
+  async function enviarTitulo(id){
+    var sel=document.getElementById('tt_'+id), inp=document.getElementById('tf_'+id);
+    var tipo=sel?sel.value:''; var f=inp?inp.files[0]:null;
+    if(!f){alert('Escolha um arquivo.');return;}
+    if(f.size>5*1024*1024){alert('Máximo 5 MB.');return;}
+    var b64=await toB64(f);
+    var r=await fetch('/api/candidato/titulo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf:SESSAO.cpf,senha:SESSAO.senha,inscricao_id:id,tipo:tipo,filename:f.name,dataBase64:b64})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao enviar');return;}
+    recarregar();
+  }
+  async function delTitulo(id){
+    if(!confirm('Remover este título?'))return;
+    var r=await fetch('/api/candidato/titulo/excluir',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf:SESSAO.cpf,senha:SESSAO.senha,titulo_id:id})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao remover');return;}
+    recarregar();
+  }
 
   $('form-login').addEventListener('submit', async function(e){
     e.preventDefault(); $('erro').style.display='none';
@@ -90,19 +167,8 @@
       const r=await fetch('/api/candidato/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf:cpf.value,senha:$('senha').value})});
       const j=await r.json();
       if(!r.ok) throw new Error(j.erro||'Não foi possível entrar.');
-      $('ola').textContent = 'Olá, '+(j.nome||'candidato')+'!';
-      $('lista').innerHTML = j.inscricoes.length ? j.inscricoes.map(function(r){
-        const s=statusInfo(r);
-        var acoes = '';
-        if(s.pagar) acoes += '<a class="pagar" href="'+esc(r.invoice_url)+'" target="_blank">💳 Pagar / 2ª via</a>';
-        if(r.slug) acoes += '<a class="verconc" href="/concurso.html?c='+encodeURIComponent(r.slug)+'&ver=etapas">📄 Ver etapas e documentos →</a>';
-        return '<div class="insc"><h3>'+esc(r.concurso||'Concurso')+'</h3>'
-          +'<div class="meta">Protocolo <b>'+esc(r.protocolo)+'</b> &middot; '+esc(r.cargo)+(r.prova?(' &middot; Prova: '+esc(r.prova)):'')+'</div>'
-          + s.badge
-          + '<div class="acoes">'+acoes+'</div>'
-          + '</div>';
-      }).join('') : '<div class="card">Você ainda não tem inscrições.</div>';
-      $('login').style.display='none'; $('painel').style.display='block';
+      SESSAO={cpf:cpf.value, senha:$('senha').value};
+      render(j);
       window.scrollTo({top:0,behavior:'smooth'});
     }catch(err){ $('erro').textContent=err.message; $('erro').style.display='block'; }
     finally{ btn.disabled=false; btn.textContent='Entrar'; }

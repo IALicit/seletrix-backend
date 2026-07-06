@@ -157,15 +157,6 @@
       if(c.pdf_url){ const a=document.getElementById('ed-pdf'); a.href=c.pdf_url; a.style.display='block'; }
       const sel=document.getElementById('cargo');
       (c.cargos||[]).forEach(function(cg){ const o=document.createElement('option'); o.value=cg; o.textContent=cg; sel.appendChild(o); });
-      if(c.pede_titulos && (c.tipos_titulos||[]).length){
-        PEDE=true; TIPOS=c.tipos_titulos;
-        const wrap=document.getElementById('titulos_wrap'); wrap.style.display='flex';
-        wrap.innerHTML='<label style="font-weight:600">Títulos (anexos) — opcional</label><div id="titulos_lista"></div>'
-          +'<button type="button" id="add_titulo" style="width:auto;margin-top:10px;background:#eef3f5;color:#0f3a4f">+ Adicionar título</button>'
-          +'<p class="aviso">Formatos aceitos: PDF, JPG ou PNG. Até 5 arquivos, 5 MB cada.</p>';
-        document.getElementById('add_titulo').addEventListener('click', addTituloRow);
-        addTituloRow();
-      }
       if(!c.pode_inscrever){
         btn.disabled=true;
         function fdt(iso){ if(!iso) return ''; var p=String(iso).slice(0,10).split('-'); return p.length===3?(p[2]+'/'+p[1]+'/'+p[0]):iso; }
