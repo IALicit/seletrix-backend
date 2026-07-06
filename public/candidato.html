@@ -95,7 +95,7 @@
         const s=statusInfo(r);
         var acoes = '';
         if(s.pagar) acoes += '<a class="pagar" href="'+esc(r.invoice_url)+'" target="_blank">💳 Pagar / 2ª via</a>';
-        if(r.slug) acoes += '<a class="verconc" href="/concurso.html?c='+encodeURIComponent(r.slug)+'">📄 Ver etapas e documentos →</a>';
+        if(r.slug) acoes += '<a class="verconc" href="/concurso.html?c='+encodeURIComponent(r.slug)+'&ver=etapas">📄 Ver etapas e documentos →</a>';
         return '<div class="insc"><h3>'+esc(r.concurso||'Concurso')+'</h3>'
           +'<div class="meta">Protocolo <b>'+esc(r.protocolo)+'</b> &middot; '+esc(r.cargo)+(r.prova?(' &middot; Prova: '+esc(r.prova)):'')+'</div>'
           + s.badge

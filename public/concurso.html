@@ -62,6 +62,9 @@
   .etapas .arq{display:flex;align-items:center;gap:9px;padding:11px 13px;border:1px solid var(--linha);border-radius:9px;margin-bottom:8px;text-decoration:none;color:var(--txt);background:#f6fafc;font-size:.92rem}
   .etapas .arq:hover{background:#eaf3f8;border-color:var(--aco)}
   .doc-sec h3{color:var(--tinta);font-size:1.1rem;margin:24px 0 10px}
+  .container.modo-etapas{grid-template-columns:1fr;max-width:760px}
+  .container.modo-etapas main{display:none}
+  .container.modo-etapas .edital{position:static}
 </style>
 </head>
 <body>
@@ -135,6 +138,8 @@
 </section>
 <script>
   const slug = new URLSearchParams(location.search).get('c') || '';
+  var modoEtapas = new URLSearchParams(location.search).get('ver')==='etapas';
+  if(modoEtapas){ var _ct=document.querySelector('.container'); if(_ct) _ct.classList.add('modo-etapas'); }
   let PEDE=false, TIPOS=[];
   const form = document.getElementById('form'), erro = document.getElementById('erro'), btn = document.getElementById('enviar');
   (async function(){
@@ -227,7 +232,13 @@
     try{
       var d = await (await fetch('/api/concurso/'+encodeURIComponent(slug)+'/etapas')).json();
       var temEtapas = d.etapas && d.etapas.length, temDocs = d.documentos && d.documentos.length;
-      if(!temEtapas && !temDocs) return;
+      if(!temEtapas && !temDocs){
+        if(modoEtapas){
+          document.getElementById('etapas_wrap').style.display='block';
+          document.getElementById('etapas_lista').innerHTML='<div class="etapa"><p style="color:var(--suave)">As etapas deste concurso ainda não foram publicadas. Assim que houver novidades (lista de inscritos, locais de prova, gabarito, etc.), aparecerão aqui.</p></div>';
+        }
+        return;
+      }
       document.getElementById('etapas_wrap').style.display='block';
       if(temEtapas){
         document.getElementById('etapas_lista').innerHTML = d.etapas.map(function(e){
