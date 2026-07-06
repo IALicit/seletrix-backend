@@ -168,9 +168,11 @@
       }
       if(!c.pode_inscrever){
         btn.disabled=true;
+        function fdt(iso){ if(!iso) return ''; var p=String(iso).slice(0,10).split('-'); return p.length===3?(p[2]+'/'+p[1]+'/'+p[0]):iso; }
         btn.textContent = c.situacao==='andamento' ? 'Concurso em andamento' : (c.situacao==='encerrado' ? 'Concurso encerrado' : 'Inscrições ainda não abertas');
         erro.textContent = c.situacao==='andamento' ? 'As inscrições deste concurso estão encerradas — o processo está em andamento.'
-          : (c.situacao==='encerrado' ? 'Este processo seletivo foi encerrado.' : 'As inscrições para este concurso ainda não começaram.');
+          : (c.situacao==='encerrado' ? 'Este processo seletivo foi encerrado.'
+            : ('As inscrições para este concurso começam em ' + (c.data_inicio ? fdt(c.data_inicio) : 'breve') + '.'));
         erro.style.display='block';
       }
     }catch(e){ document.getElementById('ed-titulo').textContent='Concurso não encontrado'; btn.disabled=true; }

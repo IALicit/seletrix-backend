@@ -136,21 +136,23 @@
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
   function fmt(iso){ if(!iso) return ''; var p=String(iso).slice(0,10).split('-'); return p.length===3?(p[2]+'/'+p[1]+'/'+p[0]):iso; }
   var SEC = [
-    {key:'abertas', titulo:'Inscrições abertas', desc:'Selecione um concurso para ver o edital e realizar sua inscrição.', badgeClass:'', txt:'Inscrições abertas'},
+    {key:'abertas', titulo:'Inscrições abertas', desc:'Selecione um concurso para ver o edital e realizar sua inscrição.'},
+    {key:'em_breve', titulo:'Em breve', desc:'Concursos com inscrições que abrem em breve.'},
     {key:'andamento', titulo:'Concursos em andamento', desc:'Inscrições encerradas — processos em curso (provas, resultados).', badgeClass:'amber', txt:'Em andamento'},
     {key:'encerrado', titulo:'Concursos encerrados', desc:'Processos já finalizados.', badgeClass:'gray', txt:'Encerrado'}
   ];
   function cardHTML(c, sec){
     var taxa = c.gratuito ? 'Gratuita' : esc(c.taxa||'—');
-    var badge = '<span class="badge '+sec.badgeClass+'"><span class="dot"></span> '+sec.txt+'</span>';
-    var cta;
-    if(sec.key==='abertas' && c.pode_inscrever){
+    var badge, cta;
+    if(sec.key==='abertas'){
+      badge = '<span class="badge"><span class="dot"></span> Inscrições abertas</span>';
       cta = '<a class="cta" href="/concurso.html?c='+encodeURIComponent(c.slug)+'">Ver edital e inscrever-se →</a>';
-    } else if(sec.key==='abertas'){
-      var ini = c.data_inicio ? (' a partir de '+fmt(c.data_inicio)) : ' em breve';
-      badge = '<span class="badge amber"><span class="dot"></span> Inscrições'+ini+'</span>';
+    } else if(sec.key==='em_breve'){
+      var ini = c.data_inicio ? ('Inscrições a partir de '+fmt(c.data_inicio)) : 'Inscrições em breve';
+      badge = '<span class="badge amber"><span class="dot"></span> '+ini+'</span>';
       cta = '<a class="cta sec" href="/concurso.html?c='+encodeURIComponent(c.slug)+'">Ver edital →</a>';
     } else {
+      badge = '<span class="badge '+sec.badgeClass+'"><span class="dot"></span> '+sec.txt+'</span>';
       cta = '<a class="cta sec" href="/concurso.html?c='+encodeURIComponent(c.slug)+'">Ver edital →</a>';
     }
     return '<article class="card"><div class="card-bar"></div><div class="card-body">'
