@@ -73,6 +73,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
 <div class="tabs">
   <div class="tab on" data-t="concursos">Concursos</div>
   <div class="tab" data-t="inscritos">Inscritos</div>
+  <div class="tab" data-t="relatorios">Relatórios</div>
 </div>
 <div class="wrap">
   <section id="concursos">
@@ -169,6 +170,26 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
         <tbody id="linhas_insc"></tbody></table></div>
     </div>
   </section>
+
+  <section id="relatorios" style="display:none">
+    <div class="card">
+      <h2 style="font-size:1.15rem;color:var(--navy);margin-bottom:4px">Lista de Inscritos</h2>
+      <p class="hint" style="margin-bottom:14px">Gere a relação de inscritos para publicar (PDF) ou trabalhar os dados (Excel).</p>
+      <div class="grid2">
+        <div><label>Concurso</label><select id="rel_concurso" onchange="relCargos();relPreview()"></select></div>
+        <div><label>Cargo</label><select id="rel_cargo" onchange="relPreview()"><option value="">Todos os cargos</option></select></div>
+        <div><label>Pagamento</label><select id="rel_pagamento" onchange="relPreview()"><option value="todos">Todos</option><option value="pagos">Somente pagos</option><option value="naopagos">Somente não pagos</option></select></div>
+        <div><label>PcD</label><select id="rel_pcd" onchange="relPreview()"><option value="todos">Todos</option><option value="sim">Somente PcD</option><option value="nao">Exceto PcD</option></select></div>
+        <div><label>Versão</label><select id="rel_versao"><option value="publica">Pública (sem CPF/contato — LGPD)</option><option value="completa">Completa (uso interno)</option></select></div>
+      </div>
+      <p style="margin:16px 0" id="rel_total"></p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button onclick="relPDF()">🖨️ Gerar PDF (publicar)</button>
+        <button class="sec" onclick="relCSV()">⬇️ Baixar Excel (CSV)</button>
+      </div>
+      <p class="hint" style="margin-top:12px">No PDF, use <b>Imprimir → Salvar como PDF</b> na janela que abrir.</p>
+    </div>
+  </section>
 </div>
 <div id="modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
   <div style="background:#fff;border-radius:12px;max-width:520px;width:92%;padding:20px;max-height:80vh;overflow:auto">
@@ -231,8 +252,9 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   let CONCURSOS = [], cargosEdit = [], tiposEdit = [], INSCRITOS = [];
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
     document.querySelectorAll('.tab').forEach(x => x.classList.remove('on')); t.classList.add('on');
-    ['concursos','inscritos'].forEach(s => $(s).style.display = s === t.dataset.t ? 'block' : 'none');
+    ['concursos','inscritos','relatorios'].forEach(s => $(s).style.display = s === t.dataset.t ? 'block' : 'none');
     if (t.dataset.t === 'inscritos') carregarInscritos();
+    if (t.dataset.t === 'relatorios') popularRelConcursos();
   });
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
   function combinaDT(data, hora, horaPadrao){ if(!data) return ''; return data+'T'+((hora||horaPadrao)).slice(0,5); }
@@ -435,6 +457,31 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} $('me_doc_titulo').value=''; $('me_doc_file').value=''; carregarEtapas();
   }
   async function delDoc(id){ if(!confirm('Excluir este documento?'))return; var r=await fetch('/admin/documento/'+id,{method:'DELETE'}); var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} carregarEtapas(); }
+
+  function popularRelConcursos(){
+    $('rel_concurso').innerHTML = '<option value="">Selecione o concurso...</option>' + CONCURSOS.map(function(c){return '<option value="'+c.id+'">'+esc(c.titulo)+'</option>';}).join('');
+    $('rel_cargo').innerHTML = '<option value="">Todos os cargos</option>';
+    $('rel_total').textContent = '';
+  }
+  function relCargos(){
+    var c = CONCURSOS.find(function(x){return String(x.id)===String($('rel_concurso').value);});
+    $('rel_cargo').innerHTML = '<option value="">Todos os cargos</option>' + ((c&&c.cargos||[]).map(function(cg){return '<option>'+esc(cg)+'</option>';}).join(''));
+  }
+  function relParams(){
+    return 'concurso='+encodeURIComponent($('rel_concurso').value)
+      +'&cargo='+encodeURIComponent($('rel_cargo').value)
+      +'&pagamento='+$('rel_pagamento').value
+      +'&pcd='+$('rel_pcd').value
+      +'&versao='+$('rel_versao').value;
+  }
+  async function relPreview(){
+    if(!$('rel_concurso').value){ $('rel_total').textContent=''; return; }
+    try{ var d=await (await fetch('/admin/relatorio/inscritos.json?'+relParams())).json();
+      $('rel_total').innerHTML='<b>'+d.total+'</b> inscrito(s) encontrado(s) com os filtros atuais.';
+    }catch(e){}
+  }
+  function relPDF(){ if(!$('rel_concurso').value){alert('Selecione o concurso.');return;} window.open('/admin/relatorio/inscritos.html?'+relParams(),'_blank'); }
+  function relCSV(){ if(!$('rel_concurso').value){alert('Selecione o concurso.');return;} window.location.href='/admin/relatorio/inscritos.csv?'+relParams(); }
 
   carregarConcursos();
 </script></body></html>`;
