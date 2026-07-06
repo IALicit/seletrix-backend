@@ -96,7 +96,7 @@
   }
   var SESSAO={cpf:'',senha:''};
   function toB64(file){ return new Promise(function(res,rej){var rd=new FileReader();rd.onload=function(){res(rd.result);};rd.onerror=rej;rd.readAsDataURL(file);}); }
-  function fmt(iso){ if(!iso) return '—'; var p=String(iso).slice(0,10).split('-'); return p.length===3?(p[2]+'/'+p[1]+'/'+p[0]):iso; }
+  function fmt(iso){ if(!iso) return '—'; var s=String(iso); var d=s.slice(0,10).split('-'); var h=s.slice(11,16); var data=d.length===3?(d[2]+'/'+d[1]+'/'+d[0]):s; return h?(data+' às '+h):data; }
 
   function titulosBlock(r){
     if(!r.pede_titulos) return '';
