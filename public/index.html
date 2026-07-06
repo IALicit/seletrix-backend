@@ -77,6 +77,10 @@
 
   .empty{background:var(--branco);border:1px dashed var(--linha);border-radius:16px;padding:52px 24px;text-align:center;color:var(--suave)}
   .empty .ico{font-size:34px;opacity:.5;margin-bottom:10px}
+  .badge.amber{background:#fdf0d9;color:#8a5a00}.badge.amber .dot{background:#e8a23d}
+  .badge.gray{background:#eef1f4;color:#5b7183}.badge.gray .dot{background:#9aa9b5}
+  .cta.sec{background:#eef2f6;color:var(--navy)}.cta.sec:hover{background:#e3ebf2}
+  .sec-block{margin-bottom:34px}
 
   footer{border-top:1px solid var(--linha);background:var(--branco);margin-top:36px}
   .foot-in{max-width:1080px;margin:0 auto;padding:26px 20px;display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between;align-items:center}
@@ -110,15 +114,10 @@
   </div>
 </section>
 
-<main class="wrap">
-  <div class="section-head">
-    <h2>Concursos com inscrições abertas</h2>
-    <p>Selecione um concurso para ver o edital completo e realizar sua inscrição.</p>
-  </div>
-  <div class="grid" id="grid"></div>
+<main class="wrap" id="conteudo">
   <div class="empty" id="vazio" style="display:none">
     <div class="ico">🗂️</div>
-    <p>No momento não há concursos com inscrições abertas.<br>Volte em breve para conferir as próximas oportunidades.</p>
+    <p>No momento não há concursos disponíveis.<br>Volte em breve para conferir as próximas oportunidades.</p>
   </div>
 </main>
 
@@ -135,25 +134,52 @@
 <script>
   document.getElementById('ano').textContent = new Date().getFullYear();
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  function fmt(iso){ if(!iso) return ''; var p=String(iso).slice(0,10).split('-'); return p.length===3?(p[2]+'/'+p[1]+'/'+p[0]):iso; }
+  var SEC = [
+    {key:'abertas', titulo:'Inscrições abertas', desc:'Selecione um concurso para ver o edital e realizar sua inscrição.', badgeClass:'', txt:'Inscrições abertas'},
+    {key:'andamento', titulo:'Concursos em andamento', desc:'Inscrições encerradas — processos em curso (provas, resultados).', badgeClass:'amber', txt:'Em andamento'},
+    {key:'encerrado', titulo:'Concursos encerrados', desc:'Processos já finalizados.', badgeClass:'gray', txt:'Encerrado'}
+  ];
+  function cardHTML(c, sec){
+    var taxa = c.gratuito ? 'Gratuita' : esc(c.taxa||'—');
+    var badge = '<span class="badge '+sec.badgeClass+'"><span class="dot"></span> '+sec.txt+'</span>';
+    var cta;
+    if(sec.key==='abertas' && c.pode_inscrever){
+      cta = '<a class="cta" href="/concurso.html?c='+encodeURIComponent(c.slug)+'">Ver edital e inscrever-se →</a>';
+    } else if(sec.key==='abertas'){
+      var ini = c.data_inicio ? (' a partir de '+fmt(c.data_inicio)) : ' em breve';
+      badge = '<span class="badge amber"><span class="dot"></span> Inscrições'+ini+'</span>';
+      cta = '<a class="cta sec" href="/concurso.html?c='+encodeURIComponent(c.slug)+'">Ver edital →</a>';
+    } else {
+      cta = '<a class="cta sec" href="/concurso.html?c='+encodeURIComponent(c.slug)+'">Ver edital →</a>';
+    }
+    return '<article class="card"><div class="card-bar"></div><div class="card-body">'
+      + '<div class="orgao">'+esc(c.orgao||'Processo Seletivo')+'</div>'
+      + '<h3>'+esc(c.titulo)+'</h3>'
+      + badge
+      + '<ul class="info">'
+      + '<li><span>Inscrições</span><strong>'+esc(c.periodo||'—')+'</strong></li>'
+      + '<li><span>Taxa</span><strong>'+taxa+'</strong></li>'
+      + '<li><span>Vagas</span><strong>'+esc(c.vagas||'—')+'</strong></li>'
+      + '</ul>' + cta + '</div></article>';
+  }
   (async function(){
     try{
-      const { concursos } = await (await fetch('/api/concursos')).json();
-      const grid = document.getElementById('grid');
-      if(!concursos.length){ document.getElementById('vazio').style.display='block'; return; }
-      grid.innerHTML = concursos.map(function(c){
-        const taxa = c.gratuito ? 'Gratuita' : esc(c.taxa||'—');
-        return '<article class="card"><div class="card-bar"></div><div class="card-body">'
-          + '<div class="orgao">'+esc(c.orgao||'Processo Seletivo')+'</div>'
-          + '<h3>'+esc(c.titulo)+'</h3>'
-          + '<span class="badge"><span class="dot"></span> Inscrições abertas</span>'
-          + '<ul class="info">'
-          + '<li><span>Inscrições</span><strong>'+esc(c.periodo||'—')+'</strong></li>'
-          + '<li><span>Taxa</span><strong>'+taxa+'</strong></li>'
-          + '<li><span>Vagas</span><strong>'+esc(c.vagas||'—')+'</strong></li>'
-          + '</ul>'
-          + '<a class="cta" href="/concurso.html?c='+encodeURIComponent(c.slug)+'">Ver edital e inscrever-se →</a>'
-          + '</div></article>';
-      }).join('');
+      var data = await (await fetch('/api/concursos')).json();
+      var todos = data.concursos || [];
+      var conteudo = document.getElementById('conteudo');
+      var vazio = document.getElementById('vazio');
+      var algum = false;
+      SEC.forEach(function(sec){
+        var lista = todos.filter(function(c){ return c.situacao===sec.key; });
+        if(!lista.length) return;
+        algum = true;
+        var bloco = document.createElement('div'); bloco.className='sec-block';
+        bloco.innerHTML = '<div class="section-head"><h2>'+sec.titulo+'</h2><p>'+sec.desc+'</p></div>'
+          + '<div class="grid">'+lista.map(function(c){return cardHTML(c,sec);}).join('')+'</div>';
+        conteudo.insertBefore(bloco, vazio);
+      });
+      if(!algum){ vazio.style.display='block'; }
     }catch(e){ document.getElementById('vazio').style.display='block'; }
   })();
 </script>

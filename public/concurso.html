@@ -143,7 +143,13 @@
         document.getElementById('add_titulo').addEventListener('click', addTituloRow);
         addTituloRow();
       }
-      if(!c.aberto){ btn.disabled=true; btn.textContent='Inscrições encerradas'; }
+      if(!c.pode_inscrever){
+        btn.disabled=true;
+        btn.textContent = c.situacao==='andamento' ? 'Concurso em andamento' : (c.situacao==='encerrado' ? 'Concurso encerrado' : 'Inscrições ainda não abertas');
+        erro.textContent = c.situacao==='andamento' ? 'As inscrições deste concurso estão encerradas — o processo está em andamento.'
+          : (c.situacao==='encerrado' ? 'Este processo seletivo foi encerrado.' : 'As inscrições para este concurso ainda não começaram.');
+        erro.style.display='block';
+      }
     }catch(e){ document.getElementById('ed-titulo').textContent='Concurso não encontrado'; btn.disabled=true; }
   })();
 

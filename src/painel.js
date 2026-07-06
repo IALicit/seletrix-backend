@@ -1,47 +1,69 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
 module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
+<link rel="icon" href="/logo.png" type="image/png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
- :root{--tinta:#0f3a4f;--verde:#1b8a5a;--linha:#dde6ea;--suave:#5e7280;--papel:#f5f7f8;--ambar:#e8a23d}
- *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif}
- body{background:var(--papel);color:#1b2a32}
- header{background:var(--tinta);color:#fff;padding:16px 22px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px}
+ :root{--navy:#0b3a5e;--navy2:#0a2f4d;--azul:#12558a;--ouro:#c8a94b;--verde:#1f9d5b;--verde-bg:#e7f6ee;--papel:#eef2f6;--branco:#fff;--linha:#dbe4ec;--txt:#16242f;--suave:#5b7183}
+ *{box-sizing:border-box;margin:0;padding:0;font-family:'Inter',-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+ body{background:var(--papel);color:var(--txt);line-height:1.5}
+ h1,h2,h3{font-family:'Sora',sans-serif;letter-spacing:-.01em}
+ .faixa{height:4px;background:linear-gradient(90deg,var(--navy),var(--azul) 55%,var(--ouro))}
+ header{background:linear-gradient(135deg,var(--navy),var(--navy2));color:#fff;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+ header .brand{display:flex;align-items:center;gap:12px}
+ header .logo{height:40px;width:auto}
+ header .hnome{font-family:'Sora';font-weight:800;font-size:1.15rem}
+ header .hsub{font-size:.72rem;opacity:.85;letter-spacing:.06em;text-transform:uppercase}
  header h1{font-size:1.05rem}
- .tabs{display:flex;gap:6px;padding:0 22px;background:#fff;border-bottom:1px solid var(--linha)}
- .tab{padding:14px 18px;cursor:pointer;font-weight:600;color:var(--suave);border-bottom:3px solid transparent}
- .tab.on{color:var(--tinta);border-color:var(--tinta)}
- .wrap{padding:22px;max-width:1100px;margin:0 auto}
- .card{background:#fff;border:1px solid var(--linha);border-radius:12px;padding:20px;margin-bottom:16px}
+ .link-topo{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28);color:#fff;text-decoration:none;font-weight:600;font-size:.88rem;padding:9px 16px;border-radius:9px}
+ .link-topo:hover{background:rgba(255,255,255,.2)}
+ .tabs{display:flex;gap:4px;padding:0 24px;background:var(--branco);border-bottom:1px solid var(--linha)}
+ .tab{padding:15px 20px;cursor:pointer;font-weight:600;color:var(--suave);border-bottom:3px solid transparent}
+ .tab.on{color:var(--navy);border-color:var(--ouro)}
+ .wrap{padding:24px;max-width:1120px;margin:0 auto}
+ .card{background:var(--branco);border:1px solid var(--linha);border-radius:14px;padding:22px;margin-bottom:16px;box-shadow:0 6px 20px rgba(11,58,94,.05)}
  label{display:block;font-size:.8rem;font-weight:600;color:#33454f;margin:12px 0 6px}
- input,select{width:100%;padding:10px 12px;border:1.5px solid var(--linha);border-radius:8px;font-size:.95rem;background:#fff}
- input:focus,select:focus{outline:none;border-color:#2e6f8e}
+ input,select{width:100%;padding:11px 13px;border:1.5px solid var(--linha);border-radius:9px;font-size:.95rem;background:#fff;color:var(--txt)}
+ input:focus,select:focus{outline:none;border-color:var(--azul);box-shadow:0 0 0 3px rgba(18,85,138,.12)}
  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
  @media(max-width:620px){.grid2{grid-template-columns:1fr}}
- button{background:var(--verde);color:#fff;border:none;border-radius:9px;padding:12px 18px;font-weight:700;cursor:pointer;font-size:.95rem}
- button.sec{background:#eef3f5;color:var(--tinta)}
- button.del{background:#fdecec;color:#a12626;padding:8px 12px}
- button.mini{background:#eef3f5;color:var(--tinta);padding:6px 10px;font-size:.8rem}
- .btn{display:inline-block;background:var(--verde);color:#fff;text-decoration:none;padding:11px 16px;border-radius:9px;font-weight:700;font-size:.9rem}
- .chip{display:inline-block;background:#e8eef1;border-radius:999px;padding:5px 12px;margin:3px 4px;font-size:.85rem}
- table{width:100%;border-collapse:collapse;font-size:.85rem}
- th,td{padding:9px 10px;border-bottom:1px solid #e7edf0;text-align:left;white-space:nowrap}
- th{background:#eef3f5;position:sticky;top:0}
- .scroll{overflow:auto;max-height:62vh;border-radius:10px;border:1px solid var(--linha)}
- .cargo-item{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--linha)}
+ button{background:var(--navy);color:#fff;border:none;border-radius:10px;padding:12px 18px;font-weight:700;cursor:pointer;font-size:.94rem;font-family:'Sora'}
+ button:hover{background:var(--azul)}
+ button.sec{background:#eef2f6;color:var(--navy);font-family:inherit}
+ button.sec:hover{background:#e2e9f0}
+ button.del{background:#fdecec;color:#a12626;padding:8px 12px;font-family:inherit}
+ button.del:hover{background:#f9dcdc}
+ button.mini{background:#eef2f6;color:var(--navy);padding:7px 12px;font-size:.8rem;font-family:inherit}
+ button.mini:hover{background:#e2e9f0}
+ .btn{display:inline-flex;align-items:center;gap:8px;background:var(--verde);color:#fff;text-decoration:none;padding:11px 18px;border-radius:10px;font-weight:700;font-size:.9rem;font-family:'Sora'}
+ .btn:hover{filter:brightness(1.05)}
+ .chip{display:inline-block;background:#e8eef4;color:var(--navy);border-radius:999px;padding:5px 13px;margin:3px 4px;font-size:.84rem;font-weight:500}
+ table{width:100%;border-collapse:collapse;font-size:.86rem}
+ th,td{padding:11px 12px;border-bottom:1px solid #e7edf2;text-align:left;white-space:nowrap}
+ th{background:#f3f6f9;color:var(--navy);font-family:'Sora';font-weight:600;position:sticky;top:0}
+ tr:hover td{background:#fafcfe}
+ .scroll{overflow:auto;max-height:62vh;border-radius:12px;border:1px solid var(--linha)}
+ .cargo-item{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--linha)}
  .cargo-item span{flex:1}
- .ok{display:none;background:#e7f6ee;color:#0f6b41;border:1px solid #bfe6d1;border-radius:8px;padding:10px 14px;margin-top:12px;font-size:.9rem}
+ .ok{display:none;background:var(--verde-bg);color:#0f6b41;border:1px solid #bfe6d1;border-radius:9px;padding:11px 14px;margin-top:12px;font-size:.9rem;font-weight:600}
  .hint{font-size:.8rem;color:var(--suave);margin-top:4px}
- .conc{border:1px solid var(--linha);border-radius:12px;padding:16px;margin-bottom:12px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center}
- .conc h3{font-size:1.05rem;margin-bottom:3px}
+ .total{font-weight:700;font-size:1.05rem;margin-bottom:8px;color:var(--navy)}
+ .conc{border:1px solid var(--linha);border-radius:14px;padding:18px;margin-bottom:12px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:center;background:#fff;box-shadow:0 4px 14px rgba(11,58,94,.04)}
+ .conc h3{font-size:1.08rem;color:var(--navy);margin-bottom:3px}
  .conc .meta{color:var(--suave);font-size:.85rem}
- .tag{padding:3px 10px;border-radius:999px;font-size:.75rem;font-weight:700}
- .tag.on{background:#e7f6ee;color:#0f6b41}.tag.off{background:#eef1f4;color:#607}
- .tag.pago{background:#e7f6ee;color:#0f6b41}.tag.aguard{background:#fff4e0;color:#8a5a00}.tag.insc{background:#eef1f4;color:#456}
+ .tag{padding:3px 11px;border-radius:999px;font-size:.74rem;font-weight:700}
+ .tag.on{background:var(--verde-bg);color:#0f6b41}.tag.off{background:#eef1f4;color:#5b7183}
+ .tag.pago{background:var(--verde-bg);color:#0f6b41}.tag.aguard{background:#fdf0d9;color:#8a5a00}.tag.insc{background:#eef1f4;color:#456}
  .row-actions{display:flex;gap:8px;align-items:center}
  .checkline{display:flex;align-items:center;gap:9px;margin-top:14px}
  .checkline input{width:auto}
 </style></head><body>
-<header><h1>Seletrix — Painel de gestão</h1><a class="btn" href="/" target="_blank">Ver site público ↗</a></header>
+<div class="faixa"></div>
+<header>
+  <div class="brand"><img src="/logo.png" alt="Seletrix" class="logo"><div><div class="hnome">Seletrix</div><div class="hsub">Painel de Gestão</div></div></div>
+  <a class="link-topo" href="/" target="_blank">Ver site público ↗</a>
+</header>
 <div class="tabs">
   <div class="tab on" data-t="concursos">Concursos</div>
   <div class="tab" data-t="inscritos">Inscritos</div>
@@ -75,7 +97,14 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       </div>
       <label style="margin-top:14px">Ou cole um link (opcional, se preferir)</label>
       <input id="c_pdf" placeholder="https://...">
-      <div class="checkline"><input type="checkbox" id="c_aberto"><label for="c_aberto" style="margin:0">Inscrições abertas (aparece no site público)</label></div>
+      <label style="margin-top:8px">Datas (a situação no site muda sozinha por elas)</label>
+      <div class="grid2">
+        <div><label>Início das inscrições</label><input id="c_data_inicio" type="date"></div>
+        <div><label>Fim das inscrições</label><input id="c_data_fim" type="date"></div>
+        <div><label>Encerramento do processo</label><input id="c_data_encerramento" type="date"></div>
+      </div>
+      <p class="hint">Hoje entre início e fim → <b>Inscrições abertas</b>. Após o fim → <b>Em andamento</b>. Após o encerramento → <b>Encerrado</b>. Em branco = fica sempre como "abertas".</p>
+      <div class="checkline"><input type="checkbox" id="c_aberto"><label for="c_aberto" style="margin:0">Publicar no site (visível para os candidatos)</label></div>
       <div class="checkline"><input type="checkbox" id="c_gratuito"><label for="c_gratuito" style="margin:0">Inscrição gratuita (não gera cobrança de taxa)</label></div>
       <div style="margin-top:16px">
         <label>Cargos</label>
@@ -162,6 +191,13 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     if (t.dataset.t === 'inscritos') carregarInscritos();
   });
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+  function sitTag(c){
+    var t = c.situacao==='abertas' ? '<span class="tag on">Inscrições abertas</span>'
+      : c.situacao==='andamento' ? '<span class="tag aguard">Em andamento</span>'
+      : '<span class="tag off">Encerrado</span>';
+    if(!c.aberto) t += ' <span class="tag off">Oculto</span>';
+    return t;
+  }
 
   async function carregarConcursos(){
     const { concursos } = await (await fetch('/admin/concursos.json')).json();
@@ -169,7 +205,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('lista_concursos').innerHTML = concursos.map(c => \`
       <div class="conc">
         <div>
-          <h3>\${esc(c.titulo)} \${c.aberto?'<span class="tag on">Aberto</span>':'<span class="tag off">Fechado</span>'}</h3>
+          <h3>\${esc(c.titulo)} \${sitTag(c)}</h3>
           <div class="meta">\${esc(c.orgao||'')} &middot; \${c.inscritos} inscritos (\${c.pagos} pagos) &middot; taxa \${esc(c.taxa||'-')}</div>
           <div class="meta">Link: <a href="/concurso.html?c=\${esc(c.slug)}" target="_blank">/concurso.html?c=\${esc(c.slug)}</a></div>
         </div>
@@ -180,7 +216,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   }
   function novoConcurso(){
     $('form_titulo').textContent='Novo concurso'; $('c_id').value='';
-    ['c_titulo','c_orgao','c_periodo','c_prova','c_vagas','c_taxa','c_valor','c_dias','c_pdf'].forEach(id=>$(id).value='');
+    ['c_titulo','c_orgao','c_periodo','c_prova','c_vagas','c_taxa','c_valor','c_dias','c_pdf','c_data_inicio','c_data_fim','c_data_encerramento'].forEach(id=>$(id).value='');
     $('c_dias').value='5'; $('c_aberto').checked=true; cargosEdit=[]; renderCargos();
     $('c_gratuito').checked=false; $('c_pede_titulos').checked=false; tiposEdit=[]; renderTipos(); toggleTitulos();
     if($('c_pdf_file')) $('c_pdf_file').value='';
@@ -193,6 +229,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('c_titulo').value=c.titulo||''; $('c_orgao').value=c.orgao||''; $('c_periodo').value=c.periodo||'';
     $('c_prova').value=c.prova||''; $('c_vagas').value=c.vagas||''; $('c_taxa').value=c.taxa||'';
     $('c_valor').value=c.taxa_valor||0; $('c_dias').value=c.dias_vencimento||5; $('c_pdf').value=c.pdf_url||'';
+    $('c_data_inicio').value=c.data_inicio||''; $('c_data_fim').value=c.data_fim||''; $('c_data_encerramento').value=c.data_encerramento||'';
     $('c_aberto').checked=!!c.aberto; cargosEdit=(c.cargos||[]).slice(); renderCargos();
     $('c_gratuito').checked=!!c.gratuito; $('c_pede_titulos').checked=!!c.pede_titulos; tiposEdit=(c.tipos_titulos||[]).slice(); renderTipos(); toggleTitulos();
     if($('c_pdf_file')) $('c_pdf_file').value='';
@@ -211,6 +248,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     const payload={ id:$('c_id').value||undefined, titulo:$('c_titulo').value, orgao:$('c_orgao').value, periodo:$('c_periodo').value,
       prova:$('c_prova').value, vagas:$('c_vagas').value, taxa:$('c_taxa').value, taxa_valor:$('c_valor').value,
       dias_vencimento:$('c_dias').value, pdf_url:$('c_pdf').value, aberto:$('c_aberto').checked,
+      data_inicio:$('c_data_inicio').value, data_fim:$('c_data_fim').value, data_encerramento:$('c_data_encerramento').value,
       gratuito:$('c_gratuito').checked, pede_titulos:$('c_pede_titulos').checked, tipos_titulos:tiposEdit, cargos:cargosEdit };
     const r=await fetch('/admin/concurso',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao salvar');return;}

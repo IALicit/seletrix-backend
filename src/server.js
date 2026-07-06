@@ -8,7 +8,8 @@
 const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
+types.setTypeParser(1082, (v) => v); // DATE volta como 'YYYY-MM-DD' (sem fuso)
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -57,6 +58,10 @@ async function inicializarBanco() {
   for (const col of ['gratuito BOOLEAN DEFAULT FALSE', 'pede_titulos BOOLEAN DEFAULT FALSE', "tipos_titulos TEXT DEFAULT '[]'"]) {
     await pool.query(`ALTER TABLE concursos ADD COLUMN IF NOT EXISTS ${col}`);
   }
+  // Datas para situação automática (abertas / andamento / encerrado)
+  for (const col of ['data_inicio DATE', 'data_fim DATE', 'data_encerramento DATE']) {
+    await pool.query(`ALTER TABLE concursos ADD COLUMN IF NOT EXISTS ${col}`);
+  }
   // Anexos de títulos enviados pelos candidatos
   await pool.query(`CREATE TABLE IF NOT EXISTS titulos (id SERIAL PRIMARY KEY, candidato_id INT, tipo TEXT, filename TEXT, mime TEXT, dados BYTEA, tamanho INT, criado_em TIMESTAMPTZ DEFAULT now());`);
   // Login do candidato (CPF + senha) para a Área do Candidato
@@ -81,14 +86,24 @@ async function inicializarBanco() {
   console.log('✅ Banco pronto (concursos + candidatos).');
 }
 
+function hojeBR() { return new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10); }
+function calcSituacao(df, de, hoje) {
+  if (df) { if (de && hoje > de) return 'encerrado'; if (hoje > df) return 'andamento'; return 'abertas'; }
+  return 'abertas';
+}
+function calcPode(di, df, hoje) { if (df) { return (!di || hoje >= di) && hoje <= df; } return true; }
 function parseConcurso(r) {
   let cargos = []; try { cargos = JSON.parse(r.cargos || '[]'); } catch {}
   let tipos = []; try { tipos = JSON.parse(r.tipos_titulos || '[]'); } catch {}
+  const di = r.data_inicio || null, df = r.data_fim || null, de = r.data_encerramento || null;
+  const hoje = hojeBR();
   return {
     id: r.id, slug: r.slug, titulo: r.titulo, orgao: r.orgao, periodo: r.periodo, taxa: r.taxa,
     prova: r.prova, vagas: r.vagas, pdf_url: r.pdf_url, taxa_valor: Number(r.taxa_valor) || 0,
     dias_vencimento: r.dias_vencimento || 5, cargos, aberto: r.aberto,
     gratuito: !!r.gratuito, pede_titulos: !!r.pede_titulos, tipos_titulos: tipos,
+    data_inicio: di, data_fim: df, data_encerramento: de,
+    situacao: calcSituacao(df, de, hoje), pode_inscrever: calcPode(di, df, hoje),
   };
 }
 async function lerConcursoPorChave(key) {
@@ -154,7 +169,7 @@ app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: te
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
   const { rows } = await pool.query('SELECT * FROM concursos WHERE aberto=TRUE ORDER BY criado_em DESC');
-  res.json({ concursos: rows.map(parseConcurso).map((c) => ({ slug: c.slug, titulo: c.titulo, orgao: c.orgao, periodo: c.periodo, taxa: c.taxa, vagas: c.vagas, gratuito: c.gratuito })) });
+  res.json({ concursos: rows.map(parseConcurso).map((c) => ({ slug: c.slug, titulo: c.titulo, orgao: c.orgao, periodo: c.periodo, taxa: c.taxa, vagas: c.vagas, gratuito: c.gratuito, prova: c.prova, situacao: c.situacao, pode_inscrever: c.pode_inscrever, data_inicio: c.data_inicio })) });
 });
 
 app.get('/api/concurso/:chave', async (req, res) => {
@@ -181,7 +196,7 @@ app.post('/api/inscricao', async (req, res) => {
     const b = req.body || {};
     const concurso = await lerConcursoPorChave(b.concurso || '');
     if (!concurso) return res.status(400).json({ erro: 'Concurso inválido.' });
-    if (!concurso.aberto) return res.status(400).json({ erro: 'As inscrições para este concurso estão encerradas.' });
+    if (!concurso.pode_inscrever) return res.status(400).json({ erro: 'As inscrições para este concurso não estão abertas no momento.' });
 
     const nome = (b.nome || '').trim(), cpf = soDigitos(b.cpf), cargo = (b.cargo || '').trim();
     const email = (b.email || '').trim(), telefone = soDigitos(b.telefone);
@@ -312,12 +327,14 @@ app.post('/admin/concurso', exigirSenha, async (req, res) => {
     if (!lim(b.titulo)) return res.status(400).json({ erro: 'Informe o título do concurso.' });
     if (!cargos.length) return res.status(400).json({ erro: 'Cadastre pelo menos um cargo.' });
     const bool = (v) => v === true || v === 'true' || v === 'on';
+    const dnull = (v) => { v = String(v || '').trim(); return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null; };
     const dados = {
       titulo: lim(b.titulo), orgao: lim(b.orgao), periodo: lim(b.periodo), taxa: lim(b.taxa),
       prova: lim(b.prova), vagas: lim(b.vagas), pdf_url: lim(b.pdf_url),
       taxa_valor: Math.max(0, Number(String(b.taxa_valor).replace(',', '.')) || 0),
       dias_vencimento: Math.max(1, parseInt(b.dias_vencimento) || 5),
       aberto: bool(b.aberto), gratuito: bool(b.gratuito), pede_titulos: bool(b.pede_titulos),
+      data_inicio: dnull(b.data_inicio), data_fim: dnull(b.data_fim), data_encerramento: dnull(b.data_encerramento),
       cargos,
     };
     // slug único
@@ -327,12 +344,12 @@ app.post('/admin/concurso', exigirSenha, async (req, res) => {
       if (!q.rows.length) break; slug = base + '-' + (n++);
     }
     if (b.id) {
-      await pool.query(`UPDATE concursos SET slug=$1,titulo=$2,orgao=$3,periodo=$4,taxa=$5,prova=$6,vagas=$7,pdf_url=$8,taxa_valor=$9,dias_vencimento=$10,cargos=$11,aberto=$12,gratuito=$13,pede_titulos=$14,tipos_titulos=$15 WHERE id=$16`,
-        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), b.id]);
+      await pool.query(`UPDATE concursos SET slug=$1,titulo=$2,orgao=$3,periodo=$4,taxa=$5,prova=$6,vagas=$7,pdf_url=$8,taxa_valor=$9,dias_vencimento=$10,cargos=$11,aberto=$12,gratuito=$13,pede_titulos=$14,tipos_titulos=$15,data_inicio=$16,data_fim=$17,data_encerramento=$18 WHERE id=$19`,
+        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), dados.data_inicio, dados.data_fim, dados.data_encerramento, b.id]);
       return res.json({ ok: true, id: b.id, slug });
     } else {
-      const ins = await pool.query(`INSERT INTO concursos (slug,titulo,orgao,periodo,taxa,prova,vagas,pdf_url,taxa_valor,dias_vencimento,cargos,aberto,gratuito,pede_titulos,tipos_titulos) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
-        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos)]);
+      const ins = await pool.query(`INSERT INTO concursos (slug,titulo,orgao,periodo,taxa,prova,vagas,pdf_url,taxa_valor,dias_vencimento,cargos,aberto,gratuito,pede_titulos,tipos_titulos,data_inicio,data_fim,data_encerramento) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`,
+        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), dados.data_inicio, dados.data_fim, dados.data_encerramento]);
       return res.json({ ok: true, id: ins.rows[0].id, slug });
     }
   } catch (e) { console.error('concurso:', e.message); res.status(500).json({ erro: 'Não foi possível salvar.' }); }
