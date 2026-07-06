@@ -74,6 +74,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   <div class="tab on" data-t="concursos">Concursos</div>
   <div class="tab" data-t="inscritos">Inscritos</div>
   <div class="tab" data-t="relatorios">Relatórios</div>
+  <div class="tab" data-t="locacao">Locação</div>
 </div>
 <div class="wrap">
   <section id="concursos">
@@ -190,6 +191,23 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       <p class="hint" style="margin-top:12px">No PDF, use <b>Imprimir → Salvar como PDF</b> na janela que abrir.</p>
     </div>
   </section>
+
+  <section id="locacao" style="display:none">
+    <div class="card">
+      <label>Concurso</label>
+      <select id="loc_concurso" onchange="carregarEscolas()"></select>
+      <p id="loc_resumo" class="hint" style="margin-top:10px"></p>
+    </div>
+    <div id="loc_lista"></div>
+    <div class="card">
+      <h3 style="font-size:1.05rem;color:var(--navy);margin-bottom:10px">Adicionar escola</h3>
+      <div class="grid2">
+        <div><label>Nome da escola</label><input id="loc_nome" placeholder="Ex.: EMEF João da Silva"></div>
+        <div><label>Endereço completo</label><input id="loc_endereco" placeholder="Rua, nº, bairro, cidade/UF"></div>
+      </div>
+      <button style="margin-top:12px" onclick="addEscola()">+ Adicionar escola</button>
+    </div>
+  </section>
 </div>
 <div id="modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
   <div style="background:#fff;border-radius:12px;max-width:520px;width:92%;padding:20px;max-height:80vh;overflow:auto">
@@ -252,9 +270,10 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   let CONCURSOS = [], cargosEdit = [], tiposEdit = [], INSCRITOS = [];
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
     document.querySelectorAll('.tab').forEach(x => x.classList.remove('on')); t.classList.add('on');
-    ['concursos','inscritos','relatorios'].forEach(s => $(s).style.display = s === t.dataset.t ? 'block' : 'none');
+    ['concursos','inscritos','relatorios','locacao'].forEach(s => $(s).style.display = s === t.dataset.t ? 'block' : 'none');
     if (t.dataset.t === 'inscritos') carregarInscritos();
     if (t.dataset.t === 'relatorios') popularRelConcursos();
+    if (t.dataset.t === 'locacao') popularLocConcursos();
   });
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
   function combinaDT(data, hora, horaPadrao){ if(!data) return ''; return data+'T'+((hora||horaPadrao)).slice(0,5); }
@@ -482,6 +501,70 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   }
   function relPDF(){ if(!$('rel_concurso').value){alert('Selecione o concurso.');return;} window.open('/admin/relatorio/inscritos.html?'+relParams(),'_blank'); }
   function relCSV(){ if(!$('rel_concurso').value){alert('Selecione o concurso.');return;} window.location.href='/admin/relatorio/inscritos.csv?'+relParams(); }
+
+  var ESCOLAS=[];
+  function popularLocConcursos(){
+    $('loc_concurso').innerHTML='<option value="">Selecione o concurso...</option>'+CONCURSOS.map(function(c){return '<option value="'+c.id+'">'+esc(c.titulo)+'</option>';}).join('');
+    $('loc_lista').innerHTML=''; $('loc_resumo').textContent='';
+  }
+  async function carregarEscolas(){
+    var id=$('loc_concurso').value; if(!id){ $('loc_lista').innerHTML=''; $('loc_resumo').textContent=''; return; }
+    var d=await (await fetch('/admin/concurso/'+id+'/escolas.json')).json();
+    ESCOLAS=d.escolas;
+    var falta=d.inscritos-d.capacidade_total;
+    var resumo='<b>Inscritos:</b> '+d.inscritos+' &nbsp; <b>Capacidade cadastrada:</b> '+d.capacidade_total+' lugares';
+    if(d.capacidade_total>0||d.inscritos>0) resumo += falta>0 ? ' &nbsp; <span style="color:#a12626;font-weight:700">(faltam '+falta+' lugares)</span>' : ' &nbsp; <span style="color:#0f6b41;font-weight:700">(capacidade suficiente)</span>';
+    $('loc_resumo').innerHTML=resumo;
+    $('loc_lista').innerHTML = d.escolas.length ? d.escolas.map(escolaCard).join('') : '<p class="hint" style="margin:10px 0">Nenhuma escola cadastrada ainda.</p>';
+  }
+  function escolaCard(e){
+    var salas = e.salas.length ? e.salas.map(function(s){
+      return '<div class="arq-item"><span><b>'+esc(s.nome)+'</b> — '+s.capacidade+' lugares'+(s.obs?(' · '+esc(s.obs)):'')+'</span><button class="del" onclick="delSala('+s.id+')">Excluir</button></div>';
+    }).join('') : '<p class="hint">Nenhuma sala cadastrada.</p>';
+    return '<div class="card">'
+      + '<div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">'
+      +   '<div><h3 style="color:var(--navy);font-size:1.05rem">'+esc(e.nome)+'</h3>'
+      +     '<div style="color:var(--suave);font-size:.85rem">'+esc(e.endereco||'')+'</div>'
+      +     '<div style="color:var(--suave);font-size:.85rem">'+e.salas.length+' sala(s) · '+e.capacidade+' lugares</div></div>'
+      +   '<div class="row-actions"><button class="mini" onclick="editEscola('+e.id+')">Editar</button><button class="del" onclick="delEscola('+e.id+')">Excluir</button></div>'
+      + '</div>'
+      + '<div style="margin-top:12px">'+salas+'</div>'
+      + '<div class="add-arq" style="margin-top:10px">'
+      +   '<input id="sn_'+e.id+'" placeholder="Sala (ex.: Sala 1)" style="max-width:160px">'
+      +   '<input id="sc_'+e.id+'" type="number" min="1" placeholder="Capacidade" style="max-width:120px">'
+      +   '<input id="so_'+e.id+'" placeholder="Andar / observação" style="max-width:190px">'
+      +   '<button class="sec" onclick="addSala('+e.id+')">+ Sala</button>'
+      + '</div></div>';
+  }
+  async function addEscola(){
+    var id=$('loc_concurso').value; if(!id){alert('Selecione o concurso.');return;}
+    var nome=$('loc_nome').value.trim(); if(!nome){alert('Informe o nome da escola.');return;}
+    var r=await fetch('/admin/concurso/'+id+'/escola',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nome:nome,endereco:$('loc_endereco').value})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    $('loc_nome').value=''; $('loc_endereco').value=''; carregarEscolas();
+  }
+  async function editEscola(id){
+    var e=ESCOLAS.find(function(x){return x.id===id;}); if(!e)return;
+    var nome=prompt('Nome da escola:', e.nome); if(nome===null)return;
+    var end=prompt('Endereço completo:', e.endereco||''); if(end===null)return;
+    var r=await fetch('/admin/escola/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nome:nome,endereco:end})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} carregarEscolas();
+  }
+  async function delEscola(id){
+    if(!confirm('Excluir esta escola e todas as suas salas?'))return;
+    var r=await fetch('/admin/escola/'+id,{method:'DELETE'}); var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} carregarEscolas();
+  }
+  async function addSala(escolaId){
+    var nome=($('sn_'+escolaId).value||'').trim(), cap=($('sc_'+escolaId).value||''), obs=($('so_'+escolaId).value||'');
+    if(!nome){alert('Informe o nome da sala.');return;}
+    if(!parseInt(cap)||parseInt(cap)<=0){alert('Informe a capacidade da sala.');return;}
+    var r=await fetch('/admin/escola/'+escolaId+'/sala',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nome:nome,capacidade:cap,obs:obs})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} carregarEscolas();
+  }
+  async function delSala(id){
+    if(!confirm('Excluir esta sala?'))return;
+    var r=await fetch('/admin/sala/'+id,{method:'DELETE'}); var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} carregarEscolas();
+  }
 
   carregarConcursos();
 </script></body></html>`;
