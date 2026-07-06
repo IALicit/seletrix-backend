@@ -83,6 +83,9 @@ async function inicializarBanco() {
   await pool.query(`CREATE TABLE IF NOT EXISTS etapas (id SERIAL PRIMARY KEY, concurso_id INT, nome TEXT, ordem INT DEFAULT 0, criado_em TIMESTAMPTZ DEFAULT now());`);
   await pool.query(`CREATE TABLE IF NOT EXISTS etapa_arquivos (id SERIAL PRIMARY KEY, etapa_id INT, filename TEXT, mime TEXT, dados BYTEA, tamanho INT, criado_em TIMESTAMPTZ DEFAULT now());`);
   await pool.query(`CREATE TABLE IF NOT EXISTS documentos (id SERIAL PRIMARY KEY, concurso_id INT, titulo TEXT, filename TEXT, mime TEXT, dados BYTEA, tamanho INT, criado_em TIMESTAMPTZ DEFAULT now());`);
+  // Locação: escolas e salas por concurso
+  await pool.query(`CREATE TABLE IF NOT EXISTS escolas (id SERIAL PRIMARY KEY, concurso_id INT, nome TEXT, endereco TEXT, criado_em TIMESTAMPTZ DEFAULT now());`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS salas (id SERIAL PRIMARY KEY, escola_id INT, nome TEXT, capacidade INT DEFAULT 0, obs TEXT, criado_em TIMESTAMPTZ DEFAULT now());`);
 
   // Migração: se não há concursos, cria o primeiro a partir da config antiga
   const { rows: qc } = await pool.query('SELECT COUNT(*)::int n FROM concursos');
@@ -216,7 +219,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'relatorios-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'locacao-v1' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -811,6 +814,70 @@ app.get('/admin/relatorio/inscritos.html', exigirSenha, async (req, res) => {
 <div class="rodape"><span>${e(concurso.titulo || '')} — Lista de Inscritos</span><span>Gerado pelo Seletrix</span></div>
 </body></html>`;
   res.send(html);
+});
+
+// ---- Locação: escolas e salas (admin) ----------------------
+app.get('/admin/concurso/:id/escolas.json', exigirSenha, async (req, res) => {
+  if (!pool) return res.json({ escolas: [], inscritos: 0, capacidade_total: 0 });
+  const cid = parseInt(req.params.id);
+  const es = await pool.query('SELECT id,nome,endereco FROM escolas WHERE concurso_id=$1 ORDER BY id', [cid]);
+  const sl = await pool.query('SELECT s.id,s.escola_id,s.nome,s.capacidade,s.obs FROM salas s JOIN escolas e ON e.id=s.escola_id WHERE e.concurso_id=$1 ORDER BY s.id', [cid]);
+  const ins = await pool.query('SELECT COUNT(*)::int n FROM candidatos WHERE concurso_id=$1', [cid]);
+  let capTotal = 0;
+  const escolas = es.rows.map((e) => {
+    const salas = sl.rows.filter((s) => s.escola_id === e.id);
+    const cap = salas.reduce((a, s) => a + (s.capacidade || 0), 0);
+    capTotal += cap;
+    return { id: e.id, nome: e.nome, endereco: e.endereco, salas, capacidade: cap };
+  });
+  res.json({ escolas, inscritos: ins.rows[0].n, capacidade_total: capTotal });
+});
+app.post('/admin/concurso/:id/escola', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const nome = String((req.body || {}).nome || '').trim().slice(0, 200);
+  const endereco = String((req.body || {}).endereco || '').trim().slice(0, 400);
+  if (!nome) return res.status(400).json({ erro: 'Informe o nome da escola.' });
+  const r = await pool.query('INSERT INTO escolas (concurso_id,nome,endereco) VALUES ($1,$2,$3) RETURNING id', [parseInt(req.params.id), nome, endereco]);
+  res.json({ ok: true, id: r.rows[0].id });
+});
+app.post('/admin/escola/:id', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const nome = String((req.body || {}).nome || '').trim().slice(0, 200);
+  const endereco = String((req.body || {}).endereco || '').trim().slice(0, 400);
+  if (!nome) return res.status(400).json({ erro: 'Informe o nome da escola.' });
+  await pool.query('UPDATE escolas SET nome=$1,endereco=$2 WHERE id=$3', [nome, endereco, req.params.id]);
+  res.json({ ok: true });
+});
+app.delete('/admin/escola/:id', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const id = parseInt(req.params.id);
+  await pool.query('DELETE FROM salas WHERE escola_id=$1', [id]);
+  await pool.query('DELETE FROM escolas WHERE id=$1', [id]);
+  res.json({ ok: true });
+});
+app.post('/admin/escola/:id/sala', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const nome = String((req.body || {}).nome || '').trim().slice(0, 120);
+  const cap = Math.max(0, parseInt((req.body || {}).capacidade) || 0);
+  const obs = String((req.body || {}).obs || '').trim().slice(0, 200);
+  if (!nome) return res.status(400).json({ erro: 'Informe o nome/número da sala.' });
+  if (cap <= 0) return res.status(400).json({ erro: 'Informe a capacidade da sala.' });
+  await pool.query('INSERT INTO salas (escola_id,nome,capacidade,obs) VALUES ($1,$2,$3,$4)', [parseInt(req.params.id), nome, cap, obs]);
+  res.json({ ok: true });
+});
+app.post('/admin/sala/:id', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const nome = String((req.body || {}).nome || '').trim().slice(0, 120);
+  const cap = Math.max(0, parseInt((req.body || {}).capacidade) || 0);
+  const obs = String((req.body || {}).obs || '').trim().slice(0, 200);
+  if (!nome || cap <= 0) return res.status(400).json({ erro: 'Nome e capacidade são obrigatórios.' });
+  await pool.query('UPDATE salas SET nome=$1,capacidade=$2,obs=$3 WHERE id=$4', [nome, cap, obs, req.params.id]);
+  res.json({ ok: true });
+});
+app.delete('/admin/sala/:id', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  await pool.query('DELETE FROM salas WHERE id=$1', [req.params.id]);
+  res.json({ ok: true });
 });
 
 app.get('/admin', exigirSenha, (req, res) => res.send(PAINEL_HTML));
