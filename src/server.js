@@ -54,6 +54,9 @@ async function inicializarBanco() {
   await pool.query(`CREATE TABLE IF NOT EXISTS config (id INT PRIMARY KEY DEFAULT 1, dados TEXT NOT NULL);`);
   // PDF do edital guardado no banco (permanente)
   await pool.query(`CREATE TABLE IF NOT EXISTS edital_pdf (concurso_id INT PRIMARY KEY, filename TEXT, dados BYTEA, tamanho INT, criado_em TIMESTAMPTZ DEFAULT now());`);
+  // Brasão / logo do órgão (imagem) por concurso
+  await pool.query(`CREATE TABLE IF NOT EXISTS brasao (concurso_id INT PRIMARY KEY, mime TEXT, dados BYTEA, tamanho INT, criado_em TIMESTAMPTZ DEFAULT now());`);
+  await pool.query(`ALTER TABLE concursos ADD COLUMN IF NOT EXISTS brasao_url TEXT`);
   // Campos extras do concurso (gratuito / títulos)
   for (const col of ['gratuito BOOLEAN DEFAULT FALSE', 'pede_titulos BOOLEAN DEFAULT FALSE', "tipos_titulos TEXT DEFAULT '[]'"]) {
     await pool.query(`ALTER TABLE concursos ADD COLUMN IF NOT EXISTS ${col}`);
@@ -126,6 +129,7 @@ function parseConcurso(r) {
     gratuito: !!r.gratuito, pede_titulos: !!r.pede_titulos, tipos_titulos: tipos,
     data_inicio: di, data_fim: df, data_encerramento: de,
     titulos_inicio: ti, titulos_fim: tf, titulos_status: tc.status, pode_titulos: tc.pode,
+    brasao_url: r.brasao_url || null,
     situacao: calcSituacao(di, df, de, hoje), pode_inscrever: calcPode(di, df, hoje),
   };
 }
@@ -210,7 +214,7 @@ app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: te
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
   const { rows } = await pool.query('SELECT * FROM concursos WHERE aberto=TRUE ORDER BY criado_em DESC');
-  res.json({ concursos: rows.map(parseConcurso).map((c) => ({ slug: c.slug, titulo: c.titulo, orgao: c.orgao, periodo: c.periodo, taxa: c.taxa, vagas: c.vagas, gratuito: c.gratuito, prova: c.prova, situacao: c.situacao, pode_inscrever: c.pode_inscrever, data_inicio: c.data_inicio })) });
+  res.json({ concursos: rows.map(parseConcurso).map((c) => ({ slug: c.slug, titulo: c.titulo, orgao: c.orgao, periodo: c.periodo, taxa: c.taxa, vagas: c.vagas, gratuito: c.gratuito, prova: c.prova, situacao: c.situacao, pode_inscrever: c.pode_inscrever, data_inicio: c.data_inicio, brasao_url: c.brasao_url })) });
 });
 
 app.get('/api/concurso/:chave', async (req, res) => {
@@ -228,6 +232,18 @@ app.get('/edital/:chave.pdf', async (req, res) => {
   if (!rows.length || !rows[0].dados) return res.status(404).send('Edital não enviado.');
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', 'inline; filename="edital.pdf"');
+  res.send(rows[0].dados);
+});
+
+// Serve o brasão / logo do órgão (imagem guardada no banco)
+app.get('/brasao/:chave', async (req, res) => {
+  if (!pool) return res.status(503).send('Indisponível.');
+  const c = await lerConcursoPorChave(req.params.chave);
+  if (!c) return res.status(404).send('Não encontrado.');
+  const { rows } = await pool.query('SELECT mime,dados FROM brasao WHERE concurso_id=$1', [c.id]);
+  if (!rows.length || !rows[0].dados) return res.status(404).send('Sem brasão.');
+  res.setHeader('Content-Type', rows[0].mime || 'image/png');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
   res.send(rows[0].dados);
 });
 
@@ -524,6 +540,31 @@ app.get('/admin/titulo/:id', exigirSenha, async (req, res) => {
   res.setHeader('Content-Type', rows[0].mime || 'application/octet-stream');
   res.setHeader('Content-Disposition', 'inline; filename="' + String(rows[0].filename || 'arquivo').replace(/[^\w.\-]/g, '_') + '"');
   res.send(rows[0].dados);
+});
+
+// Upload / remoção do brasão do órgão
+app.post('/admin/concurso/:id/brasao', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const id = parseInt(req.params.id);
+  const c = await lerConcursoPorChave(String(id));
+  if (!c) return res.status(404).json({ erro: 'Concurso não encontrado.' });
+  const buf = decodeB64((req.body || {}).dataBase64);
+  if (!buf) return res.status(400).json({ erro: 'Selecione uma imagem.' });
+  const mime = mimeDe(buf);
+  if (mime !== 'image/jpeg' && mime !== 'image/png') return res.status(400).json({ erro: 'Envie uma imagem JPG ou PNG.' });
+  if (buf.length > 2 * 1024 * 1024) return res.status(400).json({ erro: 'Imagem muito grande (máx. 2 MB).' });
+  await pool.query(`INSERT INTO brasao (concurso_id,mime,dados,tamanho) VALUES ($1,$2,$3,$4)
+    ON CONFLICT (concurso_id) DO UPDATE SET mime=EXCLUDED.mime, dados=EXCLUDED.dados, tamanho=EXCLUDED.tamanho, criado_em=now()`, [id, mime, buf, buf.length]);
+  const url = '/brasao/' + id;
+  await pool.query('UPDATE concursos SET brasao_url=$1 WHERE id=$2', [url, id]);
+  res.json({ ok: true, brasao_url: url });
+});
+app.post('/admin/concurso/:id/brasao/remover', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const id = parseInt(req.params.id);
+  await pool.query('DELETE FROM brasao WHERE concurso_id=$1', [id]);
+  await pool.query('UPDATE concursos SET brasao_url=NULL WHERE id=$1', [id]);
+  res.json({ ok: true });
 });
 
 app.get('/admin/inscritos.json', exigirSenha, async (req, res) => {

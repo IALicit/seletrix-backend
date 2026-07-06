@@ -103,6 +103,13 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       </div>
       <label style="margin-top:14px">Ou cole um link (opcional, se preferir)</label>
       <input id="c_pdf" placeholder="https://...">
+      <label style="margin-top:16px">Brasão / logo do órgão (aparece no card da página principal)</label>
+      <div id="brasao_atual" class="hint" style="margin-bottom:8px"></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="file" id="c_brasao_file" accept="image/png,image/jpeg" style="border:none;padding:0">
+        <button class="sec" type="button" onclick="enviarBrasao()">Enviar brasão</button>
+      </div>
+      <p class="hint">Imagem JPG ou PNG (quadrada fica melhor), até 2 MB.</p>
       <label style="margin-top:8px">Datas (a situação no site muda sozinha por elas)</label>
       <div class="grid2">
         <div><label>Início das inscrições</label><input id="c_data_inicio" type="date"></div>
@@ -251,6 +258,8 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('c_dias').value='5'; $('c_aberto').checked=true; cargosEdit=[]; renderCargos();
     $('c_gratuito').checked=false; $('c_pede_titulos').checked=false; tiposEdit=[]; renderTipos(); toggleTitulos();
     $('c_tit_inicio').value=''; $('c_tit_fim').value='';
+    if($('c_brasao_file')) $('c_brasao_file').value='';
+    $('brasao_atual').innerHTML='<i>Salve o concurso primeiro para enviar o brasão.</i>';
     if($('c_pdf_file')) $('c_pdf_file').value='';
     $('edital_atual').innerHTML='<i>Salve o concurso primeiro; depois o botão de enviar PDF fica disponível.</i>';
     $('form_concurso').style.display='block'; $('form_concurso').scrollIntoView({behavior:'smooth'});
@@ -265,6 +274,8 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('c_aberto').checked=!!c.aberto; cargosEdit=(c.cargos||[]).slice(); renderCargos();
     $('c_gratuito').checked=!!c.gratuito; $('c_pede_titulos').checked=!!c.pede_titulos; tiposEdit=(c.tipos_titulos||[]).slice(); renderTipos(); toggleTitulos();
     $('c_tit_inicio').value=c.titulos_inicio||''; $('c_tit_fim').value=c.titulos_fim||'';
+    if($('c_brasao_file')) $('c_brasao_file').value='';
+    $('brasao_atual').innerHTML = c.brasao_url ? ('Brasão atual: <img src="'+esc(c.brasao_url)+'?t='+Date.now()+'" style="height:26px;vertical-align:middle;border-radius:4px"> — envie outro para substituir') : '<i>Nenhum brasão enviado.</i>';
     if($('c_pdf_file')) $('c_pdf_file').value='';
     $('edital_atual').innerHTML = c.pdf_url ? ('Edital atual: <a href="'+esc(c.pdf_url)+'" target="_blank">ver PDF</a> — envie outro abaixo para substituir.') : '<i>Nenhum edital enviado ainda.</i>';
     $('form_concurso').style.display='block'; $('form_concurso').scrollIntoView({behavior:'smooth'});
@@ -309,6 +320,22 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       await carregarConcursos();
       alert('Edital enviado com sucesso!');
     }catch(e){ $('edital_atual').innerHTML='<i>Falha no envio.</i>'; alert('Não foi possível ler o arquivo.'); }
+  }
+  async function enviarBrasao(){
+    const id=$('c_id').value;
+    if(!id){ alert('Salve o concurso primeiro; depois envie o brasão.'); return; }
+    const f=$('c_brasao_file').files[0];
+    if(!f){ alert('Escolha uma imagem.'); return; }
+    if(f.type && f.type!=='image/png' && f.type!=='image/jpeg'){ alert('Envie uma imagem JPG ou PNG.'); return; }
+    if(f.size>2*1024*1024){ alert('Máximo 2 MB.'); return; }
+    $('brasao_atual').innerHTML='<i>Enviando...</i>';
+    try{
+      const b64=await toB64(f);
+      const r=await fetch('/admin/concurso/'+id+'/brasao',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dataBase64:b64})});
+      const j=await r.json(); if(!r.ok){ $('brasao_atual').innerHTML='<i>Falha.</i>'; alert(j.erro||'Erro'); return; }
+      $('brasao_atual').innerHTML='Brasão enviado ✓ <img src="'+j.brasao_url+'?t='+Date.now()+'" style="height:26px;vertical-align:middle;border-radius:4px;margin-left:6px">';
+      await carregarConcursos();
+    }catch(e){ $('brasao_atual').innerHTML='<i>Falha.</i>'; alert('Não foi possível enviar a imagem.'); }
   }
 
   function statusTag(s){ if(s==='pago')return '<span class="tag pago">Pago</span>'; if(s==='aguardando_pagamento')return '<span class="tag aguard">Aguardando</span>'; return '<span class="tag insc">Inscrito</span>'; }
