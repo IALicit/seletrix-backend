@@ -219,7 +219,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'ata-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'ata-v2' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -1075,10 +1075,11 @@ app.get('/admin/relatorio/ata.html', exigirSenha, async (req, res) => {
   const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Ata da Sala</title>
 <style>
  *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,Helvetica,sans-serif}
- body{color:#111;font-size:12px}
+ body{color:#111;font-size:12px;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+ @page{size:A4 portrait;margin:12mm}
  .barra-print{background:#0b3a5e;color:#fff;padding:12px 18px;display:flex;justify-content:space-between;align-items:center}
  .barra-print button{background:#fff;color:#0b3a5e;border:none;padding:9px 16px;border-radius:7px;font-weight:700;cursor:pointer;font-size:14px}
- .pagina{max-width:800px;margin:0 auto;padding:26px 30px;min-height:1040px}
+ .pagina{max-width:780px;margin:0 auto;padding:18px 24px}
  .tit{text-align:center;font-weight:700;font-size:13px}
  .edital{text-align:center;font-weight:700;font-size:12px;margin-top:4px;line-height:1.35}
  .salahdr{text-align:center;font-weight:700;font-size:17px;margin-top:12px}
@@ -1100,7 +1101,12 @@ app.get('/admin/relatorio/ata.html', exigirSenha, async (req, res) => {
  .ocor{text-align:center;font-weight:700;margin:14px 0 6px}
  .quadro{border:1px solid #000}
  .linha{border-bottom:1px solid #000;height:30px}
- @media print{.barra-print{display:none} .pagina{page-break-after:always;min-height:auto}}
+ @media print{
+   .barra-print{display:none}
+   .pagina{max-width:none;margin:0;padding:0}
+   .pagina + .pagina{break-before:page;page-break-before:always}
+   table,.escola,.quadro{break-inside:avoid}
+ }
 </style></head><body>
 <div class="barra-print"><span>Confira e use <b>Imprimir → Salvar como PDF</b> (cada sala tem 2 páginas).</span><button onclick="window.print()">🖨️ Imprimir / Salvar PDF</button></div>
 ${corpo}
