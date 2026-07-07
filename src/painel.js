@@ -250,6 +250,8 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
         <div><label>Cargo</label><select id="ct_cargo"><option value="">Todos os cargos</option></select></div>
         <div><label>Questões</label><input id="ct_questoes" type="number" min="1" max="120" value="30"></div>
         <div><label>Alternativas</label><input id="ct_alternativas" type="number" min="2" max="6" value="4"></div>
+        <div><label>Data da prova</label><input id="ct_data" type="date"></div>
+        <div><label>Turno</label><input id="ct_turno" placeholder="Ex.: Manhã"></div>
       </div>
       <div style="margin-top:14px"><button onclick="ctPDF()">🖨️ Gerar cartões (PDF)</button></div>
     </div>
@@ -612,7 +614,9 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       +'&sala='+encodeURIComponent($('ct_sala').value)
       +'&cargo='+encodeURIComponent($('ct_cargo').value)
       +'&questoes='+encodeURIComponent($('ct_questoes').value)
-      +'&alternativas='+encodeURIComponent($('ct_alternativas').value);
+      +'&alternativas='+encodeURIComponent($('ct_alternativas').value)
+      +'&data='+encodeURIComponent($('ct_data').value)
+      +'&turno='+encodeURIComponent($('ct_turno').value);
     window.open(u,'_blank');
   }
   async function ataSalas(){

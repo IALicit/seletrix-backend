@@ -220,7 +220,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'cartoes-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'cartoes-v2' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -1235,36 +1235,39 @@ function cartaoShell(corpo) {
 <style>
  *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,Helvetica,sans-serif}
  body{color:#1a2b4a;font-size:12px;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
- @page{size:A4 portrait;margin:10mm}
+ @page{size:A4 portrait;margin:8mm}
  .barra-print{background:#0b3a5e;color:#fff;padding:12px 18px;display:flex;justify-content:space-between;align-items:center}
  .barra-print button{background:#fff;color:#0b3a5e;border:none;padding:9px 16px;border-radius:7px;font-weight:700;cursor:pointer;font-size:14px}
- .pagina{max-width:720px;margin:16px auto;padding:0 8px}
- .cartao{position:relative;border:1px solid #1a2b4a;border-radius:6px;padding:18px 16px 16px}
- .mark{position:absolute;width:26px;height:26px}
- .mark.tl{top:-1px;left:-1px;border-top:4px solid #111;border-left:4px solid #111}
- .mark.tr{top:-1px;right:-1px;border-top:4px solid #111;border-right:4px solid #111}
- .mark.bl{bottom:-1px;left:-1px;border-bottom:4px solid #111;border-left:4px solid #111}
- .mark.br{bottom:-1px;right:-1px;border-bottom:4px solid #111;border-right:4px solid #111}
- .topo{display:flex;gap:14px;border-bottom:1px solid #1a2b4a;padding-bottom:10px}
- .qr{text-align:center;flex:none}
- .qr svg{width:96px;height:96px;display:block}
- .qr .idnum{font-size:8px;margin-top:3px;line-height:1.2}
- .dados{flex:1;font-size:11px;line-height:1.55}
+ .pagina{width:190mm;margin:0 auto;padding:8mm 0}
+ .cartao{position:relative;border:1.5px solid #1a2b4a;border-radius:8px;padding:16px 18px}
+ .mark{position:absolute;width:28px;height:28px}
+ .mark.tl{top:-2px;left:-2px;border-top:5px solid #111;border-left:5px solid #111}
+ .mark.tr{top:-2px;right:-2px;border-top:5px solid #111;border-right:5px solid #111}
+ .mark.bl{bottom:-2px;left:-2px;border-bottom:5px solid #111;border-left:5px solid #111}
+ .mark.br{bottom:-2px;right:-2px;border-bottom:5px solid #111;border-right:5px solid #111}
+ .topo{display:flex;gap:14px;align-items:stretch;margin-bottom:12px}
+ .qr{flex:none;text-align:center;border:1px solid #1a2b4a;border-radius:6px;padding:8px}
+ .qr svg{width:108px;height:108px;display:block}
+ .qr .idnum{font-size:8px;margin-top:5px;line-height:1.3}
+ .dados{flex:1;border:1px solid #1a2b4a;border-radius:6px;padding:12px 14px;font-size:12px;line-height:2}
  .dados .l1{font-weight:700}
- .dados .assin{margin-top:6px}
- .dados .aus{border:1px solid #1a2b4a;padding:2px 6px;border-radius:4px;font-size:10px}
- .meio{display:flex;gap:14px;align-items:center;margin:10px 0;border-bottom:1px solid #1a2b4a;padding-bottom:10px}
- .idbox{flex:1;text-align:center;font-size:9px;font-weight:700;letter-spacing:.04em}
- .idbox .idcode{display:inline-block;margin-top:4px;font-size:16px;letter-spacing:3px;border:1px solid #1a2b4a;padding:2px 10px;border-radius:4px}
- .instr{flex:1;font-size:9px;line-height:1.5}
- .grade{display:flex;gap:34px;justify-content:center;margin-top:12px}
- .col{flex:1;max-width:300px}
- .qrow{display:flex;align-items:center;gap:5px;margin:4px 0}
- .qn{width:22px;text-align:right;font-weight:700;font-size:11px}
- .opt{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border:1.2px solid #1a2b4a;border-radius:50%;font-size:9px;color:#1a2b4a}
+ .dados .assin{margin-top:8px;border-top:1px dashed #8a99b3;padding-top:8px}
+ .ausente{flex:none;width:132px;border:1px solid #1a2b4a;border-radius:6px;padding:10px 8px;text-align:center;font-size:9px;display:flex;flex-direction:column;justify-content:center;gap:6px}
+ .ausente .lbl{font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:#5b7183}
+ .ausente .nome{font-weight:700;font-size:11px}
+ .ausente .bolha{width:30px;height:30px;border:2px solid #1a2b4a;border-radius:50%;margin:2px auto 0}
+ .meio{display:flex;gap:14px;align-items:center;margin:0 0 14px;border:1px solid #1a2b4a;border-radius:6px;padding:10px 14px}
+ .idbox{flex:1;text-align:center;font-size:9px;font-weight:700;letter-spacing:.03em}
+ .idbox .idcode{display:inline-block;margin-top:5px;font-size:17px;letter-spacing:3px}
+ .instr{flex:1.3;font-size:9px;line-height:1.6;border-left:1px solid #cdd8df;padding-left:14px}
+ .grade{display:flex;gap:44px;justify-content:center;margin-top:6px}
+ .col{flex:1;max-width:330px}
+ .qrow{display:flex;align-items:center;gap:6px;margin:5px 0}
+ .qn{width:26px;text-align:right;font-weight:700;font-size:12px}
+ .opt{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;border:1.3px solid #1a2b4a;border-radius:50%;font-size:10px;color:#1a2b4a}
  @media print{
    .barra-print{display:none}
-   .pagina{max-width:none;margin:0;padding:0}
+   .pagina{width:auto;margin:0;padding:0}
    .pagina + .pagina{break-before:page;page-break-before:always}
    .cartao{break-inside:avoid}
  }
@@ -1289,7 +1292,10 @@ app.get('/admin/relatorio/cartoes.html', exigirSenha, async (req, res) => {
     WHERE k.concurso_id=$1${filtro} ORDER BY e.id, s.id, k.nome`, params);
   const e = escapeHtml;
   const letras = ['A', 'B', 'C', 'D', 'E', 'F'];
-  const qrs = await Promise.all(rows.map((r) => QRCode.toString(String(r.protocolo || ''), { type: 'svg', margin: 0, width: 96 }).catch(() => '')));
+  const fmtData = (v) => { v = String(v || '').trim(); const m = v.match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? (m[3] + '/' + m[2] + '/' + m[1]) : v; };
+  const turnoTxt = e(String(req.query.turno || '').trim() || '____________');
+  const dataTxt = e(fmtData(req.query.data) || (concurso.prova ? String(concurso.prova) : '____/____/________'));
+  const qrs = await Promise.all(rows.map((r) => QRCode.toString(String(r.protocolo || ''), { type: 'svg', margin: 0, width: 108 }).catch(() => '')));
   function opts() { let s = ''; for (let a = 0; a < alternativas; a++) s += `<span class="opt">${letras[a]}</span>`; return s; }
   function grade() {
     const meta = Math.ceil(questoes / 2); let c1 = '', c2 = '';
@@ -1305,18 +1311,24 @@ app.get('/admin/relatorio/cartoes.html', exigirSenha, async (req, res) => {
       <div class="topo">
         <div class="qr">${qrs[i]}<div class="idnum">INSCRIÇÃO<br><b>${e(r.protocolo || '')}</b></div></div>
         <div class="dados">
-          <div class="l1">EDITAL: ${e(concurso.titulo || '')} &nbsp;|&nbsp; TURNO: ________</div>
+          <div class="l1">EDITAL: ${e(concurso.titulo || '')} &nbsp;•&nbsp; TURNO: ${turnoTxt}</div>
           <div>${e(concurso.orgao || '')}</div>
-          <div><b>SALA ${salaTxt}</b> &nbsp;—&nbsp; DATA: ____/____/________</div>
+          <div><b>SALA ${salaTxt}</b> &nbsp;•&nbsp; DATA: ${dataTxt}</div>
           <div>CANDIDATO: <b>${e(r.nome || '')}</b></div>
-          <div>CPF: ${e(r.cpf || '')} &nbsp;|&nbsp; INSCRIÇÃO: ${e(r.protocolo || '')}</div>
+          <div>CPF: ${e(r.cpf || '')} &nbsp;•&nbsp; INSCRIÇÃO: ${e(r.protocolo || '')}</div>
           <div>CARGO: <b>${e(r.cargo || '')}</b></div>
-          <div class="assin">ASSINATURA: ______________________________ &nbsp; <span class="aus">( ) Candidato Ausente</span></div>
+          <div class="assin">ASSINATURA: ______________________________________________</div>
+        </div>
+        <div class="ausente">
+          <div class="lbl">Uso do fiscal de sala</div>
+          <div class="nome">Candidato Ausente</div>
+          <div>Preencha se faltou:</div>
+          <div class="bolha"></div>
         </div>
       </div>
       <div class="meio">
         <div class="idbox">CÓDIGO DE IDENTIFICAÇÃO — NÃO RASURAR<br><span class="idcode">${e(r.protocolo || '')}</span></div>
-        <div class="instr"><b>INSTRUÇÕES DE PREENCHIMENTO</b><br>• Não rasure o cartão-resposta.<br>• Use somente caneta azul ou preta.<br>• Preencha todo o círculo: ●</div>
+        <div class="instr"><b>INSTRUÇÕES DE PREENCHIMENTO</b><br>• Não rasure o cartão-resposta. • Use somente caneta azul ou preta. • Preencha todo o círculo: ●</div>
       </div>
       ${grade()}
     </div></div>`;
