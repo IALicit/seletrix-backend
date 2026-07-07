@@ -220,7 +220,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'cartoes-v2' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'cartoes-v3' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -1251,7 +1251,8 @@ function cartaoShell(corpo) {
  .qr .idnum{font-size:8px;margin-top:5px;line-height:1.3}
  .dados{flex:1;border:1px solid #1a2b4a;border-radius:6px;padding:12px 14px;font-size:12px;line-height:2}
  .dados .l1{font-weight:700}
- .dados .assin{margin-top:8px;border-top:1px dashed #8a99b3;padding-top:8px}
+ .dados .assin{margin-top:8px;border-top:1px dashed #8a99b3;padding-top:8px;font-size:11px}
+ .assin-linha{height:30px;border-bottom:1px solid #1a2b4a;margin-top:18px}
  .ausente{flex:none;width:132px;border:1px solid #1a2b4a;border-radius:6px;padding:10px 8px;text-align:center;font-size:9px;display:flex;flex-direction:column;justify-content:center;gap:6px}
  .ausente .lbl{font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:#5b7183}
  .ausente .nome{font-weight:700;font-size:11px}
@@ -1260,8 +1261,8 @@ function cartaoShell(corpo) {
  .idbox{flex:1;text-align:center;font-size:9px;font-weight:700;letter-spacing:.03em}
  .idbox .idcode{display:inline-block;margin-top:5px;font-size:17px;letter-spacing:3px}
  .instr{flex:1.3;font-size:9px;line-height:1.6;border-left:1px solid #cdd8df;padding-left:14px}
- .grade{display:flex;gap:44px;justify-content:center;margin-top:6px}
- .col{flex:1;max-width:330px}
+ .grade{display:flex;gap:64px;justify-content:center;margin-top:6px}
+ .col{flex:none}
  .qrow{display:flex;align-items:center;gap:6px;margin:5px 0}
  .qn{width:26px;text-align:right;font-weight:700;font-size:12px}
  .opt{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;border:1.3px solid #1a2b4a;border-radius:50%;font-size:10px;color:#1a2b4a}
@@ -1317,7 +1318,7 @@ app.get('/admin/relatorio/cartoes.html', exigirSenha, async (req, res) => {
           <div>CANDIDATO: <b>${e(r.nome || '')}</b></div>
           <div>CPF: ${e(r.cpf || '')} &nbsp;•&nbsp; INSCRIÇÃO: ${e(r.protocolo || '')}</div>
           <div>CARGO: <b>${e(r.cargo || '')}</b></div>
-          <div class="assin">ASSINATURA: ______________________________________________</div>
+          <div class="assin">ASSINATURA DO CANDIDATO:<div class="assin-linha"></div></div>
         </div>
         <div class="ausente">
           <div class="lbl">Uso do fiscal de sala</div>
