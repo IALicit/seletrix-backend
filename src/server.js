@@ -219,7 +219,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'listas-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'listas-v2' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -779,7 +779,7 @@ app.get('/admin/relatorio/inscritos.html', exigirSenha, async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM candidatos k WHERE ' + f.where + ' ORDER BY nome', f.params);
   const completa = req.query.versao === 'completa';
   const e = escapeHtml;
-  const brasao = concurso.brasao_url ? `<img src="${concurso.brasao_url}" alt="" style="height:64px;width:64px;object-fit:contain">` : '';
+  const brasao = '';
   const agora = new Date(Date.now() - 3 * 3600 * 1000).toLocaleString('pt-BR');
   let thead, tbody;
   if (completa) {
@@ -984,7 +984,7 @@ app.get('/admin/relatorio/locais.html', exigirSenha, async (req, res) => {
     rows.forEach((r, i) => { body += `<tr><td>${i + 1}</td><td>${e(r.nome)}</td><td>${cpf(r.cpf)}</td><td>${e(r.cargo)}</td><td>${e(r.escola)}</td><td>${e(r.sala)}</td><td>${e(r.endereco || '')}</td></tr>`; });
     body += `</tbody></table>`;
   }
-  const brasao = concurso.brasao_url ? `<img src="${concurso.brasao_url}" alt="" style="height:64px;width:64px;object-fit:contain">` : '';
+  const brasao = '';
   const agora = new Date(Date.now() - 3 * 3600 * 1000).toLocaleString('pt-BR');
   const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Locais de Prova</title>
 <style>
@@ -1152,8 +1152,7 @@ ${corpo}
 }
 function cabHTML(concurso, docNome) {
   const e = escapeHtml;
-  const brasao = concurso.brasao_url ? `<img src="${concurso.brasao_url}" alt="">` : '';
-  return `<div class="cab">${brasao}<div><div class="org">${e(concurso.orgao || 'Processo Seletivo')}</div><h1>${e(concurso.titulo || '')}</h1><h2>${e(docNome)}</h2></div></div>`;
+  return `<div class="cab"><div><div class="org">${e(concurso.orgao || 'Processo Seletivo')}</div><h1>${e(concurso.titulo || '')}</h1><h2>${e(docNome)}</h2></div></div>`;
 }
 async function alocadosDoConcurso(concursoId, salaId) {
   const params = [concursoId]; let filtro = '';
@@ -1193,13 +1192,17 @@ app.get('/admin/relatorio/frente-sala.html', exigirSenha, async (req, res) => {
   if (!ord.length) corpo = `<div class="pagina">${cabHTML(concurso, 'Frente de Sala')}<p style="padding:16px">Nenhum candidato alocado.</p></div>`;
   ord.forEach((sid) => {
     const g = bySala[sid], s = g.r; let linhas = '';
-    g.cands.forEach((c, i) => { linhas += `<tr><td class="num">${i + 1}</td><td>${e(c.nome)}</td></tr>`; });
+    g.cands.forEach((c, i) => { linhas += `<tr><td class="num">${i + 1}</td><td>${e(c.nome)}</td><td>${e(c.cpf)}</td><td>${e(c.cargo || '')}</td></tr>`; });
     corpo += `<div class="pagina">
-      <div style="text-align:center"><div class="org" style="font-size:11px;color:#5b7183;text-transform:uppercase;font-weight:700">${e(concurso.orgao || '')}</div><div style="font-size:13px">${e(concurso.titulo || '')}</div></div>
+      <div style="text-align:center">
+        <div class="org" style="font-size:11px;color:#5b7183;text-transform:uppercase;font-weight:700">${e(concurso.orgao || '')}</div>
+        <div style="font-size:13px">${e(concurso.titulo || '')}</div>
+        <div style="font-weight:700;color:#0b3a5e;font-size:15px;margin-top:4px">FRENTE DE SALA</div>
+      </div>
       <div class="salahdr">${e(((s.sala || '') + (s.sala_obs ? (' - ' + s.sala_obs) : '')).toUpperCase())}</div>
       <div class="subhdr">${e(s.escola)}</div>
       <div class="qtd">(${g.cands.length} candidatos)</div>
-      <table><thead><tr><th class="num">#</th><th>Nome do Candidato</th></tr></thead><tbody>${linhas}</tbody></table></div>`;
+      <table><thead><tr><th class="num">#</th><th>Nome do Candidato</th><th>CPF</th><th>Cargo</th></tr></thead><tbody>${linhas}</tbody></table></div>`;
   });
   res.send(relShell('Frente de Sala', corpo));
 });
@@ -1217,10 +1220,10 @@ app.get('/admin/relatorio/frente-predio.html', exigirSenha, async (req, res) => 
     const g = byE[eid], s = g.r;
     g.cands.sort((a, b) => String(a.nome).localeCompare(String(b.nome), 'pt'));
     let linhas = '';
-    g.cands.forEach((c, i) => { linhas += `<tr><td class="num">${i + 1}</td><td>${e(c.nome)}</td><td>${e(c.sala)}${c.sala_obs ? (' (' + e(c.sala_obs) + ')') : ''}</td></tr>`; });
+    g.cands.forEach((c, i) => { linhas += `<tr><td class="num">${i + 1}</td><td>${e(c.nome)}</td><td>${e(c.cargo || '')}</td><td>${e(c.sala)}${c.sala_obs ? (' (' + e(c.sala_obs) + ')') : ''}</td></tr>`; });
     corpo += `<div class="pagina">${cabHTML(concurso, 'Frente de Prédio — Locais de Prova')}
       <div class="linha-sala">${e(s.escola)}${s.endereco ? (' — ' + e(s.endereco)) : ''}</div>
-      <table><thead><tr><th class="num">#</th><th>Nome</th><th>Sala</th></tr></thead><tbody>${linhas}</tbody></table></div>`;
+      <table><thead><tr><th class="num">#</th><th>Nome</th><th>Cargo</th><th>Sala</th></tr></thead><tbody>${linhas}</tbody></table></div>`;
   });
   res.send(relShell('Frente de Prédio', corpo));
 });
