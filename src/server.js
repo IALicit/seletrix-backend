@@ -219,7 +219,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'alocacao-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'locais-v1' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -926,6 +926,96 @@ app.post('/admin/desalocar', exigirSenha, async (req, res) => {
   if (!ids.length) return res.status(400).json({ erro: 'Selecione ao menos um candidato.' });
   await pool.query('UPDATE candidatos SET sala_id=NULL WHERE id = ANY($1::int[])', [ids]);
   res.json({ ok: true });
+});
+
+// Locais de Prova (somente candidatos alocados)
+app.get('/admin/relatorio/locais.csv', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  const concurso = await lerConcursoPorChave(String(req.query.concurso || ''));
+  if (!concurso) return res.status(400).send('Concurso inválido.');
+  const modo = req.query.modo === 'corrido' ? 'corrido' : 'agrupado';
+  const order = modo === 'corrido' ? 'k.nome' : 'e.id, s.id, k.nome';
+  const { rows } = await pool.query(`SELECT k.nome,k.cpf,k.cargo,k.nascimento,k.pcd, s.nome AS sala, s.obs AS sala_obs, e.nome AS escola, e.endereco
+    FROM candidatos k JOIN salas s ON s.id=k.sala_id JOIN escolas e ON e.id=s.escola_id WHERE k.concurso_id=$1 ORDER BY ${order}`, [concurso.id]);
+  const completa = req.query.versao === 'completa';
+  const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+  let cab, linha;
+  if (completa) { cab = ['Escola', 'Endereço', 'Sala', 'Nome', 'CPF', 'Nascimento', 'Cargo', 'PcD']; linha = (r) => [r.escola, r.endereco, r.sala, r.nome, r.cpf, r.nascimento, r.cargo, (r.pcd ? 'Sim' : 'Não')]; }
+  else { cab = ['Escola', 'Endereço', 'Sala', 'Nome', 'CPF', 'Cargo']; linha = (r) => [r.escola, r.endereco, r.sala, r.nome, mascaraCpf(r.cpf), r.cargo]; }
+  const csv = '\uFEFF' + [cab.join(';'), ...rows.map((r) => linha(r).map(esc).join(';'))].join('\r\n');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="locais_de_prova.csv"');
+  res.send(csv);
+});
+app.get('/admin/relatorio/locais.html', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  const concurso = await lerConcursoPorChave(String(req.query.concurso || ''));
+  if (!concurso) return res.status(400).send('Concurso inválido.');
+  const modo = req.query.modo === 'corrido' ? 'corrido' : 'agrupado';
+  const completa = req.query.versao === 'completa';
+  const order = modo === 'corrido' ? 'k.nome' : 'e.id, s.id, k.nome';
+  const { rows } = await pool.query(`SELECT k.nome,k.cpf,k.cargo,k.nascimento,k.pcd, s.id AS sala_id, s.nome AS sala, s.obs AS sala_obs, e.id AS escola_id, e.nome AS escola, e.endereco
+    FROM candidatos k JOIN salas s ON s.id=k.sala_id JOIN escolas e ON e.id=s.escola_id WHERE k.concurso_id=$1 ORDER BY ${order}`, [concurso.id]);
+  const e = escapeHtml;
+  const cpf = (c) => completa ? e(c) : e(mascaraCpf(c));
+  let body = '';
+  if (modo === 'agrupado') {
+    const byE = {}, ordE = [];
+    rows.forEach((r) => {
+      if (!byE[r.escola_id]) { byE[r.escola_id] = { nome: r.escola, endereco: r.endereco, salas: {}, ordS: [] }; ordE.push(r.escola_id); }
+      const E = byE[r.escola_id];
+      if (!E.salas[r.sala_id]) { E.salas[r.sala_id] = { nome: r.sala, obs: r.sala_obs, cands: [] }; E.ordS.push(r.sala_id); }
+      E.salas[r.sala_id].cands.push(r);
+    });
+    ordE.forEach((eid) => {
+      const E = byE[eid];
+      body += `<div class="escola"><h3>${e(E.nome)}</h3><div class="end">${e(E.endereco || '')}</div>`;
+      E.ordS.forEach((sid) => {
+        const S = E.salas[sid];
+        body += `<div class="sala">${e(S.nome)}${S.obs ? (' — ' + e(S.obs)) : ''} <span class="qtd">(${S.cands.length} candidato(s))</span></div>`;
+        body += `<table><thead><tr><th>#</th><th>Nome</th><th>CPF</th><th>Cargo</th></tr></thead><tbody>`;
+        S.cands.forEach((r, i) => { body += `<tr><td>${i + 1}</td><td>${e(r.nome)}</td><td>${cpf(r.cpf)}</td><td>${e(r.cargo)}</td></tr>`; });
+        body += `</tbody></table>`;
+      });
+      body += `</div>`;
+    });
+  } else {
+    body = `<table><thead><tr><th>#</th><th>Nome</th><th>CPF</th><th>Cargo</th><th>Escola</th><th>Sala</th><th>Endereço</th></tr></thead><tbody>`;
+    rows.forEach((r, i) => { body += `<tr><td>${i + 1}</td><td>${e(r.nome)}</td><td>${cpf(r.cpf)}</td><td>${e(r.cargo)}</td><td>${e(r.escola)}</td><td>${e(r.sala)}</td><td>${e(r.endereco || '')}</td></tr>`; });
+    body += `</tbody></table>`;
+  }
+  const brasao = concurso.brasao_url ? `<img src="${concurso.brasao_url}" alt="" style="height:64px;width:64px;object-fit:contain">` : '';
+  const agora = new Date(Date.now() - 3 * 3600 * 1000).toLocaleString('pt-BR');
+  const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Locais de Prova</title>
+<style>
+ *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,Helvetica,sans-serif}
+ body{color:#16242f;padding:28px;font-size:13px}
+ .barra-print{background:#0b3a5e;color:#fff;padding:12px 18px;border-radius:8px;display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+ .barra-print button{background:#fff;color:#0b3a5e;border:none;padding:9px 16px;border-radius:7px;font-weight:700;cursor:pointer;font-size:14px}
+ .cab{display:flex;align-items:center;gap:16px;border-bottom:3px solid #0b3a5e;padding-bottom:14px;margin-bottom:6px}
+ .cab .org{font-size:12px;color:#5b7183;text-transform:uppercase;letter-spacing:.05em;font-weight:700}
+ .cab h1{font-size:18px;color:#0b3a5e;margin-top:2px}
+ .cab h2{font-size:14px;color:#16242f;font-weight:600;margin-top:2px}
+ .meta{color:#5b7183;font-size:12px;margin:10px 0 16px}
+ .escola{margin:18px 0;page-break-inside:avoid}
+ .escola h3{font-size:15px;color:#0b3a5e;border-bottom:1px solid #cdd8df;padding-bottom:4px}
+ .escola .end{color:#5b7183;font-size:12px;margin:2px 0 8px}
+ .sala{background:#eef3f6;color:#0b3a5e;font-weight:700;padding:6px 10px;border-radius:6px;margin:12px 0 6px}
+ .sala .qtd{font-weight:400;color:#5b7183}
+ table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:8px}
+ th,td{border:1px solid #cdd8df;padding:6px 8px;text-align:left}
+ th{background:#f3f6f9;color:#0b3a5e}
+ tr:nth-child(even) td{background:#fafcfe}
+ .rodape{margin-top:16px;color:#5b7183;font-size:11px}
+ @media print{.barra-print{display:none}body{padding:0}}
+</style></head><body>
+<div class="barra-print"><span>Confira e use <b>Imprimir → Salvar como PDF</b>.</span><button onclick="window.print()">🖨️ Imprimir / Salvar PDF</button></div>
+<div class="cab">${brasao}<div><div class="org">${e(concurso.orgao || 'Processo Seletivo')}</div><h1>${e(concurso.titulo || '')}</h1><h2>Locais de Prova${completa ? ' (uso interno)' : ''}</h2></div></div>
+<div class="meta">Total alocados: <b>${rows.length}</b> &nbsp;·&nbsp; ${modo === 'agrupado' ? 'Agrupado por escola e sala' : 'Lista alfabética'} &nbsp;·&nbsp; Emitido em ${e(agora)}</div>
+${body || '<p style="padding:16px;text-align:center">Nenhum candidato alocado ainda.</p>'}
+<div class="rodape">${e(concurso.titulo || '')} — Locais de Prova · Gerado pelo Seletrix</div>
+</body></html>`;
+  res.send(html);
 });
 
 app.get('/admin', exigirSenha, (req, res) => res.send(PAINEL_HTML));

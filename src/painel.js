@@ -191,6 +191,20 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       </div>
       <p class="hint" style="margin-top:12px">No PDF, use <b>Imprimir → Salvar como PDF</b> na janela que abrir.</p>
     </div>
+    <div class="card">
+      <h2 style="font-size:1.15rem;color:var(--navy);margin-bottom:4px">Locais de Prova</h2>
+      <p class="hint" style="margin-bottom:14px">Onde cada candidato faz a prova (apenas candidatos já alocados nas salas).</p>
+      <div class="grid2">
+        <div><label>Concurso</label><select id="lp_concurso" onchange="lpPreview()"></select></div>
+        <div><label>Organização</label><select id="lp_modo"><option value="agrupado">Agrupado por Escola → Sala</option><option value="corrido">Lista corrida (alfabética)</option></select></div>
+        <div><label>Versão</label><select id="lp_versao"><option value="publica">Pública (CPF mascarado)</option><option value="completa">Completa (uso interno)</option></select></div>
+      </div>
+      <p style="margin:16px 0" id="lp_total"></p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button onclick="lpPDF()">🖨️ Gerar PDF (publicar)</button>
+        <button class="sec" onclick="lpCSV()">⬇️ Baixar Excel (CSV)</button>
+      </div>
+    </div>
   </section>
 
   <section id="locacao" style="display:none">
@@ -510,10 +524,22 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   async function delDoc(id){ if(!confirm('Excluir este documento?'))return; var r=await fetch('/admin/documento/'+id,{method:'DELETE'}); var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} carregarEtapas(); }
 
   function popularRelConcursos(){
-    $('rel_concurso').innerHTML = '<option value="">Selecione o concurso...</option>' + CONCURSOS.map(function(c){return '<option value="'+c.id+'">'+esc(c.titulo)+'</option>';}).join('');
+    var opts = '<option value="">Selecione o concurso...</option>' + CONCURSOS.map(function(c){return '<option value="'+c.id+'">'+esc(c.titulo)+'</option>';}).join('');
+    $('rel_concurso').innerHTML = opts;
+    if($('lp_concurso')) $('lp_concurso').innerHTML = opts;
     $('rel_cargo').innerHTML = '<option value="">Todos os cargos</option>';
-    $('rel_total').textContent = '';
+    $('rel_total').textContent = ''; if($('lp_total')) $('lp_total').textContent='';
   }
+  function lpParams(){ return 'concurso='+encodeURIComponent($('lp_concurso').value)+'&modo='+$('lp_modo').value+'&versao='+$('lp_versao').value; }
+  async function lpPreview(){
+    if(!$('lp_concurso').value){ $('lp_total').textContent=''; return; }
+    try{ var d=await (await fetch('/admin/concurso/'+$('lp_concurso').value+'/salas.json')).json();
+      var tot=d.salas.reduce(function(a,s){return a+(s.ocupacao||0);},0);
+      $('lp_total').innerHTML='<b>'+tot+'</b> candidato(s) alocado(s) em '+d.salas.length+' sala(s).';
+    }catch(e){}
+  }
+  function lpPDF(){ if(!$('lp_concurso').value){alert('Selecione o concurso.');return;} window.open('/admin/relatorio/locais.html?'+lpParams(),'_blank'); }
+  function lpCSV(){ if(!$('lp_concurso').value){alert('Selecione o concurso.');return;} window.location.href='/admin/relatorio/locais.csv?'+lpParams(); }
   function relCargos(){
     var c = CONCURSOS.find(function(x){return String(x.id)===String($('rel_concurso').value);});
     $('rel_cargo').innerHTML = '<option value="">Todos os cargos</option>' + ((c&&c.cargos||[]).map(function(cg){return '<option>'+esc(cg)+'</option>';}).join(''));
