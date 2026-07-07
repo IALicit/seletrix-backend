@@ -38,7 +38,7 @@ async function inicializarBanco() {
     pcd BOOLEAN DEFAULT FALSE, nome_social TEXT, cidade TEXT, uf TEXT,
     status TEXT DEFAULT 'inscrito', criado_em TIMESTAMPTZ DEFAULT now());`);
   for (const col of [
-    'asaas_customer_id TEXT', 'asaas_payment_id TEXT', 'invoice_url TEXT', 'concurso_id INT'
+    'asaas_customer_id TEXT', 'asaas_payment_id TEXT', 'invoice_url TEXT', 'concurso_id INT', 'sala_id INT'
   ]) {
     await pool.query(`ALTER TABLE candidatos ADD COLUMN IF NOT EXISTS ${col}`);
   }
@@ -219,7 +219,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'locacao-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'alocacao-v1' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -380,7 +380,7 @@ app.post('/api/candidato/login', async (req, res) => {
   const ids = rows.map((r) => r.id);
   const porCand = {};
   if (ids.length) {
-    const t = await pool.query('SELECT id, candidato_id, tipo, filename FROM titulos WHERE candidato_id = ANY($1) ORDER BY id', [ids]);
+    const t = await pool.query('SELECT id, candidato_id, tipo, filename FROM titulos WHERE candidato_id = ANY($1::int[]) ORDER BY id', [ids]);
     t.rows.forEach((x) => { (porCand[x.candidato_id] = porCand[x.candidato_id] || []).push({ id: x.id, tipo: x.tipo, filename: x.filename }); });
   }
   const agora = agoraBR();
@@ -877,6 +877,54 @@ app.post('/admin/sala/:id', exigirSenha, async (req, res) => {
 app.delete('/admin/sala/:id', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
   await pool.query('DELETE FROM salas WHERE id=$1', [req.params.id]);
+  res.json({ ok: true });
+});
+
+// ---- Alocação (admin) --------------------------------------
+app.get('/admin/concurso/:id/salas.json', exigirSenha, async (req, res) => {
+  if (!pool) return res.json({ salas: [] });
+  const cid = parseInt(req.params.id);
+  const { rows } = await pool.query(`SELECT s.id, s.nome, s.capacidade, e.nome AS escola,
+    (SELECT COUNT(*)::int FROM candidatos k WHERE k.sala_id=s.id) AS ocupacao
+    FROM salas s JOIN escolas e ON e.id=s.escola_id WHERE e.concurso_id=$1 ORDER BY e.id, s.id`, [cid]);
+  res.json({ salas: rows });
+});
+app.get('/admin/concurso/:id/candidatos.json', exigirSenha, async (req, res) => {
+  if (!pool) return res.json({ candidatos: [] });
+  const cid = parseInt(req.params.id); const q = req.query;
+  const where = ['k.concurso_id=$1']; const params = [cid];
+  if (q.cargo) { params.push(q.cargo); where.push('k.cargo=$' + params.length); }
+  if (q.pagamento === 'pagos') where.push("k.status='pago'"); else if (q.pagamento === 'naopagos') where.push("k.status<>'pago'");
+  if (q.pcd === 'sim') where.push('k.pcd=TRUE'); else if (q.pcd === 'nao') where.push('k.pcd=FALSE');
+  if (q.aloc === 'nao') where.push('k.sala_id IS NULL'); else if (q.aloc === 'sim') where.push('k.sala_id IS NOT NULL');
+  if (q.busca) { params.push('%' + String(q.busca).trim() + '%'); where.push('k.nome ILIKE $' + params.length); }
+  const { rows } = await pool.query(`SELECT k.id,k.nome,k.cpf,k.cargo,k.pcd,k.status,k.sala_id, s.nome AS sala_nome, e.nome AS escola_nome
+    FROM candidatos k LEFT JOIN salas s ON s.id=k.sala_id LEFT JOIN escolas e ON e.id=s.escola_id
+    WHERE ${where.join(' AND ')} ORDER BY k.nome LIMIT 2000`, params);
+  res.json({ candidatos: rows });
+});
+app.post('/admin/alocar', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const b = req.body || {}; const salaId = parseInt(b.sala_id);
+  const ids = (Array.isArray(b.candidato_ids) ? b.candidato_ids : []).map((x) => parseInt(x)).filter(Boolean);
+  if (!salaId || !ids.length) return res.status(400).json({ erro: 'Selecione a sala e ao menos um candidato.' });
+  const sala = await pool.query('SELECT s.capacidade, e.concurso_id FROM salas s JOIN escolas e ON e.id=s.escola_id WHERE s.id=$1', [salaId]);
+  if (!sala.rows.length) return res.status(404).json({ erro: 'Sala não encontrada.' });
+  const cap = sala.rows[0].capacidade, concursoId = sala.rows[0].concurso_id;
+  const atual = await pool.query('SELECT COUNT(*)::int n FROM candidatos WHERE sala_id=$1', [salaId]);
+  const entrando = await pool.query('SELECT COUNT(*)::int n FROM candidatos WHERE id = ANY($1::int[]) AND concurso_id=$2 AND (sala_id IS NULL OR sala_id <> $3)', [ids, concursoId, salaId]);
+  if (atual.rows[0].n + entrando.rows[0].n > cap) {
+    const livres = Math.max(0, cap - atual.rows[0].n);
+    return res.status(400).json({ erro: 'Esta sala tem ' + cap + ' lugares e ' + livres + ' livre(s). Você selecionou ' + entrando.rows[0].n + ' novo(s) candidato(s).' });
+  }
+  await pool.query('UPDATE candidatos SET sala_id=$1 WHERE id = ANY($2::int[]) AND concurso_id=$3', [salaId, ids, concursoId]);
+  res.json({ ok: true, alocados: ids.length });
+});
+app.post('/admin/desalocar', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const ids = (Array.isArray((req.body || {}).candidato_ids) ? req.body.candidato_ids : []).map((x) => parseInt(x)).filter(Boolean);
+  if (!ids.length) return res.status(400).json({ erro: 'Selecione ao menos um candidato.' });
+  await pool.query('UPDATE candidatos SET sala_id=NULL WHERE id = ANY($1::int[])', [ids]);
   res.json({ ok: true });
 });
 

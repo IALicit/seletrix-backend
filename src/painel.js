@@ -75,6 +75,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   <div class="tab" data-t="inscritos">Inscritos</div>
   <div class="tab" data-t="relatorios">Relatórios</div>
   <div class="tab" data-t="locacao">Locação</div>
+  <div class="tab" data-t="alocacao">Alocação</div>
 </div>
 <div class="wrap">
   <section id="concursos">
@@ -208,6 +209,36 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       <button style="margin-top:12px" onclick="addEscola()">+ Adicionar escola</button>
     </div>
   </section>
+
+  <section id="alocacao" style="display:none">
+    <div class="card">
+      <div class="grid2">
+        <div><label>Concurso</label><select id="al_concurso" onchange="alInit()"></select></div>
+        <div><label>Sala destino</label><select id="al_sala"></select></div>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+        <button onclick="alocar()">Alocar selecionados na sala</button>
+        <button class="sec" onclick="desalocar()">Remover alocação dos selecionados</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="grid2">
+        <div><label>Cargo</label><select id="al_cargo" onchange="alBuscar()"><option value="">Todos</option></select></div>
+        <div><label>Situação da alocação</label><select id="al_aloc" onchange="alBuscar()"><option value="nao">Não alocados</option><option value="sim">Já alocados</option><option value="todos">Todos</option></select></div>
+        <div><label>Pagamento</label><select id="al_pag" onchange="alBuscar()"><option value="todos">Todos</option><option value="pagos">Pagos</option><option value="naopagos">Não pagos</option></select></div>
+        <div><label>PcD</label><select id="al_pcd" onchange="alBuscar()"><option value="todos">Todos</option><option value="sim">Só PcD</option><option value="nao">Exceto PcD</option></select></div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:10px;align-items:center;flex-wrap:wrap">
+        <input id="al_busca" placeholder="Buscar por nome" style="flex:1;min-width:180px" onkeydown="if(event.key==='Enter')alBuscar()">
+        <button class="sec" onclick="alBuscar()">Filtrar</button>
+      </div>
+      <p style="margin:12px 0" id="al_resumo"></p>
+      <p><label style="display:inline-flex;align-items:center;gap:8px;font-weight:600"><input type="checkbox" id="al_todos" onclick="alMarcarTodos()" style="width:auto"> Selecionar todos os listados</label></p>
+      <div class="scroll" style="max-height:55vh"><table>
+        <thead><tr><th></th><th>Nome</th><th>CPF</th><th>Cargo</th><th>Sala atual</th></tr></thead>
+        <tbody id="al_linhas"></tbody></table></div>
+    </div>
+  </section>
 </div>
 <div id="modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
   <div style="background:#fff;border-radius:12px;max-width:520px;width:92%;padding:20px;max-height:80vh;overflow:auto">
@@ -270,10 +301,11 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   let CONCURSOS = [], cargosEdit = [], tiposEdit = [], INSCRITOS = [];
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
     document.querySelectorAll('.tab').forEach(x => x.classList.remove('on')); t.classList.add('on');
-    ['concursos','inscritos','relatorios','locacao'].forEach(s => $(s).style.display = s === t.dataset.t ? 'block' : 'none');
+    ['concursos','inscritos','relatorios','locacao','alocacao'].forEach(s => $(s).style.display = s === t.dataset.t ? 'block' : 'none');
     if (t.dataset.t === 'inscritos') carregarInscritos();
     if (t.dataset.t === 'relatorios') popularRelConcursos();
     if (t.dataset.t === 'locacao') popularLocConcursos();
+    if (t.dataset.t === 'alocacao') popularAlConcursos();
   });
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
   function combinaDT(data, hora, horaPadrao){ if(!data) return ''; return data+'T'+((hora||horaPadrao)).slice(0,5); }
@@ -564,6 +596,52 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   async function delSala(id){
     if(!confirm('Excluir esta sala?'))return;
     var r=await fetch('/admin/sala/'+id,{method:'DELETE'}); var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} carregarEscolas();
+  }
+
+  var AL_CANDS=[];
+  function popularAlConcursos(){
+    $('al_concurso').innerHTML='<option value="">Selecione o concurso...</option>'+CONCURSOS.map(function(c){return '<option value="'+c.id+'">'+esc(c.titulo)+'</option>';}).join('');
+    $('al_sala').innerHTML=''; $('al_linhas').innerHTML=''; $('al_resumo').textContent='';
+    $('al_cargo').innerHTML='<option value="">Todos</option>';
+  }
+  async function alInit(){
+    var id=$('al_concurso').value;
+    if(!id){ $('al_sala').innerHTML=''; $('al_linhas').innerHTML=''; $('al_resumo').textContent=''; return; }
+    var c=CONCURSOS.find(function(x){return String(x.id)===String(id);});
+    $('al_cargo').innerHTML='<option value="">Todos</option>'+((c&&c.cargos||[]).map(function(cg){return '<option>'+esc(cg)+'</option>';}).join(''));
+    await alCarregarSalas(); alBuscar();
+  }
+  async function alCarregarSalas(){
+    var id=$('al_concurso').value; if(!id)return;
+    var d=await (await fetch('/admin/concurso/'+id+'/salas.json')).json();
+    $('al_sala').innerHTML = d.salas.length ? d.salas.map(function(s){return '<option value="'+s.id+'">'+esc(s.escola)+' — '+esc(s.nome)+' ('+s.ocupacao+'/'+s.capacidade+')</option>';}).join('') : '<option value="">Cadastre salas na aba Locação</option>';
+  }
+  function alParams(){ return 'cargo='+encodeURIComponent($('al_cargo').value)+'&pagamento='+$('al_pag').value+'&pcd='+$('al_pcd').value+'&aloc='+$('al_aloc').value+'&busca='+encodeURIComponent($('al_busca').value); }
+  async function alBuscar(){
+    var id=$('al_concurso').value; if(!id)return;
+    var d=await (await fetch('/admin/concurso/'+id+'/candidatos.json?'+alParams())).json();
+    AL_CANDS=d.candidatos; $('al_todos').checked=false;
+    $('al_resumo').innerHTML='<b>'+d.candidatos.length+'</b> candidato(s) listado(s) com os filtros atuais.';
+    $('al_linhas').innerHTML = d.candidatos.length ? d.candidatos.map(function(k){
+      var sala = k.sala_id ? (esc(k.escola_nome||'')+' / '+esc(k.sala_nome||'')) : '<span style="color:#aaa">—</span>';
+      return '<tr><td><input type="checkbox" class="alchk" value="'+k.id+'"></td><td>'+esc(k.nome)+'</td><td>'+esc(k.cpf)+'</td><td>'+esc(k.cargo)+'</td><td>'+sala+'</td></tr>';
+    }).join('') : '<tr><td colspan="5" style="text-align:center;color:#888;padding:16px">Nenhum candidato com esses filtros.</td></tr>';
+  }
+  function alMarcarTodos(){ var on=$('al_todos').checked; document.querySelectorAll('.alchk').forEach(function(c){c.checked=on;}); }
+  function alSelecionados(){ return Array.from(document.querySelectorAll('.alchk:checked')).map(function(c){return parseInt(c.value);}); }
+  async function alocar(){
+    var sala=$('al_sala').value; if(!sala){alert('Selecione a sala destino.');return;}
+    var ids=alSelecionados(); if(!ids.length){alert('Selecione ao menos um candidato (marque as caixas).');return;}
+    var r=await fetch('/admin/alocar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sala_id:sala,candidato_ids:ids})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao alocar');return;}
+    await alCarregarSalas(); alBuscar();
+  }
+  async function desalocar(){
+    var ids=alSelecionados(); if(!ids.length){alert('Selecione ao menos um candidato.');return;}
+    if(!confirm('Remover a alocação dos '+ids.length+' candidato(s) selecionado(s)?'))return;
+    var r=await fetch('/admin/desalocar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({candidato_ids:ids})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    await alCarregarSalas(); alBuscar();
   }
 
   carregarConcursos();
