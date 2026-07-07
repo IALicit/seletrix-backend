@@ -9,6 +9,7 @@ const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
 const { Pool, types } = require('pg');
+const QRCode = require('qrcode');
 types.setTypeParser(1082, (v) => v); // DATE volta como 'YYYY-MM-DD' (sem fuso)
 
 const app = express();
@@ -219,7 +220,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'listas-v2' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'cartoes-v1' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -1226,6 +1227,101 @@ app.get('/admin/relatorio/frente-predio.html', exigirSenha, async (req, res) => 
       <table><thead><tr><th class="num">#</th><th>Nome</th><th>Cargo</th><th>Sala</th></tr></thead><tbody>${linhas}</tbody></table></div>`;
   });
   res.send(relShell('Frente de Prédio', corpo));
+});
+
+// ---- Cartões-resposta --------------------------------------
+function cartaoShell(corpo) {
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Cartões-Resposta</title>
+<style>
+ *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,Helvetica,sans-serif}
+ body{color:#1a2b4a;font-size:12px;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+ @page{size:A4 portrait;margin:10mm}
+ .barra-print{background:#0b3a5e;color:#fff;padding:12px 18px;display:flex;justify-content:space-between;align-items:center}
+ .barra-print button{background:#fff;color:#0b3a5e;border:none;padding:9px 16px;border-radius:7px;font-weight:700;cursor:pointer;font-size:14px}
+ .pagina{max-width:720px;margin:16px auto;padding:0 8px}
+ .cartao{position:relative;border:1px solid #1a2b4a;border-radius:6px;padding:18px 16px 16px}
+ .mark{position:absolute;width:26px;height:26px}
+ .mark.tl{top:-1px;left:-1px;border-top:4px solid #111;border-left:4px solid #111}
+ .mark.tr{top:-1px;right:-1px;border-top:4px solid #111;border-right:4px solid #111}
+ .mark.bl{bottom:-1px;left:-1px;border-bottom:4px solid #111;border-left:4px solid #111}
+ .mark.br{bottom:-1px;right:-1px;border-bottom:4px solid #111;border-right:4px solid #111}
+ .topo{display:flex;gap:14px;border-bottom:1px solid #1a2b4a;padding-bottom:10px}
+ .qr{text-align:center;flex:none}
+ .qr svg{width:96px;height:96px;display:block}
+ .qr .idnum{font-size:8px;margin-top:3px;line-height:1.2}
+ .dados{flex:1;font-size:11px;line-height:1.55}
+ .dados .l1{font-weight:700}
+ .dados .assin{margin-top:6px}
+ .dados .aus{border:1px solid #1a2b4a;padding:2px 6px;border-radius:4px;font-size:10px}
+ .meio{display:flex;gap:14px;align-items:center;margin:10px 0;border-bottom:1px solid #1a2b4a;padding-bottom:10px}
+ .idbox{flex:1;text-align:center;font-size:9px;font-weight:700;letter-spacing:.04em}
+ .idbox .idcode{display:inline-block;margin-top:4px;font-size:16px;letter-spacing:3px;border:1px solid #1a2b4a;padding:2px 10px;border-radius:4px}
+ .instr{flex:1;font-size:9px;line-height:1.5}
+ .grade{display:flex;gap:34px;justify-content:center;margin-top:12px}
+ .col{flex:1;max-width:300px}
+ .qrow{display:flex;align-items:center;gap:5px;margin:4px 0}
+ .qn{width:22px;text-align:right;font-weight:700;font-size:11px}
+ .opt{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border:1.2px solid #1a2b4a;border-radius:50%;font-size:9px;color:#1a2b4a}
+ @media print{
+   .barra-print{display:none}
+   .pagina{max-width:none;margin:0;padding:0}
+   .pagina + .pagina{break-before:page;page-break-before:always}
+   .cartao{break-inside:avoid}
+ }
+</style></head><body>
+<div class="barra-print"><span>Confira e use <b>Imprimir → Salvar como PDF</b> (1 cartão por página).</span><button onclick="window.print()">🖨️ Imprimir / Salvar PDF</button></div>
+${corpo}
+</body></html>`;
+}
+app.get('/admin/relatorio/cartoes.html', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  const concurso = await lerConcursoPorChave(String(req.query.concurso || ''));
+  if (!concurso) return res.status(400).send('Concurso inválido.');
+  const salaId = parseInt(req.query.sala) || 0;
+  const cargo = req.query.cargo || '';
+  const questoes = Math.min(120, Math.max(1, parseInt(req.query.questoes) || 30));
+  const alternativas = Math.min(6, Math.max(2, parseInt(req.query.alternativas) || 4));
+  const params = [concurso.id]; let filtro = '';
+  if (salaId) { params.push(salaId); filtro += ' AND s.id=$' + params.length; }
+  if (cargo) { params.push(cargo); filtro += ' AND k.cargo=$' + params.length; }
+  const { rows } = await pool.query(`SELECT k.nome,k.cpf,k.protocolo,k.cargo, s.nome AS sala, s.obs AS sala_obs, e.nome AS escola
+    FROM candidatos k JOIN salas s ON s.id=k.sala_id JOIN escolas e ON e.id=s.escola_id
+    WHERE k.concurso_id=$1${filtro} ORDER BY e.id, s.id, k.nome`, params);
+  const e = escapeHtml;
+  const letras = ['A', 'B', 'C', 'D', 'E', 'F'];
+  const qrs = await Promise.all(rows.map((r) => QRCode.toString(String(r.protocolo || ''), { type: 'svg', margin: 0, width: 96 }).catch(() => '')));
+  function opts() { let s = ''; for (let a = 0; a < alternativas; a++) s += `<span class="opt">${letras[a]}</span>`; return s; }
+  function grade() {
+    const meta = Math.ceil(questoes / 2); let c1 = '', c2 = '';
+    for (let q = 1; q <= questoes; q++) { const row = `<div class="qrow"><span class="qn">${q}</span>${opts()}</div>`; if (q <= meta) c1 += row; else c2 += row; }
+    return `<div class="grade"><div class="col">${c1}</div><div class="col">${c2}</div></div>`;
+  }
+  let corpo = '';
+  if (!rows.length) corpo = `<div class="pagina"><p style="padding:20px">Nenhum candidato alocado com esses filtros.</p></div>`;
+  rows.forEach((r, i) => {
+    const salaTxt = e(((r.sala || '') + (r.sala_obs ? (' - ' + r.sala_obs) : '')).toUpperCase());
+    corpo += `<div class="pagina"><div class="cartao">
+      <span class="mark tl"></span><span class="mark tr"></span><span class="mark bl"></span><span class="mark br"></span>
+      <div class="topo">
+        <div class="qr">${qrs[i]}<div class="idnum">INSCRIÇÃO<br><b>${e(r.protocolo || '')}</b></div></div>
+        <div class="dados">
+          <div class="l1">EDITAL: ${e(concurso.titulo || '')} &nbsp;|&nbsp; TURNO: ________</div>
+          <div>${e(concurso.orgao || '')}</div>
+          <div><b>SALA ${salaTxt}</b> &nbsp;—&nbsp; DATA: ____/____/________</div>
+          <div>CANDIDATO: <b>${e(r.nome || '')}</b></div>
+          <div>CPF: ${e(r.cpf || '')} &nbsp;|&nbsp; INSCRIÇÃO: ${e(r.protocolo || '')}</div>
+          <div>CARGO: <b>${e(r.cargo || '')}</b></div>
+          <div class="assin">ASSINATURA: ______________________________ &nbsp; <span class="aus">( ) Candidato Ausente</span></div>
+        </div>
+      </div>
+      <div class="meio">
+        <div class="idbox">CÓDIGO DE IDENTIFICAÇÃO — NÃO RASURAR<br><span class="idcode">${e(r.protocolo || '')}</span></div>
+        <div class="instr"><b>INSTRUÇÕES DE PREENCHIMENTO</b><br>• Não rasure o cartão-resposta.<br>• Use somente caneta azul ou preta.<br>• Preencha todo o círculo: ●</div>
+      </div>
+      ${grade()}
+    </div></div>`;
+  });
+  res.send(cartaoShell(corpo));
 });
 
 app.get('/admin', exigirSenha, (req, res) => res.send(PAINEL_HTML));

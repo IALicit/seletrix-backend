@@ -241,6 +241,18 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       </div>
       <div style="margin-top:14px"><button onclick="fpPDF()">🖨️ Gerar PDF</button></div>
     </div>
+    <div class="card">
+      <h2 style="font-size:1.15rem;color:var(--navy);margin-bottom:4px">Cartões-Resposta</h2>
+      <p class="hint" style="margin-bottom:14px">Gera os cartões dos candidatos alocados (1 por página), com QR Code de identificação para a correção automática. Defina questões e alternativas conforme o cargo.</p>
+      <div class="grid2">
+        <div><label>Concurso</label><select id="ct_concurso" onchange="fillSalasCt()"></select></div>
+        <div><label>Sala</label><select id="ct_sala"><option value="">Todas as salas</option></select></div>
+        <div><label>Cargo</label><select id="ct_cargo"><option value="">Todos os cargos</option></select></div>
+        <div><label>Questões</label><input id="ct_questoes" type="number" min="1" max="120" value="30"></div>
+        <div><label>Alternativas</label><input id="ct_alternativas" type="number" min="2" max="6" value="4"></div>
+      </div>
+      <div style="margin-top:14px"><button onclick="ctPDF()">🖨️ Gerar cartões (PDF)</button></div>
+    </div>
   </section>
 
   <section id="locacao" style="display:none">
@@ -567,6 +579,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     if($('pr_concurso')) $('pr_concurso').innerHTML = opts;
     if($('fs_concurso')) $('fs_concurso').innerHTML = opts;
     if($('fp_concurso')) $('fp_concurso').innerHTML = opts;
+    if($('ct_concurso')) $('ct_concurso').innerHTML = opts;
     $('rel_cargo').innerHTML = '<option value="">Todos os cargos</option>';
     $('rel_total').textContent = ''; if($('lp_total')) $('lp_total').textContent='';
     if($('ata_sala')) $('ata_sala').innerHTML='<option value="">Todas as salas</option>';
@@ -583,6 +596,25 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   function prPDF(){ if(!$('pr_concurso').value){alert('Selecione o concurso.');return;} window.open('/admin/relatorio/presenca.html?concurso='+encodeURIComponent($('pr_concurso').value)+'&sala='+encodeURIComponent($('pr_sala').value),'_blank'); }
   function fsPDF(){ if(!$('fs_concurso').value){alert('Selecione o concurso.');return;} window.open('/admin/relatorio/frente-sala.html?concurso='+encodeURIComponent($('fs_concurso').value)+'&sala='+encodeURIComponent($('fs_sala').value),'_blank'); }
   function fpPDF(){ if(!$('fp_concurso').value){alert('Selecione o concurso.');return;} window.open('/admin/relatorio/frente-predio.html?concurso='+encodeURIComponent($('fp_concurso').value),'_blank'); }
+  async function fillSalasCt(){
+    var id=$('ct_concurso').value;
+    var c=CONCURSOS.find(function(x){return String(x.id)===String(id);});
+    $('ct_cargo').innerHTML='<option value="">Todos os cargos</option>'+((c&&c.cargos||[]).map(function(cg){return '<option>'+esc(cg)+'</option>';}).join(''));
+    $('ct_sala').innerHTML='<option value="">Todas as salas</option>';
+    if(!id)return;
+    try{ var d=await (await fetch('/admin/concurso/'+id+'/salas.json')).json();
+      $('ct_sala').innerHTML='<option value="">Todas as salas</option>'+d.salas.map(function(s){return '<option value="'+s.id+'">'+esc(s.escola)+' — '+esc(s.nome)+'</option>';}).join('');
+    }catch(e){}
+  }
+  function ctPDF(){
+    if(!$('ct_concurso').value){alert('Selecione o concurso.');return;}
+    var u='/admin/relatorio/cartoes.html?concurso='+encodeURIComponent($('ct_concurso').value)
+      +'&sala='+encodeURIComponent($('ct_sala').value)
+      +'&cargo='+encodeURIComponent($('ct_cargo').value)
+      +'&questoes='+encodeURIComponent($('ct_questoes').value)
+      +'&alternativas='+encodeURIComponent($('ct_alternativas').value);
+    window.open(u,'_blank');
+  }
   async function ataSalas(){
     if($('ata_sala')) $('ata_sala').innerHTML='<option value="">Todas as salas</option>';
     var id=$('ata_concurso').value; if(!id)return;
