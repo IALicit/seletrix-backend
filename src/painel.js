@@ -215,6 +215,32 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       <div style="margin-top:14px"><button onclick="ataPDF()">🖨️ Gerar ata (PDF)</button></div>
       <p class="hint" style="margin-top:10px">O cabeçalho usa o nome da sala como você cadastrou (ex.: "Bloco 1 - Sala 1") + o andar/observação. Turno, data, presentes/ausentes e ocorrências ficam em branco para preencher à mão.</p>
     </div>
+    <div class="card">
+      <h2 style="font-size:1.15rem;color:var(--navy);margin-bottom:4px">Lista de Presença</h2>
+      <p class="hint" style="margin-bottom:14px">Folha de presença por sala (Nome, CPF e espaço para assinatura). Uma folha por sala.</p>
+      <div class="grid2">
+        <div><label>Concurso</label><select id="pr_concurso" onchange="fillSalas('pr_concurso','pr_sala')"></select></div>
+        <div><label>Sala</label><select id="pr_sala"><option value="">Todas as salas</option></select></div>
+      </div>
+      <div style="margin-top:14px"><button onclick="prPDF()">🖨️ Gerar PDF</button></div>
+    </div>
+    <div class="card">
+      <h2 style="font-size:1.15rem;color:var(--navy);margin-bottom:4px">Frente de Sala</h2>
+      <p class="hint" style="margin-bottom:14px">Folha para a porta da sala: cabeçalho grande da sala + lista dos candidatos daquela sala.</p>
+      <div class="grid2">
+        <div><label>Concurso</label><select id="fs_concurso" onchange="fillSalas('fs_concurso','fs_sala')"></select></div>
+        <div><label>Sala</label><select id="fs_sala"><option value="">Todas as salas</option></select></div>
+      </div>
+      <div style="margin-top:14px"><button onclick="fsPDF()">🖨️ Gerar PDF</button></div>
+    </div>
+    <div class="card">
+      <h2 style="font-size:1.15rem;color:var(--navy);margin-bottom:4px">Frente de Prédio</h2>
+      <p class="hint" style="margin-bottom:14px">Folha para a entrada: lista alfabética (Nome + Sala) de toda a escola.</p>
+      <div class="grid2">
+        <div><label>Concurso</label><select id="fp_concurso"></select></div>
+      </div>
+      <div style="margin-top:14px"><button onclick="fpPDF()">🖨️ Gerar PDF</button></div>
+    </div>
   </section>
 
   <section id="locacao" style="display:none">
@@ -538,10 +564,25 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('rel_concurso').innerHTML = opts;
     if($('lp_concurso')) $('lp_concurso').innerHTML = opts;
     if($('ata_concurso')) $('ata_concurso').innerHTML = opts;
+    if($('pr_concurso')) $('pr_concurso').innerHTML = opts;
+    if($('fs_concurso')) $('fs_concurso').innerHTML = opts;
+    if($('fp_concurso')) $('fp_concurso').innerHTML = opts;
     $('rel_cargo').innerHTML = '<option value="">Todos os cargos</option>';
     $('rel_total').textContent = ''; if($('lp_total')) $('lp_total').textContent='';
     if($('ata_sala')) $('ata_sala').innerHTML='<option value="">Todas as salas</option>';
+    if($('pr_sala')) $('pr_sala').innerHTML='<option value="">Todas as salas</option>';
+    if($('fs_sala')) $('fs_sala').innerHTML='<option value="">Todas as salas</option>';
   }
+  async function fillSalas(concSel, salaSel){
+    $(salaSel).innerHTML='<option value="">Todas as salas</option>';
+    var id=$(concSel).value; if(!id)return;
+    try{ var d=await (await fetch('/admin/concurso/'+id+'/salas.json')).json();
+      $(salaSel).innerHTML='<option value="">Todas as salas</option>'+d.salas.map(function(s){return '<option value="'+s.id+'">'+esc(s.escola)+' — '+esc(s.nome)+'</option>';}).join('');
+    }catch(e){}
+  }
+  function prPDF(){ if(!$('pr_concurso').value){alert('Selecione o concurso.');return;} window.open('/admin/relatorio/presenca.html?concurso='+encodeURIComponent($('pr_concurso').value)+'&sala='+encodeURIComponent($('pr_sala').value),'_blank'); }
+  function fsPDF(){ if(!$('fs_concurso').value){alert('Selecione o concurso.');return;} window.open('/admin/relatorio/frente-sala.html?concurso='+encodeURIComponent($('fs_concurso').value)+'&sala='+encodeURIComponent($('fs_sala').value),'_blank'); }
+  function fpPDF(){ if(!$('fp_concurso').value){alert('Selecione o concurso.');return;} window.open('/admin/relatorio/frente-predio.html?concurso='+encodeURIComponent($('fp_concurso').value),'_blank'); }
   async function ataSalas(){
     if($('ata_sala')) $('ata_sala').innerHTML='<option value="">Todas as salas</option>';
     var id=$('ata_concurso').value; if(!id)return;

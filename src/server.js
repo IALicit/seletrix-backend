@@ -219,7 +219,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'ata-v2' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'listas-v1' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -1112,6 +1112,117 @@ app.get('/admin/relatorio/ata.html', exigirSenha, async (req, res) => {
 ${corpo}
 </body></html>`;
   res.send(html);
+});
+
+// ---- Listas operacionais (presença, frente de sala/prédio) ----
+function relShell(tab, corpo) {
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${tab}</title>
+<style>
+ *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,Helvetica,sans-serif}
+ body{color:#111;font-size:12px;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+ @page{size:A4 portrait;margin:12mm}
+ .barra-print{background:#0b3a5e;color:#fff;padding:12px 18px;display:flex;justify-content:space-between;align-items:center}
+ .barra-print button{background:#fff;color:#0b3a5e;border:none;padding:9px 16px;border-radius:7px;font-weight:700;cursor:pointer;font-size:14px}
+ .pagina{max-width:780px;margin:0 auto;padding:18px 24px}
+ .cab{display:flex;align-items:center;gap:14px;border-bottom:2px solid #0b3a5e;padding-bottom:10px;margin-bottom:10px}
+ .cab img{height:56px;width:56px;object-fit:contain}
+ .cab .org{font-size:11px;color:#5b7183;text-transform:uppercase;letter-spacing:.04em;font-weight:700}
+ .cab h1{font-size:16px;color:#0b3a5e;margin-top:2px}
+ .cab h2{font-size:13px;color:#111;font-weight:600;margin-top:2px}
+ .salahdr{text-align:center;font-weight:700;font-size:22px;margin:10px 0 2px}
+ .subhdr{text-align:center;font-size:13px;margin-bottom:2px}
+ .qtd{text-align:center;font-style:italic;margin-bottom:8px}
+ .linha-sala{font-weight:700;color:#0b3a5e;margin:6px 0}
+ table{width:100%;border-collapse:collapse;margin:6px 0;font-size:12px}
+ th,td{border:1px solid #000;padding:6px 8px;text-align:left}
+ th{background:#eef3f6;color:#0b3a5e}
+ .assin{width:45%}
+ .rowtall td{height:30px}
+ .num{width:36px;text-align:center}
+ @media print{
+   .barra-print{display:none}
+   .pagina{max-width:none;margin:0;padding:0}
+   .pagina + .pagina{break-before:page;page-break-before:always}
+   tr{break-inside:avoid}
+ }
+</style></head><body>
+<div class="barra-print"><span>Confira e use <b>Imprimir → Salvar como PDF</b>.</span><button onclick="window.print()">🖨️ Imprimir / Salvar PDF</button></div>
+${corpo}
+</body></html>`;
+}
+function cabHTML(concurso, docNome) {
+  const e = escapeHtml;
+  const brasao = concurso.brasao_url ? `<img src="${concurso.brasao_url}" alt="">` : '';
+  return `<div class="cab">${brasao}<div><div class="org">${e(concurso.orgao || 'Processo Seletivo')}</div><h1>${e(concurso.titulo || '')}</h1><h2>${e(docNome)}</h2></div></div>`;
+}
+async function alocadosDoConcurso(concursoId, salaId) {
+  const params = [concursoId]; let filtro = '';
+  if (salaId) { params.push(salaId); filtro = ' AND s.id=$2'; }
+  const { rows } = await pool.query(`SELECT k.nome,k.cpf,k.protocolo,k.cargo, s.id AS sala_id, s.nome AS sala, s.obs AS sala_obs, e.id AS escola_id, e.nome AS escola, e.endereco
+    FROM candidatos k JOIN salas s ON s.id=k.sala_id JOIN escolas e ON e.id=s.escola_id WHERE k.concurso_id=$1${filtro} ORDER BY e.id, s.id, k.nome`, params);
+  return rows;
+}
+
+app.get('/admin/relatorio/presenca.html', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  const concurso = await lerConcursoPorChave(String(req.query.concurso || ''));
+  if (!concurso) return res.status(400).send('Concurso inválido.');
+  const rows = await alocadosDoConcurso(concurso.id, parseInt(req.query.sala) || 0);
+  const e = escapeHtml; const bySala = {}, ord = [];
+  rows.forEach((r) => { if (!bySala[r.sala_id]) { bySala[r.sala_id] = { r, cands: [] }; ord.push(r.sala_id); } bySala[r.sala_id].cands.push(r); });
+  let corpo = '';
+  if (!ord.length) corpo = `<div class="pagina">${cabHTML(concurso, 'Lista de Presença')}<p style="padding:16px">Nenhum candidato alocado.</p></div>`;
+  ord.forEach((sid) => {
+    const g = bySala[sid], s = g.r; let linhas = '';
+    g.cands.forEach((c, i) => { linhas += `<tr class="rowtall"><td class="num">${i + 1}</td><td>${e(c.nome)}</td><td>${e(c.cpf)}</td><td class="assin"></td></tr>`; });
+    corpo += `<div class="pagina">${cabHTML(concurso, 'Lista de Presença')}
+      <div class="linha-sala">${e(s.escola)} — ${e(s.sala)}${s.sala_obs ? (' (' + e(s.sala_obs) + ')') : ''} &nbsp;·&nbsp; ${g.cands.length} candidato(s)</div>
+      <table><thead><tr><th class="num">#</th><th>Nome</th><th>CPF</th><th class="assin">Assinatura</th></tr></thead><tbody>${linhas}</tbody></table></div>`;
+  });
+  res.send(relShell('Lista de Presença', corpo));
+});
+
+app.get('/admin/relatorio/frente-sala.html', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  const concurso = await lerConcursoPorChave(String(req.query.concurso || ''));
+  if (!concurso) return res.status(400).send('Concurso inválido.');
+  const rows = await alocadosDoConcurso(concurso.id, parseInt(req.query.sala) || 0);
+  const e = escapeHtml; const bySala = {}, ord = [];
+  rows.forEach((r) => { if (!bySala[r.sala_id]) { bySala[r.sala_id] = { r, cands: [] }; ord.push(r.sala_id); } bySala[r.sala_id].cands.push(r); });
+  let corpo = '';
+  if (!ord.length) corpo = `<div class="pagina">${cabHTML(concurso, 'Frente de Sala')}<p style="padding:16px">Nenhum candidato alocado.</p></div>`;
+  ord.forEach((sid) => {
+    const g = bySala[sid], s = g.r; let linhas = '';
+    g.cands.forEach((c, i) => { linhas += `<tr><td class="num">${i + 1}</td><td>${e(c.nome)}</td></tr>`; });
+    corpo += `<div class="pagina">
+      <div style="text-align:center"><div class="org" style="font-size:11px;color:#5b7183;text-transform:uppercase;font-weight:700">${e(concurso.orgao || '')}</div><div style="font-size:13px">${e(concurso.titulo || '')}</div></div>
+      <div class="salahdr">${e(((s.sala || '') + (s.sala_obs ? (' - ' + s.sala_obs) : '')).toUpperCase())}</div>
+      <div class="subhdr">${e(s.escola)}</div>
+      <div class="qtd">(${g.cands.length} candidatos)</div>
+      <table><thead><tr><th class="num">#</th><th>Nome do Candidato</th></tr></thead><tbody>${linhas}</tbody></table></div>`;
+  });
+  res.send(relShell('Frente de Sala', corpo));
+});
+
+app.get('/admin/relatorio/frente-predio.html', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  const concurso = await lerConcursoPorChave(String(req.query.concurso || ''));
+  if (!concurso) return res.status(400).send('Concurso inválido.');
+  const rows = await alocadosDoConcurso(concurso.id, 0);
+  const e = escapeHtml; const byE = {}, ord = [];
+  rows.forEach((r) => { if (!byE[r.escola_id]) { byE[r.escola_id] = { r, cands: [] }; ord.push(r.escola_id); } byE[r.escola_id].cands.push(r); });
+  let corpo = '';
+  if (!ord.length) corpo = `<div class="pagina">${cabHTML(concurso, 'Frente de Prédio')}<p style="padding:16px">Nenhum candidato alocado.</p></div>`;
+  ord.forEach((eid) => {
+    const g = byE[eid], s = g.r;
+    g.cands.sort((a, b) => String(a.nome).localeCompare(String(b.nome), 'pt'));
+    let linhas = '';
+    g.cands.forEach((c, i) => { linhas += `<tr><td class="num">${i + 1}</td><td>${e(c.nome)}</td><td>${e(c.sala)}${c.sala_obs ? (' (' + e(c.sala_obs) + ')') : ''}</td></tr>`; });
+    corpo += `<div class="pagina">${cabHTML(concurso, 'Frente de Prédio — Locais de Prova')}
+      <div class="linha-sala">${e(s.escola)}${s.endereco ? (' — ' + e(s.endereco)) : ''}</div>
+      <table><thead><tr><th class="num">#</th><th>Nome</th><th>Sala</th></tr></thead><tbody>${linhas}</tbody></table></div>`;
+  });
+  res.send(relShell('Frente de Prédio', corpo));
 });
 
 app.get('/admin', exigirSenha, (req, res) => res.send(PAINEL_HTML));
