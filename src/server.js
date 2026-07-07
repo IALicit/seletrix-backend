@@ -219,7 +219,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'locais-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'ata-v1' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -1014,6 +1014,96 @@ app.get('/admin/relatorio/locais.html', exigirSenha, async (req, res) => {
 <div class="meta">Total alocados: <b>${rows.length}</b> &nbsp;·&nbsp; ${modo === 'agrupado' ? 'Agrupado por escola e sala' : 'Lista alfabética'} &nbsp;·&nbsp; Emitido em ${e(agora)}</div>
 ${body || '<p style="padding:16px;text-align:center">Nenhum candidato alocado ainda.</p>'}
 <div class="rodape">${e(concurso.titulo || '')} — Locais de Prova · Gerado pelo Seletrix</div>
+</body></html>`;
+  res.send(html);
+});
+
+// Ata da Sala (abertura/encerramento + folha de ocorrências) — 2 páginas por sala
+app.get('/admin/relatorio/ata.html', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  const concurso = await lerConcursoPorChave(String(req.query.concurso || ''));
+  if (!concurso) return res.status(400).send('Concurso inválido.');
+  const salaId = parseInt(req.query.sala) || 0;
+  const params = [concurso.id];
+  let filtro = '';
+  if (salaId) { params.push(salaId); filtro = ' AND s.id=$2'; }
+  const { rows } = await pool.query(`SELECT s.id,s.nome,s.obs,s.capacidade, e.nome AS escola, e.endereco,
+    (SELECT COUNT(*)::int FROM candidatos k WHERE k.sala_id=s.id) AS ocupacao
+    FROM salas s JOIN escolas e ON e.id=s.escola_id WHERE e.concurso_id=$1${filtro} ORDER BY e.id, s.id`, params);
+  const e = escapeHtml;
+  const editalLinha = e(((concurso.titulo || '') + (concurso.orgao ? ' - ' + concurso.orgao : '')).toUpperCase());
+  const linhaVazia = '<tr><td>&nbsp;</td><td>&nbsp;</td></tr>';
+  function ataDaSala(s) {
+    const cab = e(((s.nome || '') + (s.obs ? ' - ' + s.obs : '')).toUpperCase());
+    const frente = `
+<div class="pagina">
+  <div class="tit">Ata de abertura e encerramento do edital</div>
+  <div class="edital">${editalLinha}</div>
+  <div class="salahdr">${cab}</div>
+  <div class="escola">${e(s.escola || '')}</div>
+  <div class="endereco">${e(s.endereco || '')}</div>
+  <div class="turno">Turno _____________ — ______/______/__________</div>
+  <div class="qtd">(${s.ocupacao} candidatos)</div>
+  <div class="sec">ATA DE ABERTURA E ENCERRAMENTO DAS PROVAS E REGISTRO DE OCORRÊNCIAS.</div>
+  <p class="texto">Aos ______ dias do mês de ________________ de __________, às ______ horas, na escola ${e(s.escola || '')}, foi(foram) aberto(s) por três candidatos, através deste Termo de Abertura, o envelope da ${cab}, contendo as provas da vaga acima descrita, conforme o edital de nº 01, verificando-se que o mesmo estava devidamente lacrado. Foram voluntários para a conferência os seguintes candidatos:</p>
+  <div class="sub">ABERTURA DE ENVELOPE DE PROVAS COM GABARITOS (CARTÃO RESPOSTA).</div>
+  <p class="txt2">Foram voluntários para a conferência os seguintes candidatos:</p>
+  <table class="t2"><thead><tr><th>Nome do Candidato</th><th>Assinatura</th></tr></thead><tbody>${linhaVazia}${linhaVazia}${linhaVazia}</tbody></table>
+  <table class="tpres"><tbody><tr>
+    <td class="lbl">Candidatos Presentes</td><td class="pre">&nbsp;</td>
+    <td class="lbl">Candidatos Ausentes</td><td class="pre">&nbsp;</td>
+    <td class="lbl">Nº de Inclusões</td><td class="pre">&nbsp;</td>
+  </tr></tbody></table>
+  <p class="texto">Termo de Encerramento: Os três últimos candidatos, deu-se o fechamento do envelope de retorno das provas, lacrou-se o envelope e não havendo outros registros a serem informados, os três últimos candidatos, juntamente com os fiscais de sala assinam a presente ata de abertura, encerrando o registro de ocorrência de sala de provas.</p>
+  <div class="sub">FECHAMENTO ENVELOPES DE GABARITOS (CARTÃO-RESPOSTA)</div>
+  <p class="txt2">Foram voluntários para a conferência os seguintes, os 3 Últimos Candidatos:</p>
+  <table class="t2"><thead><tr><th>Nome do Candidato</th><th>Assinatura</th></tr></thead><tbody>${linhaVazia}${linhaVazia}${linhaVazia}</tbody></table>
+  <table class="t2"><thead><tr><th>Nome dos fiscais</th><th>Assinatura</th></tr></thead><tbody>${linhaVazia}${linhaVazia}</tbody></table>
+  <table class="t2"><thead><tr><th>Coordenador/Auxiliar Coordenação</th><th>Assinatura</th></tr></thead><tbody>${linhaVazia}</tbody></table>
+</div>`;
+    let linhas = ''; for (let i = 0; i < 26; i++) linhas += '<div class="linha">&nbsp;</div>';
+    const verso = `
+<div class="pagina">
+  <div class="tit">Ata de abertura e encerramento do edital</div>
+  <div class="edital">${editalLinha}</div>
+  <div class="ocor">RELATO DE OCORRÊNCIAS:</div>
+  <div class="quadro">${linhas}</div>
+</div>`;
+    return frente + verso;
+  }
+  const corpo = rows.length ? rows.map(ataDaSala).join('') : '<p style="padding:20px;text-align:center">Nenhuma sala encontrada (cadastre salas e aloque candidatos).</p>';
+  const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Ata da Sala</title>
+<style>
+ *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,Helvetica,sans-serif}
+ body{color:#111;font-size:12px}
+ .barra-print{background:#0b3a5e;color:#fff;padding:12px 18px;display:flex;justify-content:space-between;align-items:center}
+ .barra-print button{background:#fff;color:#0b3a5e;border:none;padding:9px 16px;border-radius:7px;font-weight:700;cursor:pointer;font-size:14px}
+ .pagina{max-width:800px;margin:0 auto;padding:26px 30px;min-height:1040px}
+ .tit{text-align:center;font-weight:700;font-size:13px}
+ .edital{text-align:center;font-weight:700;font-size:12px;margin-top:4px;line-height:1.35}
+ .salahdr{text-align:center;font-weight:700;font-size:17px;margin-top:12px}
+ .escola{text-align:center;font-size:12px;margin-top:4px}
+ .endereco{text-align:center;font-size:11px;color:#333}
+ .turno{text-align:center;font-size:12px;margin-top:4px}
+ .qtd{text-align:center;font-style:italic;font-size:12px;margin-top:2px}
+ .sec{font-weight:700;margin:14px 0 6px;font-size:12px}
+ .sub{font-weight:700;margin:12px 0 4px;font-size:12px}
+ .texto{text-align:justify;line-height:1.5;margin:6px 0}
+ .txt2{margin:4px 0}
+ table{width:100%;border-collapse:collapse;margin:6px 0}
+ .t2 th,.t2 td{border:1px solid #000;padding:7px 8px}
+ .t2 th{text-align:center;background:#f0f0f0}
+ .t2 td{height:26px}
+ .tpres td{border:1px solid #000;padding:7px 8px}
+ .tpres .lbl{font-weight:700;background:#f0f0f0;white-space:nowrap}
+ .tpres .pre{width:70px}
+ .ocor{text-align:center;font-weight:700;margin:14px 0 6px}
+ .quadro{border:1px solid #000}
+ .linha{border-bottom:1px solid #000;height:30px}
+ @media print{.barra-print{display:none} .pagina{page-break-after:always;min-height:auto}}
+</style></head><body>
+<div class="barra-print"><span>Confira e use <b>Imprimir → Salvar como PDF</b> (cada sala tem 2 páginas).</span><button onclick="window.print()">🖨️ Imprimir / Salvar PDF</button></div>
+${corpo}
 </body></html>`;
   res.send(html);
 });

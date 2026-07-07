@@ -205,6 +205,16 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
         <button class="sec" onclick="lpCSV()">⬇️ Baixar Excel (CSV)</button>
       </div>
     </div>
+    <div class="card">
+      <h2 style="font-size:1.15rem;color:var(--navy);margin-bottom:4px">Ata da Sala</h2>
+      <p class="hint" style="margin-bottom:14px">Ata de abertura/encerramento + folha de ocorrências (2 páginas por sala), pronta para imprimir e assinar.</p>
+      <div class="grid2">
+        <div><label>Concurso</label><select id="ata_concurso" onchange="ataSalas()"></select></div>
+        <div><label>Sala</label><select id="ata_sala"><option value="">Todas as salas</option></select></div>
+      </div>
+      <div style="margin-top:14px"><button onclick="ataPDF()">🖨️ Gerar ata (PDF)</button></div>
+      <p class="hint" style="margin-top:10px">O cabeçalho usa o nome da sala como você cadastrou (ex.: "Bloco 1 - Sala 1") + o andar/observação. Turno, data, presentes/ausentes e ocorrências ficam em branco para preencher à mão.</p>
+    </div>
   </section>
 
   <section id="locacao" style="display:none">
@@ -527,9 +537,19 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var opts = '<option value="">Selecione o concurso...</option>' + CONCURSOS.map(function(c){return '<option value="'+c.id+'">'+esc(c.titulo)+'</option>';}).join('');
     $('rel_concurso').innerHTML = opts;
     if($('lp_concurso')) $('lp_concurso').innerHTML = opts;
+    if($('ata_concurso')) $('ata_concurso').innerHTML = opts;
     $('rel_cargo').innerHTML = '<option value="">Todos os cargos</option>';
     $('rel_total').textContent = ''; if($('lp_total')) $('lp_total').textContent='';
+    if($('ata_sala')) $('ata_sala').innerHTML='<option value="">Todas as salas</option>';
   }
+  async function ataSalas(){
+    if($('ata_sala')) $('ata_sala').innerHTML='<option value="">Todas as salas</option>';
+    var id=$('ata_concurso').value; if(!id)return;
+    try{ var d=await (await fetch('/admin/concurso/'+id+'/salas.json')).json();
+      $('ata_sala').innerHTML='<option value="">Todas as salas</option>'+d.salas.map(function(s){return '<option value="'+s.id+'">'+esc(s.escola)+' — '+esc(s.nome)+'</option>';}).join('');
+    }catch(e){}
+  }
+  function ataPDF(){ if(!$('ata_concurso').value){alert('Selecione o concurso.');return;} window.open('/admin/relatorio/ata.html?concurso='+encodeURIComponent($('ata_concurso').value)+'&sala='+encodeURIComponent($('ata_sala').value),'_blank'); }
   function lpParams(){ return 'concurso='+encodeURIComponent($('lp_concurso').value)+'&modo='+$('lp_modo').value+'&versao='+$('lp_versao').value; }
   async function lpPreview(){
     if(!$('lp_concurso').value){ $('lp_total').textContent=''; return; }
