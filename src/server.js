@@ -87,6 +87,11 @@ async function inicializarBanco() {
   // Locação: escolas e salas por concurso
   await pool.query(`CREATE TABLE IF NOT EXISTS escolas (id SERIAL PRIMARY KEY, concurso_id INT, nome TEXT, endereco TEXT, criado_em TIMESTAMPTZ DEFAULT now());`);
   await pool.query(`CREATE TABLE IF NOT EXISTS salas (id SERIAL PRIMARY KEY, escola_id INT, nome TEXT, capacidade INT DEFAULT 0, obs TEXT, criado_em TIMESTAMPTZ DEFAULT now());`);
+  // Banco de questões (geral) + imagem opcional no enunciado
+  await pool.query(`CREATE TABLE IF NOT EXISTS questoes (
+    id SERIAL PRIMARY KEY, enunciado TEXT, alternativas TEXT DEFAULT '[]', correta INT DEFAULT 0,
+    disciplina TEXT, nivel TEXT, cargo TEXT, imagem_mime TEXT, imagem_dados BYTEA,
+    criado_em TIMESTAMPTZ DEFAULT now());`);
 
   // Migração: se não há concursos, cria o primeiro a partir da config antiga
   const { rows: qc } = await pool.query('SELECT COUNT(*)::int n FROM concursos');
@@ -220,7 +225,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'etiquetas-v2' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'questoes-v1' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -1391,6 +1396,62 @@ app.get('/admin/relatorio/etiquetas.html', exigirSenha, async (req, res) => {
 ${corpo}
 </body></html>`;
   res.send(html);
+});
+
+// ---- Banco de Questões (admin) -----------------------------
+app.get('/admin/questoes.json', exigirSenha, async (req, res) => {
+  if (!pool) return res.json({ questoes: [] });
+  const q = req.query; const where = []; const params = [];
+  if (q.disciplina) { params.push('%' + q.disciplina + '%'); where.push('disciplina ILIKE $' + params.length); }
+  if (q.nivel) { params.push(q.nivel); where.push('nivel=$' + params.length); }
+  if (q.cargo) { params.push('%' + q.cargo + '%'); where.push('cargo ILIKE $' + params.length); }
+  if (q.busca) { params.push('%' + q.busca + '%'); where.push('enunciado ILIKE $' + params.length); }
+  const w = where.length ? ('WHERE ' + where.join(' AND ')) : '';
+  const { rows } = await pool.query(`SELECT id,enunciado,alternativas,correta,disciplina,nivel,cargo,(imagem_dados IS NOT NULL) AS tem_imagem FROM questoes ${w} ORDER BY id DESC LIMIT 500`, params);
+  res.json({ questoes: rows.map((r) => { let a = []; try { a = JSON.parse(r.alternativas || '[]'); } catch {} return { id: r.id, enunciado: r.enunciado, alternativas: a, correta: r.correta, disciplina: r.disciplina, nivel: r.nivel, cargo: r.cargo, tem_imagem: r.tem_imagem }; }) });
+});
+app.post('/admin/questao', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const b = req.body || {};
+  const enunciado = String(b.enunciado || '').trim();
+  const alts = Array.isArray(b.alternativas) ? b.alternativas.map((x) => String(x || '').trim()).filter((x) => x !== '') : [];
+  const correta = Math.max(0, Math.min(alts.length - 1, parseInt(b.correta) || 0));
+  if (!enunciado) return res.status(400).json({ erro: 'Informe o enunciado.' });
+  if (alts.length < 2) return res.status(400).json({ erro: 'Informe pelo menos 2 alternativas.' });
+  const disc = String(b.disciplina || '').trim().slice(0, 120);
+  const nivel = String(b.nivel || '').trim().slice(0, 40);
+  const cargo = String(b.cargo || '').trim().slice(0, 120);
+  if (b.id) {
+    await pool.query('UPDATE questoes SET enunciado=$1,alternativas=$2,correta=$3,disciplina=$4,nivel=$5,cargo=$6 WHERE id=$7', [enunciado, JSON.stringify(alts), correta, disc, nivel, cargo, b.id]);
+    return res.json({ ok: true, id: b.id });
+  }
+  const r = await pool.query('INSERT INTO questoes (enunciado,alternativas,correta,disciplina,nivel,cargo) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id', [enunciado, JSON.stringify(alts), correta, disc, nivel, cargo]);
+  res.json({ ok: true, id: r.rows[0].id });
+});
+app.delete('/admin/questao/:id', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  await pool.query('DELETE FROM questoes WHERE id=$1', [req.params.id]); res.json({ ok: true });
+});
+app.post('/admin/questao/:id/imagem', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const buf = decodeB64((req.body || {}).dataBase64);
+  if (!buf) return res.status(400).json({ erro: 'Selecione uma imagem.' });
+  const mime = mimeDe(buf);
+  if (mime !== 'image/jpeg' && mime !== 'image/png') return res.status(400).json({ erro: 'Envie JPG ou PNG.' });
+  if (buf.length > 3 * 1024 * 1024) return res.status(400).json({ erro: 'Imagem muito grande (máx. 3 MB).' });
+  await pool.query('UPDATE questoes SET imagem_mime=$1,imagem_dados=$2 WHERE id=$3', [mime, buf, req.params.id]);
+  res.json({ ok: true });
+});
+app.post('/admin/questao/:id/imagem/remover', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  await pool.query('UPDATE questoes SET imagem_mime=NULL,imagem_dados=NULL WHERE id=$1', [req.params.id]); res.json({ ok: true });
+});
+app.get('/admin/questao/:id/imagem', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Indisponível.');
+  const { rows } = await pool.query('SELECT imagem_mime,imagem_dados FROM questoes WHERE id=$1', [req.params.id]);
+  if (!rows.length || !rows[0].imagem_dados) return res.status(404).send('Sem imagem.');
+  res.setHeader('Content-Type', rows[0].imagem_mime || 'image/png');
+  res.send(rows[0].imagem_dados);
 });
 
 app.get('/admin', exigirSenha, (req, res) => res.send(PAINEL_HTML));

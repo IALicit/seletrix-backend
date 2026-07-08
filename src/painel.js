@@ -25,6 +25,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
  .card{background:var(--branco);border:1px solid var(--linha);border-radius:14px;padding:22px;margin-bottom:16px;box-shadow:0 6px 20px rgba(11,58,94,.05)}
  label{display:block;font-size:.8rem;font-weight:600;color:#33454f;margin:12px 0 6px}
  input,select{width:100%;padding:11px 13px;border:1.5px solid var(--linha);border-radius:9px;font-size:.95rem;background:#fff;color:var(--txt)}
+ textarea{width:100%;padding:11px 13px;border:1.5px solid var(--linha);border-radius:9px;font-size:.95rem;background:#fff;color:var(--txt);font-family:inherit;resize:vertical}
  input:focus,select:focus{outline:none;border-color:var(--azul);box-shadow:0 0 0 3px rgba(18,85,138,.12)}
  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
  @media(max-width:620px){.grid2{grid-template-columns:1fr}}
@@ -76,6 +77,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   <div class="tab" data-t="relatorios">Relatórios</div>
   <div class="tab" data-t="locacao">Locação</div>
   <div class="tab" data-t="alocacao">Alocação</div>
+  <div class="tab" data-t="questoes">Questões</div>
 </div>
 <div class="wrap">
   <section id="concursos">
@@ -312,6 +314,40 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
         <tbody id="al_linhas"></tbody></table></div>
     </div>
   </section>
+
+  <section id="questoes" style="display:none">
+    <div class="card">
+      <h2 style="font-size:1.15rem;color:var(--navy);margin-bottom:10px">Nova questão</h2>
+      <input type="hidden" id="q_id">
+      <label>Enunciado</label>
+      <textarea id="q_enunciado" rows="3" placeholder="Digite o enunciado da questão"></textarea>
+      <label style="margin-top:12px">Alternativas (marque a correta no círculo à esquerda)</label>
+      <div id="q_alts"></div>
+      <button class="sec" type="button" onclick="addAlt()">+ Alternativa</button>
+      <div class="grid2" style="margin-top:14px">
+        <div><label>Disciplina / Matéria</label><input id="q_disciplina" placeholder="Ex.: Português"></div>
+        <div><label>Nível</label><select id="q_nivel"><option value="">—</option><option>Fácil</option><option>Médio</option><option>Difícil</option></select></div>
+        <div><label>Cargo</label><input id="q_cargo" placeholder="Ex.: Especialista (em branco = todos)"></div>
+      </div>
+      <label style="margin-top:14px">Imagem do enunciado (opcional)</label>
+      <div id="q_img_atual" class="hint" style="margin-bottom:8px"></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="file" id="q_img_file" accept="image/png,image/jpeg" style="border:none;padding:0">
+        <button class="sec" type="button" onclick="enviarImgQuestao()">Enviar imagem</button>
+      </div>
+      <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap"><button onclick="salvarQuestao()">Salvar questão</button><button class="sec" onclick="novaQuestao()">Limpar / Nova</button></div>
+    </div>
+    <div class="card">
+      <div class="grid2">
+        <div><label>Disciplina</label><input id="qf_disciplina" oninput="carregarQuestoes()"></div>
+        <div><label>Nível</label><select id="qf_nivel" onchange="carregarQuestoes()"><option value="">Todos</option><option>Fácil</option><option>Médio</option><option>Difícil</option></select></div>
+        <div><label>Cargo</label><input id="qf_cargo" oninput="carregarQuestoes()"></div>
+        <div><label>Buscar no enunciado</label><input id="qf_busca" oninput="carregarQuestoes()"></div>
+      </div>
+      <p id="q_total" style="margin:12px 0"></p>
+      <div id="q_lista"></div>
+    </div>
+  </section>
 </div>
 <div id="modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
   <div style="background:#fff;border-radius:12px;max-width:520px;width:92%;padding:20px;max-height:80vh;overflow:auto">
@@ -374,11 +410,12 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   let CONCURSOS = [], cargosEdit = [], tiposEdit = [], INSCRITOS = [];
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
     document.querySelectorAll('.tab').forEach(x => x.classList.remove('on')); t.classList.add('on');
-    ['concursos','inscritos','relatorios','locacao','alocacao'].forEach(s => $(s).style.display = s === t.dataset.t ? 'block' : 'none');
+    ['concursos','inscritos','relatorios','locacao','alocacao','questoes'].forEach(s => $(s).style.display = s === t.dataset.t ? 'block' : 'none');
     if (t.dataset.t === 'inscritos') carregarInscritos();
     if (t.dataset.t === 'relatorios') popularRelConcursos();
     if (t.dataset.t === 'locacao') popularLocConcursos();
     if (t.dataset.t === 'alocacao') popularAlConcursos();
+    if (t.dataset.t === 'questoes') { if(!QALTS.length) novaQuestao(); carregarQuestoes(); }
   });
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
   function combinaDT(data, hora, horaPadrao){ if(!data) return ''; return data+'T'+((hora||horaPadrao)).slice(0,5); }
@@ -776,6 +813,62 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var r=await fetch('/admin/desalocar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({candidato_ids:ids})});
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
     await alCarregarSalas(); alBuscar();
+  }
+
+  var QALTS=[], QCORRETA=0, QTEMIMG=false, QUESTOES=[];
+  function novaQuestao(){
+    $('q_id').value=''; $('q_enunciado').value=''; $('q_disciplina').value=''; $('q_nivel').value=''; $('q_cargo').value='';
+    QALTS=['','','','']; QCORRETA=0; renderAlts(); if($('q_img_file'))$('q_img_file').value='';
+    QTEMIMG=false; $('q_img_atual').innerHTML='<i>Salve a questão primeiro para anexar imagem.</i>';
+  }
+  function renderAlts(){
+    $('q_alts').innerHTML = QALTS.map(function(a,i){
+      return '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">'
+        +'<input type="radio" name="qcorreta" '+(QCORRETA===i?'checked':'')+' onclick="QCORRETA='+i+'" style="width:auto" title="Correta">'
+        +'<input value="'+esc(a).replace(/"/g,"&quot;")+'" oninput="QALTS['+i+']=this.value" placeholder="Alternativa '+String.fromCharCode(65+i)+'" style="flex:1">'
+        +'<button class="del" type="button" onclick="removeAlt('+i+')">×</button></div>';
+    }).join('');
+  }
+  function addAlt(){ if(QALTS.length>=6){alert('Máximo 6 alternativas.');return;} QALTS.push(''); renderAlts(); }
+  function removeAlt(i){ if(QALTS.length<=2){alert('Mínimo 2 alternativas.');return;} QALTS.splice(i,1); if(QCORRETA>=QALTS.length)QCORRETA=0; renderAlts(); }
+  async function salvarQuestao(){
+    var alts=QALTS.map(function(a){return (a||'').trim();}).filter(function(a){return a!=='';});
+    if(!$('q_enunciado').value.trim()){alert('Informe o enunciado.');return;}
+    if(alts.length<2){alert('Informe pelo menos 2 alternativas.');return;}
+    var body={id:$('q_id').value||undefined, enunciado:$('q_enunciado').value, alternativas:QALTS, correta:QCORRETA, disciplina:$('q_disciplina').value, nivel:$('q_nivel').value, cargo:$('q_cargo').value};
+    var r=await fetch('/admin/questao',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    $('q_id').value=j.id; if(!QTEMIMG) $('q_img_atual').innerHTML='<i>Nenhuma imagem. Você já pode anexar.</i>';
+    carregarQuestoes(); alert('Questão salva!');
+  }
+  function editarQuestao(id){
+    var q=QUESTOES.find(function(x){return x.id===id;}); if(!q)return;
+    $('q_id').value=q.id; $('q_enunciado').value=q.enunciado||''; $('q_disciplina').value=q.disciplina||''; $('q_nivel').value=q.nivel||''; $('q_cargo').value=q.cargo||'';
+    QALTS=(q.alternativas&&q.alternativas.length)?q.alternativas.slice():['','']; QCORRETA=q.correta||0; renderAlts();
+    QTEMIMG=q.tem_imagem; if($('q_img_file'))$('q_img_file').value='';
+    $('q_img_atual').innerHTML = q.tem_imagem ? ('Imagem atual: <img src="/admin/questao/'+q.id+'/imagem?t='+Date.now()+'" style="height:60px;vertical-align:middle;border-radius:4px"> <button class="del" type="button" onclick="removerImgQuestao()">remover</button>') : '<i>Nenhuma imagem anexada.</i>';
+    window.scrollTo({top:0,behavior:'smooth'});
+  }
+  async function delQuestao(id){ if(!confirm('Excluir esta questão?'))return; var r=await fetch('/admin/questao/'+id,{method:'DELETE'}); var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} carregarQuestoes(); }
+  async function enviarImgQuestao(){
+    var id=$('q_id').value; if(!id){alert('Salve a questão primeiro; depois anexe a imagem.');return;}
+    var f=$('q_img_file').files[0]; if(!f){alert('Escolha uma imagem.');return;}
+    if(f.size>3*1024*1024){alert('Máximo 3 MB.');return;}
+    var b64=await toB64(f);
+    var r=await fetch('/admin/questao/'+id+'/imagem',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dataBase64:b64})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    QTEMIMG=true; $('q_img_atual').innerHTML='Imagem anexada ✓ <img src="/admin/questao/'+id+'/imagem?t='+Date.now()+'" style="height:60px;vertical-align:middle;border-radius:4px"> <button class="del" type="button" onclick="removerImgQuestao()">remover</button>'; carregarQuestoes();
+  }
+  async function removerImgQuestao(){ var id=$('q_id').value; if(!id)return; if(!confirm('Remover a imagem?'))return; var r=await fetch('/admin/questao/'+id+'/imagem/remover',{method:'POST'}); await r.json(); QTEMIMG=false; $('q_img_atual').innerHTML='<i>Nenhuma imagem anexada.</i>'; carregarQuestoes(); }
+  async function carregarQuestoes(){
+    var p='disciplina='+encodeURIComponent($('qf_disciplina').value)+'&nivel='+encodeURIComponent($('qf_nivel').value)+'&cargo='+encodeURIComponent($('qf_cargo').value)+'&busca='+encodeURIComponent($('qf_busca').value);
+    var d=await (await fetch('/admin/questoes.json?'+p)).json();
+    QUESTOES=d.questoes; $('q_total').innerHTML='<b>'+d.questoes.length+'</b> questão(ões) no banco (com os filtros atuais).';
+    $('q_lista').innerHTML = d.questoes.length ? d.questoes.map(function(q){
+      var alts=(q.alternativas||[]).map(function(a,i){return '<div style="font-size:.85rem'+(i===q.correta?';color:#0f6b41;font-weight:700':'')+'">'+String.fromCharCode(65+i)+') '+esc(a)+(i===q.correta?' ✓':'')+'</div>';}).join('');
+      var tags=[q.disciplina,q.nivel,q.cargo].filter(Boolean).map(function(t){return '<span class="tag on">'+esc(t)+'</span>';}).join(' ');
+      return '<div class="card" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:10px"><div style="flex:1"><div style="font-weight:600">'+esc(q.enunciado)+(q.tem_imagem?' 🖼️':'')+'</div><div style="margin:4px 0">'+tags+'</div>'+alts+'</div><div class="row-actions"><button class="mini" onclick="editarQuestao('+q.id+')">Editar</button><button class="del" onclick="delQuestao('+q.id+')">Excluir</button></div></div></div>';
+    }).join('') : '<p class="hint">Nenhuma questão cadastrada ainda.</p>';
   }
 
   carregarConcursos();
