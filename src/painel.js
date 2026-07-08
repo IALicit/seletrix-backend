@@ -255,6 +255,15 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       </div>
       <div style="margin-top:14px"><button onclick="ctPDF()">🖨️ Gerar cartões (PDF)</button></div>
     </div>
+    <div class="card">
+      <h2 style="font-size:1.15rem;color:var(--navy);margin-bottom:4px">Etiquetas de Malote</h2>
+      <p class="hint" style="margin-bottom:14px">Etiquetas adesivas (Pimaco A4350 · 10 por folha) para identificar os malotes de prova de cada sala: escola, sala, cargos, turno, data e quantidade de candidatos.</p>
+      <div class="grid2">
+        <div><label>Concurso</label><select id="et_concurso"></select></div>
+        <div><label>Turno</label><input id="et_turno" placeholder="Ex.: Manhã"></div>
+      </div>
+      <div style="margin-top:14px"><button onclick="etPDF()">🖨️ Gerar etiquetas (PDF)</button></div>
+    </div>
   </section>
 
   <section id="locacao" style="display:none">
@@ -582,6 +591,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     if($('fs_concurso')) $('fs_concurso').innerHTML = opts;
     if($('fp_concurso')) $('fp_concurso').innerHTML = opts;
     if($('ct_concurso')) $('ct_concurso').innerHTML = opts;
+    if($('et_concurso')) $('et_concurso').innerHTML = opts;
     $('rel_cargo').innerHTML = '<option value="">Todos os cargos</option>';
     $('rel_total').textContent = ''; if($('lp_total')) $('lp_total').textContent='';
     if($('ata_sala')) $('ata_sala').innerHTML='<option value="">Todas as salas</option>';
@@ -619,6 +629,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       +'&turno='+encodeURIComponent($('ct_turno').value);
     window.open(u,'_blank');
   }
+  function etPDF(){ if(!$('et_concurso').value){alert('Selecione o concurso.');return;} window.open('/admin/relatorio/etiquetas.html?concurso='+encodeURIComponent($('et_concurso').value)+'&turno='+encodeURIComponent($('et_turno').value),'_blank'); }
   async function ataSalas(){
     if($('ata_sala')) $('ata_sala').innerHTML='<option value="">Todas as salas</option>';
     var id=$('ata_concurso').value; if(!id)return;

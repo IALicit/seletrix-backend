@@ -220,7 +220,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'cartoes-v3' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'etiquetas-v1' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -1335,6 +1335,62 @@ app.get('/admin/relatorio/cartoes.html', exigirSenha, async (req, res) => {
     </div></div>`;
   });
   res.send(cartaoShell(corpo));
+});
+
+// ---- Etiquetas de malote (Pimaco A4350: 2x5, 99x55,8mm) ----
+app.get('/admin/relatorio/etiquetas.html', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  const concurso = await lerConcursoPorChave(String(req.query.concurso || ''));
+  if (!concurso) return res.status(400).send('Concurso inválido.');
+  const e = escapeHtml;
+  const turno = e(String(req.query.turno || '').trim() || '________');
+  const data = e(concurso.prova ? String(concurso.prova) : '____/____/____');
+  const { rows } = await pool.query(`SELECT k.cargo, s.id AS sala_id, s.nome AS sala, s.obs, e.id AS escola_id, e.nome AS escola, e.endereco
+    FROM candidatos k JOIN salas s ON s.id=k.sala_id JOIN escolas e ON e.id=s.escola_id
+    WHERE k.concurso_id=$1 ORDER BY e.id, s.id`, [concurso.id]);
+  // agrupa por sala: qtd + cargos distintos
+  const bySala = {}, ord = [];
+  rows.forEach((r) => {
+    if (!bySala[r.sala_id]) { bySala[r.sala_id] = { r, qtd: 0, cargos: new Set() }; ord.push(r.sala_id); }
+    bySala[r.sala_id].qtd++; if (r.cargo) bySala[r.sala_id].cargos.add(r.cargo);
+  });
+  const etiquetas = ord.map((sid) => {
+    const g = bySala[sid], s = g.r;
+    const salaTxt = ((s.sala || '') + (s.obs ? (' - ' + s.obs) : '')).toUpperCase();
+    const cargos = Array.from(g.cargos).sort().join(', ') || '—';
+    return `<div class="etq">
+      <div class="tag">LOCAL DE PROVA · MALOTE — ${e(concurso.titulo || '')}</div>
+      <div class="sala">SALA ${e(salaTxt)}</div>
+      <div class="esc">${e(s.escola || '')}</div>
+      <div class="row"><b>Cargos:</b> ${e(cargos)}</div>
+      <div class="row"><b>Turno:</b> ${turno} &nbsp;&nbsp; <b>Data:</b> ${data}</div>
+      <div class="qtd">${g.qtd} CANDIDATO(S)</div>
+    </div>`;
+  });
+  // páginas de 10 etiquetas
+  let corpo = '';
+  if (!etiquetas.length) corpo = '<div class="folha"><div class="etq">Nenhuma sala com candidatos alocados.</div></div>';
+  for (let i = 0; i < etiquetas.length; i += 10) corpo += `<div class="folha">${etiquetas.slice(i, i + 10).join('')}</div>`;
+  const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Etiquetas de Malote</title>
+<style>
+ *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,Helvetica,sans-serif}
+ body{color:#1a2b4a;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+ @page{size:A4;margin:0}
+ .barra-print{background:#0b3a5e;color:#fff;padding:12px 18px;display:flex;justify-content:space-between;align-items:center}
+ .barra-print button{background:#fff;color:#0b3a5e;border:none;padding:9px 16px;border-radius:7px;font-weight:700;cursor:pointer;font-size:14px}
+ .folha{width:210mm;min-height:297mm;padding:9mm 5mm 0;margin:0 auto;display:grid;grid-template-columns:repeat(2,99mm);grid-auto-rows:55.8mm;column-gap:2mm;row-gap:0;background:#fff}
+ .etq{padding:5mm;overflow:hidden;border:1px dashed #e2e6ea}
+ .etq .tag{font-size:8px;letter-spacing:.08em;color:#5b7183;font-weight:700;text-transform:uppercase}
+ .etq .sala{font-size:16px;font-weight:800;color:#0b2a4a;margin-top:3px;line-height:1.1}
+ .etq .esc{font-size:11px;margin-top:3px;font-weight:600}
+ .etq .row{font-size:10px;margin-top:4px}
+ .etq .qtd{font-size:14px;font-weight:800;margin-top:6px;color:#0b2a4a}
+ @media print{.barra-print{display:none} .etq{border:none} .folha + .folha{break-before:page;page-break-before:always}}
+</style></head><body>
+<div class="barra-print"><span>Etiquetas Pimaco A4350 (10 por folha). <b>Imprima em escala 100%</b> e teste antes numa folha comum.</span><button onclick="window.print()">🖨️ Imprimir / Salvar PDF</button></div>
+${corpo}
+</body></html>`;
+  res.send(html);
 });
 
 app.get('/admin', exigirSenha, (req, res) => res.send(PAINEL_HTML));
