@@ -220,7 +220,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'etiquetas-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'etiquetas-v2' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -1379,7 +1379,7 @@ app.get('/admin/relatorio/etiquetas.html', exigirSenha, async (req, res) => {
  .barra-print{background:#0b3a5e;color:#fff;padding:12px 18px;display:flex;justify-content:space-between;align-items:center}
  .barra-print button{background:#fff;color:#0b3a5e;border:none;padding:9px 16px;border-radius:7px;font-weight:700;cursor:pointer;font-size:14px}
  .folha{width:210mm;min-height:297mm;padding:9mm 5mm 0;margin:0 auto;display:grid;grid-template-columns:repeat(2,99mm);grid-auto-rows:55.8mm;column-gap:2mm;row-gap:0;background:#fff}
- .etq{padding:5mm;overflow:hidden;border:1px dashed #e2e6ea}
+ .etq{padding:5mm;overflow:hidden;border:1px dashed #e2e6ea;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center}
  .etq .tag{font-size:8px;letter-spacing:.08em;color:#5b7183;font-weight:700;text-transform:uppercase}
  .etq .sala{font-size:16px;font-weight:800;color:#0b2a4a;margin-top:3px;line-height:1.1}
  .etq .esc{font-size:11px;margin-top:3px;font-weight:600}
