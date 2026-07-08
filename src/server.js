@@ -225,7 +225,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'questoes-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'prova-v1' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -1452,6 +1452,62 @@ app.get('/admin/questao/:id/imagem', exigirSenha, async (req, res) => {
   if (!rows.length || !rows[0].imagem_dados) return res.status(404).send('Sem imagem.');
   res.setHeader('Content-Type', rows[0].imagem_mime || 'image/png');
   res.send(rows[0].imagem_dados);
+});
+
+// ---- Geração do caderno de prova ---------------------------
+app.get('/admin/prova.html', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  const concurso = await lerConcursoPorChave(String(req.query.concurso || ''));
+  const titulo = String(req.query.titulo || 'Prova Objetiva').slice(0, 160);
+  const ids = String(req.query.ids || '').split(',').map((x) => parseInt(x)).filter(Boolean);
+  if (!ids.length) return res.status(400).send('Selecione ao menos uma questão.');
+  const { rows } = await pool.query('SELECT id,enunciado,alternativas,imagem_mime,imagem_dados FROM questoes WHERE id = ANY($1::int[])', [ids]);
+  const byId = {}; rows.forEach((r) => byId[r.id] = r);
+  const ordered = ids.map((i) => byId[i]).filter(Boolean);
+  const e = escapeHtml;
+  let body = '';
+  ordered.forEach((q, idx) => {
+    let alts = []; try { alts = JSON.parse(q.alternativas || '[]'); } catch {}
+    const img = q.imagem_dados ? `<div class="qimg"><img src="data:${q.imagem_mime || 'image/png'};base64,${Buffer.from(q.imagem_dados).toString('base64')}"></div>` : '';
+    const altHtml = alts.map((a, i) => `<div class="alt"><span class="letra">${String.fromCharCode(65 + i)})</span> ${e(a)}</div>`).join('');
+    body += `<div class="questao"><div class="enun"><span class="qnum">${idx + 1}.</span> ${e(q.enunciado)}</div>${img}<div class="alts">${altHtml}</div></div>`;
+  });
+  const org = concurso ? e(concurso.orgao || '') : '';
+  const edital = concurso ? e(concurso.titulo || '') : '';
+  const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${e(titulo)}</title>
+<style>
+ *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,Helvetica,sans-serif}
+ body{color:#111;font-size:12px;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+ @page{size:A4 portrait;margin:14mm}
+ .barra-print{background:#0b3a5e;color:#fff;padding:12px 18px;display:flex;justify-content:space-between;align-items:center}
+ .barra-print button{background:#fff;color:#0b3a5e;border:none;padding:9px 16px;border-radius:7px;font-weight:700;cursor:pointer;font-size:14px}
+ .folha{max-width:780px;margin:0 auto;padding:16px 18px}
+ .cab{text-align:center;border-bottom:2px solid #0b3a5e;padding-bottom:10px;margin-bottom:10px}
+ .cab .org{font-size:12px;color:#5b7183;text-transform:uppercase;letter-spacing:.04em;font-weight:700}
+ .cab .edital{font-size:15px;color:#0b3a5e;font-weight:700;margin-top:2px}
+ .cab .tprova{font-size:13px;font-weight:600;margin-top:2px}
+ .idbox{border:1px solid #000;border-radius:4px;padding:10px 12px;margin-bottom:16px;font-size:11px;line-height:2.1}
+ .questao{margin-bottom:16px;break-inside:avoid;page-break-inside:avoid}
+ .enun{font-size:12px;line-height:1.55;text-align:justify}
+ .qnum{font-weight:700}
+ .qimg{margin:8px 0}
+ .qimg img{max-width:75%;max-height:60mm;display:block}
+ .alts{margin-top:6px}
+ .alt{font-size:12px;margin:4px 0;padding-left:20px;line-height:1.4}
+ .letra{font-weight:700}
+ @media print{.barra-print{display:none} .folha{max-width:none;margin:0;padding:0}}
+</style></head><body>
+<div class="barra-print"><span>Confira e use <b>Imprimir → Salvar como PDF</b>.</span><button onclick="window.print()">🖨️ Imprimir / Salvar PDF</button></div>
+<div class="folha">
+  <div class="cab"><div class="org">${org}</div><div class="edital">${edital}</div><div class="tprova">${e(titulo)}</div></div>
+  <div class="idbox">
+    <div>NOME: ____________________________________________________________</div>
+    <div>INSCRIÇÃO: ____________________ &nbsp; SALA: ____________ &nbsp; ASSINATURA: ____________________</div>
+  </div>
+  ${body}
+</div>
+</body></html>`;
+  res.send(html);
 });
 
 app.get('/admin', exigirSenha, (req, res) => res.send(PAINEL_HTML));

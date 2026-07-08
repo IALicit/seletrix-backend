@@ -344,6 +344,15 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
         <div><label>Cargo</label><input id="qf_cargo" oninput="carregarQuestoes()"></div>
         <div><label>Buscar no enunciado</label><input id="qf_busca" oninput="carregarQuestoes()"></div>
       </div>
+      <div style="border-top:1px solid var(--linha);margin-top:14px;padding-top:14px">
+        <h3 style="font-size:1rem;color:var(--navy);margin-bottom:8px">Montar prova (marque as questões abaixo)</h3>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
+          <div style="flex:1;min-width:180px"><label>Concurso (cabeçalho)</label><select id="prova_concurso"></select></div>
+          <div style="flex:1;min-width:180px"><label>Título da prova</label><input id="prova_titulo" placeholder="Ex.: Prova Objetiva - Especialista"></div>
+          <button onclick="gerarProva()">🖨️ Gerar prova (PDF)</button>
+        </div>
+        <p class="hint" id="prova_sel" style="margin-top:8px">0 questão(ões) selecionada(s).</p>
+      </div>
       <p id="q_total" style="margin:12px 0"></p>
       <div id="q_lista"></div>
     </div>
@@ -415,7 +424,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     if (t.dataset.t === 'relatorios') popularRelConcursos();
     if (t.dataset.t === 'locacao') popularLocConcursos();
     if (t.dataset.t === 'alocacao') popularAlConcursos();
-    if (t.dataset.t === 'questoes') { if(!QALTS.length) novaQuestao(); carregarQuestoes(); }
+    if (t.dataset.t === 'questoes') { if(!QALTS.length) novaQuestao(); popularProvaConcursos(); carregarQuestoes(); }
   });
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
   function combinaDT(data, hora, horaPadrao){ if(!data) return ''; return data+'T'+((hora||horaPadrao)).slice(0,5); }
@@ -867,8 +876,17 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('q_lista').innerHTML = d.questoes.length ? d.questoes.map(function(q){
       var alts=(q.alternativas||[]).map(function(a,i){return '<div style="font-size:.85rem'+(i===q.correta?';color:#0f6b41;font-weight:700':'')+'">'+String.fromCharCode(65+i)+') '+esc(a)+(i===q.correta?' ✓':'')+'</div>';}).join('');
       var tags=[q.disciplina,q.nivel,q.cargo].filter(Boolean).map(function(t){return '<span class="tag on">'+esc(t)+'</span>';}).join(' ');
-      return '<div class="card" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:10px"><div style="flex:1"><div style="font-weight:600">'+esc(q.enunciado)+(q.tem_imagem?' 🖼️':'')+'</div><div style="margin:4px 0">'+tags+'</div>'+alts+'</div><div class="row-actions"><button class="mini" onclick="editarQuestao('+q.id+')">Editar</button><button class="del" onclick="delQuestao('+q.id+')">Excluir</button></div></div></div>';
+      return '<div class="card" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:10px"><div style="flex:1;display:flex;gap:10px"><input type="checkbox" class="qsel" value="'+q.id+'" onchange="contarSel()" style="width:auto;margin-top:3px"><div><div style="font-weight:600">'+esc(q.enunciado)+(q.tem_imagem?' 🖼️':'')+'</div><div style="margin:4px 0">'+tags+'</div>'+alts+'</div></div><div class="row-actions"><button class="mini" onclick="editarQuestao('+q.id+')">Editar</button><button class="del" onclick="delQuestao('+q.id+')">Excluir</button></div></div></div>';
     }).join('') : '<p class="hint">Nenhuma questão cadastrada ainda.</p>';
+    contarSel();
+  }
+  function contarSel(){ var n=document.querySelectorAll('.qsel:checked').length; if($('prova_sel')) $('prova_sel').innerHTML='<b>'+n+'</b> questão(ões) selecionada(s).'; }
+  function popularProvaConcursos(){ if($('prova_concurso') && !$('prova_concurso').options.length) $('prova_concurso').innerHTML='<option value="">Selecione o concurso...</option>'+CONCURSOS.map(function(c){return '<option value="'+c.id+'">'+esc(c.titulo)+'</option>';}).join(''); }
+  function gerarProva(){
+    var ids=Array.from(document.querySelectorAll('.qsel:checked')).map(function(c){return c.value;});
+    if(!ids.length){alert('Marque ao menos uma questão.');return;}
+    var u='/admin/prova.html?concurso='+encodeURIComponent($('prova_concurso').value)+'&titulo='+encodeURIComponent($('prova_titulo').value||'Prova Objetiva')+'&ids='+ids.join(',');
+    window.open(u,'_blank');
   }
 
   carregarConcursos();
