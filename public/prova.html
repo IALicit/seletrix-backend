@@ -66,7 +66,8 @@
     <p class="sub" id="ins_ola"></p>
     <div id="ins_info"></div>
     <div class="aviso" id="ins_aviso"></div>
-    <button onclick="iniciar()">Iniciar prova em tela cheia</button>
+    <div id="ins_janela"></div>
+    <button id="btn_iniciar" onclick="iniciar()">Iniciar prova em tela cheia</button>
     <button class="sec" onclick="location.reload()">Sair</button>
   </div>
 </div>
@@ -122,7 +123,7 @@
     $('btn_entrar').disabled=false; $('btn_entrar').textContent='Entrar';
     if(!res.ok){ mostraErro(res.j.erro||'Não foi possível entrar.'); return; }
     PROVA=res.j; RESP=res.j.respostas||{}; RESTANTE=res.j.restante_seg||0;
-    if(PROVA.status==='finalizado'){ return telaFim('finalizado', PROVA.nota); }
+    if(PROVA.status==='finalizado'){ return telaFim('finalizado', PROVA.nota, PROVA.questoes.length, PROVA.respostas); }
     if(PROVA.status==='eliminado'){ return telaFim('eliminado'); }
     telaInstrucoes();
   }
@@ -134,6 +135,14 @@
     $('ins_ola').textContent='Olá, '+(PROVA.nome||'candidato')+'!';
     $('ins_info').innerHTML='<p style="line-height:1.9"><b>Questões:</b> '+PROVA.questoes.length+'<br><b>Duração:</b> '+PROVA.duracao_min+' minutos<br><b>Limite de saídas permitidas:</b> '+PROVA.max_saidas+'</p>';
     $('ins_aviso').innerHTML='<b>Atenção — regras da prova:</b><br>• A prova roda em <b>tela cheia</b>. <br>• Se você <b>minimizar, trocar de aba ou sair da tela cheia</b>, o sistema registra uma saída.<br>• Ao ultrapassar <b>'+PROVA.max_saidas+' saída(s)</b>, você será <b>eliminado</b> automaticamente.<br>• Quando o tempo acabar, a prova é enviada automaticamente.';
+    var jan=$('ins_janela'), btn=$('btn_iniciar');
+    jan.innerHTML=''; btn.disabled=false;
+    if(PROVA.inicio_fmt){ jan.innerHTML='<div class="aviso" style="background:#eaf3fb;border-color:#bcd8f0;color:#0b3a5e">Horário de início: <b>'+PROVA.inicio_fmt+'</b>'+(PROVA.tolerancia_min?(' · entrada até '+PROVA.tolerancia_min+' min depois'):'')+'.</div>'; }
+    if(!PROVA.pode_iniciar){
+      btn.disabled=true;
+      if(PROVA.janela_motivo==='antes'){ jan.innerHTML='<div class="aviso">⏳ A prova ainda <b>não foi liberada</b>. Início: <b>'+PROVA.inicio_fmt+'</b>. Atualize a página no horário para entrar.</div>'; }
+      else if(PROVA.janela_motivo==='encerrado'){ jan.innerHTML='<div class="aviso">⛔ O <b>período de entrada foi encerrado</b>. Não é mais possível iniciar esta prova.</div>'; }
+    }
     $('tela_instrucoes').style.display='flex';
   }
 
@@ -213,10 +222,10 @@
     var res=await api('finalizar');
     if(document.fullscreenElement){ try{ document.exitFullscreen(); }catch(e){} }
     if(res.j && res.j.status==='eliminado') return telaFim('eliminado');
-    telaFim('finalizado', res.j?res.j.nota:null);
+    telaFim('finalizado', res.j?res.j.nota:null, res.j?res.j.total:null, res.j?res.j.respostas:null);
   }
 
-  function telaFim(tipo, nota){
+  function telaFim(tipo, nota, total, respostas){
     RODANDO=false; clearInterval(TIMER); $('overlay').style.display='none';
     ['tela_login','tela_instrucoes','tela_prova'].forEach(function(t){$(t).style.display='none';});
     if(tipo==='eliminado'){
@@ -224,7 +233,14 @@
       $('fim_msg').innerHTML='Você foi <b>eliminado</b> por ultrapassar o limite de saídas permitidas durante a prova.';
     } else {
       $('fim_titulo').innerHTML='<span class="fim-ok">Prova finalizada ✓</span>';
-      $('fim_msg').innerHTML='Sua prova foi enviada com sucesso.'+(nota!=null?'<br><br>Você pode fechar esta janela.':'');
+      var resp=respostas||RESP||{};
+      var gab=(PROVA&&PROVA.questoes?PROVA.questoes:[]).map(function(q,i){
+        var a=resp[q.id]; var letra=(a==null||a==='')?'—':String.fromCharCode(65+Number(a));
+        return '<div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--linha);padding:6px 2px"><span>Questão '+(i+1)+'</span><b>'+letra+'</b></div>';
+      }).join('');
+      $('fim_msg').innerHTML='Sua prova foi enviada com sucesso. Anote suas respostas abaixo para conferência:'
+        +'<div style="margin-top:14px;text-align:left;border:1px solid var(--linha);border-radius:10px;padding:12px 14px;max-height:50vh;overflow:auto"><div style="font-weight:700;color:var(--navy);margin-bottom:6px">Suas respostas</div>'+gab+'</div>'
+        +'<p style="margin-top:12px;font-size:.85rem;color:var(--suave)">Você já pode fechar esta janela.</p>';
     }
     $('tela_fim').style.display='flex';
   }
