@@ -79,6 +79,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   <div class="tab" data-t="locacao">Locação</div>
   <div class="tab" data-t="alocacao">Alocação</div>
   <div class="tab" data-t="questoes">Questões</div>
+  <div class="tab" data-t="prova_online">Prova Online</div>
 </div>
 <div class="wrap">
   <section id="concursos">
@@ -358,6 +359,31 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       <div id="q_lista"></div>
     </div>
   </section>
+
+  <section id="prova_online" style="display:none">
+    <div class="card">
+      <h2 style="font-size:1.15rem;color:var(--navy);margin-bottom:10px">Nova prova online</h2>
+      <input type="hidden" id="po_id">
+      <div class="grid2">
+        <div><label>Concurso</label><select id="po_concurso"></select></div>
+        <div><label>Título da prova</label><input id="po_titulo" placeholder="Ex.: Prova Objetiva Online"></div>
+        <div><label>Duração (minutos)</label><input id="po_duracao" type="number" min="1" value="60"></div>
+        <div><label>Máx. de saídas antes de eliminar</label><input id="po_maxsaidas" type="number" min="0" value="2"></div>
+      </div>
+      <label style="margin-top:14px">Questões (marque as que entram na prova)</label>
+      <input id="po_busca_q" placeholder="Filtrar por enunciado/disciplina" oninput="carregarQuestoesProva()" style="margin-bottom:8px">
+      <div id="po_questoes" style="max-height:40vh;overflow:auto;border:1px solid var(--linha);border-radius:8px;padding:10px"></div>
+      <p class="hint" id="po_selq" style="margin-top:6px">0 questão(ões) selecionada(s).</p>
+      <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap"><button onclick="salvarProva()">Salvar prova</button><button class="sec" onclick="novaProva()">Limpar / Nova</button></div>
+    </div>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <label style="margin:0">Provas cadastradas</label>
+        <span class="hint">Link do candidato: <b id="po_link">/prova.html</b></span>
+      </div>
+      <div id="po_lista" style="margin-top:12px"></div>
+    </div>
+  </section>
 </div>
 <div id="modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
   <div style="background:#fff;border-radius:12px;max-width:520px;width:92%;padding:20px;max-height:80vh;overflow:auto">
@@ -393,6 +419,16 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       <button onclick="salvarInscrito()">Salvar alterações</button>
       <button class="sec" onclick="fecharEdit()">Cancelar</button>
     </div>
+  </div>
+</div>
+<div id="modal_acessos" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:12px;max-width:680px;width:94%;padding:22px;max-height:90vh;overflow:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <h3>Acessos — <span id="ac_titulo"></span></h3><button class="sec" onclick="document.getElementById('modal_acessos').style.display='none'">Fechar</button>
+    </div>
+    <p class="hint">Envie a cada candidato o link <b>/prova.html</b> + o CPF + o código. "Copiar lista" leva tudo para a área de transferência.</p>
+    <div style="margin:10px 0"><button class="sec" onclick="copiarAcessos()">Copiar lista</button></div>
+    <div id="ac_lista" style="max-height:60vh;overflow:auto"></div>
   </div>
 </div>
 <div id="modal_import" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
@@ -438,12 +474,13 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   let CONCURSOS = [], cargosEdit = [], tiposEdit = [], INSCRITOS = [];
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
     document.querySelectorAll('.tab').forEach(x => x.classList.remove('on')); t.classList.add('on');
-    ['concursos','inscritos','relatorios','locacao','alocacao','questoes'].forEach(s => $(s).style.display = s === t.dataset.t ? 'block' : 'none');
+    ['concursos','inscritos','relatorios','locacao','alocacao','questoes','prova_online'].forEach(s => $(s).style.display = s === t.dataset.t ? 'block' : 'none');
     if (t.dataset.t === 'inscritos') carregarInscritos();
     if (t.dataset.t === 'relatorios') popularRelConcursos();
     if (t.dataset.t === 'locacao') popularLocConcursos();
     if (t.dataset.t === 'alocacao') popularAlConcursos();
     if (t.dataset.t === 'questoes') { if(!QALTS.length) novaQuestao(); popularProvaConcursos(); carregarQuestoes(); }
+    if (t.dataset.t === 'prova_online') { popularProvaOnline(); }
   });
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
   function combinaDT(data, hora, horaPadrao){ if(!data) return ''; return data+'T'+((hora||horaPadrao)).slice(0,5); }
@@ -955,6 +992,72 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     if(!r.ok){ $('imp_result').style.background='#fde8e8'; $('imp_result').style.color='#a12626'; $('imp_result').textContent=j.erro||'Erro na importação'; return; }
     $('imp_result').style.background='var(--verde-bg)'; $('imp_result').style.color='#0f6b41';
     $('imp_result').innerHTML='✓ Importados: <b>'+j.importados+'</b>. Ignorados (duplicados ou sem Nome/CPF válido): <b>'+j.pulados+'</b>.';
+  }
+
+  var PO_SEL={}, PO_ACESSOS=[];
+  function popularProvaOnline(){
+    $('po_link').textContent = location.origin + '/prova.html';
+    $('po_concurso').innerHTML='<option value="">Selecione o concurso...</option>'+CONCURSOS.map(function(c){return '<option value="'+c.id+'">'+esc(c.titulo)+'</option>';}).join('');
+    $('po_concurso').onchange=carregarProvas;
+    novaProva(); carregarQuestoesProva(); carregarProvas();
+  }
+  function novaProva(){ $('po_id').value=''; $('po_titulo').value=''; $('po_duracao').value='60'; $('po_maxsaidas').value='2'; PO_SEL={}; marcarSelProva(); atualizaSelQ(); }
+  async function carregarQuestoesProva(){
+    var d=await (await fetch('/admin/questoes.json?busca='+encodeURIComponent($('po_busca_q').value))).json();
+    $('po_questoes').innerHTML = d.questoes.length ? d.questoes.map(function(q){
+      var tags=[q.disciplina,q.nivel,q.cargo].filter(Boolean).join(' · ');
+      return '<label style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px solid var(--linha);font-weight:400"><input type="checkbox" class="poq" value="'+q.id+'" '+(PO_SEL[q.id]?'checked':'')+' onchange="togglePoQ('+q.id+',this.checked)" style="width:auto;margin-top:3px"><span><span style="font-weight:600">'+esc(q.enunciado)+'</span>'+(tags?' <span class="hint">('+esc(tags)+')</span>':'')+'</span></label>';
+    }).join('') : '<p class="hint">Nenhuma questão no banco. Cadastre na aba Questões.</p>';
+  }
+  function togglePoQ(id,on){ if(on)PO_SEL[id]=true; else delete PO_SEL[id]; atualizaSelQ(); }
+  function marcarSelProva(){ document.querySelectorAll('.poq').forEach(function(c){c.checked=!!PO_SEL[c.value];}); }
+  function atualizaSelQ(){ $('po_selq').innerHTML='<b>'+Object.keys(PO_SEL).length+'</b> questão(ões) selecionada(s).'; }
+  async function salvarProva(){
+    var ids=Object.keys(PO_SEL).map(function(x){return parseInt(x);});
+    if(!$('po_concurso').value){alert('Selecione o concurso.');return;}
+    if(!$('po_titulo').value.trim()){alert('Informe o título.');return;}
+    if(!ids.length){alert('Selecione ao menos uma questão.');return;}
+    var body={id:$('po_id').value||undefined, concurso_id:$('po_concurso').value, titulo:$('po_titulo').value, duracao_min:$('po_duracao').value, max_saidas:$('po_maxsaidas').value, questao_ids:ids};
+    var r=await fetch('/admin/prova',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    alert('Prova salva!'); novaProva(); carregarProvas();
+  }
+  async function carregarProvas(){
+    if(!$('po_concurso').value){ $('po_lista').innerHTML='<p class="hint">Selecione um concurso.</p>'; return; }
+    var d=await (await fetch('/admin/provas.json?concurso='+$('po_concurso').value)).json();
+    $('po_lista').innerHTML = d.provas.length ? d.provas.map(function(p){
+      return '<div class="card" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">'
+        +'<div><b>'+esc(p.titulo)+'</b><div class="hint">'+p.num_questoes+' questões · '+p.duracao_min+' min · máx. '+p.max_saidas+' saídas</div></div>'
+        +'<div class="row-actions"><button class="mini" onclick="editarProva('+p.id+')">Editar</button><button class="mini" onclick="gerarAcessos('+p.id+')">Gerar acessos</button><button class="mini" onclick="verAcessos('+p.id+",'"+esc(p.titulo).replace(/'/g,"\\'")+"')\">Ver acessos</button><button class=\"del\" onclick=\"delProva("+p.id+")\">Excluir</button></div>"
+        +'</div></div>';
+    }).join('') : '<p class="hint">Nenhuma prova criada para este concurso.</p>';
+    PROVAS_PO=d.provas;
+  }
+  var PROVAS_PO=[];
+  function editarProva(id){
+    var p=PROVAS_PO.find(function(x){return x.id===id;}); if(!p)return;
+    $('po_id').value=p.id; $('po_titulo').value=p.titulo; $('po_duracao').value=p.duracao_min; $('po_maxsaidas').value=p.max_saidas;
+    PO_SEL={}; (p.questao_ids||[]).forEach(function(qid){PO_SEL[qid]=true;}); marcarSelProva(); atualizaSelQ();
+    window.scrollTo({top:0,behavior:'smooth'});
+  }
+  async function delProva(id){ if(!confirm('Excluir esta prova e todos os acessos/respostas dela?'))return; var r=await fetch('/admin/prova/'+id,{method:'DELETE'}); await r.json(); carregarProvas(); }
+  async function gerarAcessos(id){
+    if(!confirm('Gerar códigos de acesso para todos os candidatos deste concurso?'))return;
+    var r=await fetch('/admin/prova/'+id+'/acessos',{method:'POST'}); var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    alert('Acessos gerados: '+j.criados+' novo(s) de '+j.total+' candidato(s). (Quem já tinha código foi mantido.)');
+  }
+  async function verAcessos(id,titulo){
+    var d=await (await fetch('/admin/prova/'+id+'/acessos.json')).json();
+    PO_ACESSOS=d.acessos; $('ac_titulo').textContent=titulo||'';
+    $('ac_lista').innerHTML='<table><thead><tr><th>Nome</th><th>CPF</th><th>Código</th><th>Status</th><th>Nota</th></tr></thead><tbody>'
+      +(d.acessos.length?d.acessos.map(function(a){return '<tr><td>'+esc(a.nome)+'</td><td>'+esc(a.cpf)+'</td><td><b>'+esc(a.codigo)+'</b></td><td>'+esc(a.status||'')+'</td><td>'+(a.nota!=null?a.nota:'')+'</td></tr>';}).join(''):'<tr><td colspan="5">Nenhum acesso gerado. Clique em "Gerar acessos".</td></tr>')
+      +'</tbody></table>';
+    $('modal_acessos').style.display='flex';
+  }
+  function copiarAcessos(){
+    var linhas=PO_ACESSOS.map(function(a){return a.nome+'\tCPF: '+a.cpf+'\tCódigo: '+a.codigo;}).join('\n');
+    var txt='Acesso à Prova Online — '+location.origin+'/prova.html\n\n'+linhas;
+    navigator.clipboard.writeText(txt).then(function(){alert('Lista copiada!');},function(){alert('Não foi possível copiar.');});
   }
 
   carregarConcursos();

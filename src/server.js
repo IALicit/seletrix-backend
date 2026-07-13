@@ -92,8 +92,12 @@ async function inicializarBanco() {
     id SERIAL PRIMARY KEY, enunciado TEXT, alternativas TEXT DEFAULT '[]', correta INT DEFAULT 0,
     disciplina TEXT, nivel TEXT, cargo TEXT, imagem_mime TEXT, imagem_dados BYTEA,
     criado_em TIMESTAMPTZ DEFAULT now());`);
-
-  // Migração: se não há concursos, cria o primeiro a partir da config antiga
+  // Prova online + respostas/sessão por candidato
+  await pool.query(`CREATE TABLE IF NOT EXISTS provas_online (id SERIAL PRIMARY KEY, concurso_id INT, titulo TEXT,
+    duracao_min INT DEFAULT 60, max_saidas INT DEFAULT 2, questao_ids TEXT DEFAULT '[]', ativa BOOLEAN DEFAULT TRUE, criado_em TIMESTAMPTZ DEFAULT now());`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS prova_respostas (id SERIAL PRIMARY KEY, prova_id INT, candidato_id INT, codigo TEXT,
+    respostas TEXT DEFAULT '{}', status TEXT DEFAULT 'nao_iniciado', saidas INT DEFAULT 0,
+    iniciado_em TIMESTAMPTZ, finalizado_em TIMESTAMPTZ, nota INT, UNIQUE(prova_id, candidato_id));`);
   const { rows: qc } = await pool.query('SELECT COUNT(*)::int n FROM concursos');
   if (qc[0].n === 0) {
     let cfg = { titulo: 'Edital nº 01/2026', orgao: '', periodo: '', taxa: '', prova: '', vagas: '', pdf_url: '', taxa_valor: 0, dias_vencimento: 5, cargos: ['Especialista', 'Mestre'] };
@@ -225,7 +229,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'import-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'prova-online-v1' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -1546,6 +1550,137 @@ app.post('/admin/concurso/:id/importar', exigirSenha, async (req, res) => {
   }
   await pool.query("UPDATE candidatos SET protocolo='SLX2026'||LPAD(id::text,5,'0') WHERE concurso_id=$1 AND (protocolo IS NULL OR protocolo='')", [cid]);
   res.json({ ok: true, importados, pulados });
+});
+
+// ---- Prova Online ------------------------------------------
+function gerarCodigo() { const c = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s = ''; for (let i = 0; i < 6; i++) s += c[Math.floor(Math.random() * c.length)]; return s; }
+function restanteSeg(a) { if (!a.iniciado_em) return a.duracao_min * 60; const fim = new Date(a.iniciado_em).getTime() + a.duracao_min * 60000; return Math.max(0, Math.floor((fim - Date.now()) / 1000)); }
+async function questoesParaProva(qids) {
+  if (!qids.length) return [];
+  const { rows } = await pool.query('SELECT id,enunciado,alternativas,imagem_mime,imagem_dados FROM questoes WHERE id = ANY($1::int[])', [qids]);
+  const byId = {}; rows.forEach((r) => byId[r.id] = r);
+  return qids.map((i) => byId[i]).filter(Boolean).map((q) => { let a = []; try { a = JSON.parse(q.alternativas || '[]'); } catch {} return { id: q.id, enunciado: q.enunciado, alternativas: a, imagem: q.imagem_dados ? ('data:' + (q.imagem_mime || 'image/png') + ';base64,' + Buffer.from(q.imagem_dados).toString('base64')) : null }; });
+}
+async function finalizarProva(a) {
+  let qids = []; try { qids = JSON.parse(a.questao_ids || '[]'); } catch {}
+  let resp = {}; try { resp = JSON.parse(a.respostas || '{}'); } catch {}
+  let nota = 0;
+  if (qids.length) { const c = await pool.query('SELECT id,correta FROM questoes WHERE id = ANY($1::int[])', [qids]); c.rows.forEach((q) => { if (String(resp[q.id]) === String(q.correta)) nota++; }); }
+  await pool.query("UPDATE prova_respostas SET status='finalizado', finalizado_em=now(), nota=$1 WHERE id=$2", [nota, a.id]);
+  a.status = 'finalizado'; a.nota = nota; return nota;
+}
+async function autenticaProva(cpf, codigo) {
+  cpf = soDigitos(cpf); codigo = String(codigo || '').trim().toUpperCase();
+  if (cpf.length !== 11 || !codigo) return null;
+  const { rows } = await pool.query(`SELECT pr.*, p.titulo,p.duracao_min,p.max_saidas,p.questao_ids,p.ativa, k.nome
+    FROM prova_respostas pr JOIN provas_online p ON p.id=pr.prova_id JOIN candidatos k ON k.id=pr.candidato_id
+    WHERE k.cpf=$1 AND pr.codigo=$2 LIMIT 1`, [cpf, codigo]);
+  return rows[0] || null;
+}
+async function refreshTempo(a) { if (a.status === 'em_andamento' && a.iniciado_em && restanteSeg(a) <= 0) await finalizarProva(a); return a; }
+
+// Admin: gerenciar provas online
+app.get('/admin/provas.json', exigirSenha, async (req, res) => {
+  if (!pool) return res.json({ provas: [] });
+  const cid = parseInt(req.query.concurso) || 0;
+  const w = cid ? 'WHERE concurso_id=$1' : ''; const p = cid ? [cid] : [];
+  const { rows } = await pool.query(`SELECT id,concurso_id,titulo,duracao_min,max_saidas,questao_ids,ativa FROM provas_online ${w} ORDER BY id DESC`, p);
+  res.json({ provas: rows.map((r) => { let q = []; try { q = JSON.parse(r.questao_ids || '[]'); } catch {} return { id: r.id, concurso_id: r.concurso_id, titulo: r.titulo, duracao_min: r.duracao_min, max_saidas: r.max_saidas, questao_ids: q, num_questoes: q.length, ativa: r.ativa }; }) });
+});
+app.post('/admin/prova', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const b = req.body || {};
+  const cid = parseInt(b.concurso_id) || 0;
+  const titulo = String(b.titulo || '').trim().slice(0, 160);
+  const dur = Math.max(1, parseInt(b.duracao_min) || 60);
+  const maxs = Math.max(0, parseInt(b.max_saidas) || 2);
+  const qids = Array.isArray(b.questao_ids) ? b.questao_ids.map((x) => parseInt(x)).filter(Boolean) : [];
+  if (!cid) return res.status(400).json({ erro: 'Selecione o concurso.' });
+  if (!titulo) return res.status(400).json({ erro: 'Informe o título da prova.' });
+  if (!qids.length) return res.status(400).json({ erro: 'Selecione ao menos uma questão.' });
+  if (b.id) { await pool.query('UPDATE provas_online SET titulo=$1,duracao_min=$2,max_saidas=$3,questao_ids=$4,ativa=$5 WHERE id=$6', [titulo, dur, maxs, JSON.stringify(qids), b.ativa !== false, b.id]); return res.json({ ok: true, id: b.id }); }
+  const r = await pool.query('INSERT INTO provas_online (concurso_id,titulo,duracao_min,max_saidas,questao_ids) VALUES ($1,$2,$3,$4,$5) RETURNING id', [cid, titulo, dur, maxs, JSON.stringify(qids)]);
+  res.json({ ok: true, id: r.rows[0].id });
+});
+app.delete('/admin/prova/:id', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  await pool.query('DELETE FROM prova_respostas WHERE prova_id=$1', [req.params.id]);
+  await pool.query('DELETE FROM provas_online WHERE id=$1', [req.params.id]);
+  res.json({ ok: true });
+});
+app.post('/admin/prova/:id/acessos', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const pid = parseInt(req.params.id);
+  const pr = await pool.query('SELECT concurso_id FROM provas_online WHERE id=$1', [pid]);
+  if (!pr.rows.length) return res.status(404).json({ erro: 'Prova não encontrada.' });
+  const cands = await pool.query('SELECT id FROM candidatos WHERE concurso_id=$1', [pr.rows[0].concurso_id]);
+  let criados = 0;
+  for (const c of cands.rows) {
+    const r = await pool.query('INSERT INTO prova_respostas (prova_id,candidato_id,codigo) VALUES ($1,$2,$3) ON CONFLICT (prova_id,candidato_id) DO NOTHING', [pid, c.id, gerarCodigo()]);
+    if (r.rowCount) criados++;
+  }
+  res.json({ ok: true, criados, total: cands.rows.length });
+});
+app.get('/admin/prova/:id/acessos.json', exigirSenha, async (req, res) => {
+  if (!pool) return res.json({ acessos: [] });
+  const { rows } = await pool.query(`SELECT k.nome,k.cpf,pr.codigo,pr.status,pr.saidas,pr.nota FROM prova_respostas pr JOIN candidatos k ON k.id=pr.candidato_id WHERE pr.prova_id=$1 ORDER BY k.nome`, [req.params.id]);
+  res.json({ acessos: rows });
+});
+
+// Candidato: ambiente de prova
+app.post('/api/prova/login', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const a = await autenticaProva((req.body || {}).cpf, (req.body || {}).codigo);
+  if (!a) return res.status(401).json({ erro: 'CPF ou código de acesso inválido.' });
+  if (!a.ativa) return res.status(403).json({ erro: 'Esta prova não está disponível no momento.' });
+  await refreshTempo(a);
+  let qids = []; try { qids = JSON.parse(a.questao_ids || '[]'); } catch {}
+  let respostas = {}; try { respostas = JSON.parse(a.respostas || '{}'); } catch {}
+  const questoes = await questoesParaProva(qids);
+  res.json({ ok: true, nome: a.nome, titulo: a.titulo, duracao_min: a.duracao_min, max_saidas: a.max_saidas, status: a.status, saidas: a.saidas, nota: a.nota, restante_seg: restanteSeg(a), respostas, questoes });
+});
+app.post('/api/prova/iniciar', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const a = await autenticaProva((req.body || {}).cpf, (req.body || {}).codigo);
+  if (!a) return res.status(401).json({ erro: 'Acesso inválido.' });
+  if (!a.ativa) return res.status(403).json({ erro: 'Prova indisponível.' });
+  await refreshTempo(a);
+  if (a.status === 'eliminado') return res.json({ status: 'eliminado' });
+  if (a.status === 'finalizado') return res.json({ status: 'finalizado', nota: a.nota });
+  if (!a.iniciado_em) { await pool.query("UPDATE prova_respostas SET status='em_andamento', iniciado_em=now() WHERE id=$1", [a.id]); a.iniciado_em = new Date(); a.status = 'em_andamento'; }
+  res.json({ ok: true, status: 'em_andamento', restante_seg: restanteSeg(a) });
+});
+app.post('/api/prova/responder', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const b = req.body || {};
+  const a = await autenticaProva(b.cpf, b.codigo);
+  if (!a) return res.status(401).json({ erro: 'Acesso inválido.' });
+  await refreshTempo(a);
+  if (a.status !== 'em_andamento') return res.status(403).json({ erro: 'Prova não está em andamento.', status: a.status });
+  let respostas = {}; try { respostas = JSON.parse(a.respostas || '{}'); } catch {}
+  respostas[parseInt(b.qid)] = parseInt(b.alt);
+  await pool.query('UPDATE prova_respostas SET respostas=$1 WHERE id=$2', [JSON.stringify(respostas), a.id]);
+  res.json({ ok: true });
+});
+app.post('/api/prova/saida', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const a = await autenticaProva((req.body || {}).cpf, (req.body || {}).codigo);
+  if (!a) return res.status(401).json({ erro: 'Acesso inválido.' });
+  await refreshTempo(a);
+  if (a.status !== 'em_andamento') return res.json({ status: a.status, saidas: a.saidas });
+  const novas = a.saidas + 1;
+  if (novas > a.max_saidas) { await pool.query("UPDATE prova_respostas SET saidas=$1, status='eliminado', finalizado_em=now() WHERE id=$2", [novas, a.id]); return res.json({ status: 'eliminado', saidas: novas }); }
+  await pool.query('UPDATE prova_respostas SET saidas=$1 WHERE id=$2', [novas, a.id]);
+  res.json({ status: 'em_andamento', saidas: novas, max_saidas: a.max_saidas });
+});
+app.post('/api/prova/finalizar', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const a = await autenticaProva((req.body || {}).cpf, (req.body || {}).codigo);
+  if (!a) return res.status(401).json({ erro: 'Acesso inválido.' });
+  if (a.status === 'eliminado') return res.json({ status: 'eliminado' });
+  if (a.status === 'finalizado') return res.json({ status: 'finalizado', nota: a.nota });
+  const nota = await finalizarProva(a);
+  res.json({ status: 'finalizado', nota });
 });
 
 app.get('/admin', exigirSenha, (req, res) => res.send(PAINEL_HTML));
