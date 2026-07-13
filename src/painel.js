@@ -1028,7 +1028,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('po_lista').innerHTML = d.provas.length ? d.provas.map(function(p){
       return '<div class="card" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">'
         +'<div><b>'+esc(p.titulo)+'</b><div class="hint">'+p.num_questoes+' questões · '+p.duracao_min+' min · máx. '+p.max_saidas+' saídas</div></div>'
-        +'<div class="row-actions"><button class="mini" onclick="editarProva('+p.id+')">Editar</button><button class="mini" onclick="gerarAcessos('+p.id+')">Gerar acessos</button><button class="mini" onclick="verAcessos('+p.id+",'"+esc(p.titulo).replace(/'/g,"\\'")+"')\">Ver acessos</button><button class=\"del\" onclick=\"delProva("+p.id+")\">Excluir</button></div>"
+        +'<div class="row-actions"><button class="mini" onclick="editarProva('+p.id+')">Editar</button><button class="mini" onclick="gerarAcessos('+p.id+')">Gerar acessos</button><button class="mini" onclick="verAcessos('+p.id+')">Ver acessos</button><button class="del" onclick="delProva('+p.id+')">Excluir</button></div>'
         +'</div></div>';
     }).join('') : '<p class="hint">Nenhuma prova criada para este concurso.</p>';
     PROVAS_PO=d.provas;
@@ -1046,17 +1046,18 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var r=await fetch('/admin/prova/'+id+'/acessos',{method:'POST'}); var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
     alert('Acessos gerados: '+j.criados+' novo(s) de '+j.total+' candidato(s). (Quem já tinha código foi mantido.)');
   }
-  async function verAcessos(id,titulo){
+  async function verAcessos(id){
+    var p=PROVAS_PO.find(function(x){return x.id===id;});
     var d=await (await fetch('/admin/prova/'+id+'/acessos.json')).json();
-    PO_ACESSOS=d.acessos; $('ac_titulo').textContent=titulo||'';
+    PO_ACESSOS=d.acessos; $('ac_titulo').textContent=p?p.titulo:'';
     $('ac_lista').innerHTML='<table><thead><tr><th>Nome</th><th>CPF</th><th>Código</th><th>Status</th><th>Nota</th></tr></thead><tbody>'
       +(d.acessos.length?d.acessos.map(function(a){return '<tr><td>'+esc(a.nome)+'</td><td>'+esc(a.cpf)+'</td><td><b>'+esc(a.codigo)+'</b></td><td>'+esc(a.status||'')+'</td><td>'+(a.nota!=null?a.nota:'')+'</td></tr>';}).join(''):'<tr><td colspan="5">Nenhum acesso gerado. Clique em "Gerar acessos".</td></tr>')
       +'</tbody></table>';
     $('modal_acessos').style.display='flex';
   }
   function copiarAcessos(){
-    var linhas=PO_ACESSOS.map(function(a){return a.nome+'\tCPF: '+a.cpf+'\tCódigo: '+a.codigo;}).join('\n');
-    var txt='Acesso à Prova Online — '+location.origin+'/prova.html\n\n'+linhas;
+    var linhas=PO_ACESSOS.map(function(a){return a.nome+'\\tCPF: '+a.cpf+'\\tCódigo: '+a.codigo;}).join('\\n');
+    var txt='Acesso à Prova Online — '+location.origin+'/prova.html\\n\\n'+linhas;
     navigator.clipboard.writeText(txt).then(function(){alert('Lista copiada!');},function(){alert('Não foi possível copiar.');});
   }
 
