@@ -369,6 +369,8 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
         <div><label>Título da prova</label><input id="po_titulo" placeholder="Ex.: Prova Objetiva Online"></div>
         <div><label>Duração (minutos)</label><input id="po_duracao" type="number" min="1" value="60"></div>
         <div><label>Máx. de saídas antes de eliminar</label><input id="po_maxsaidas" type="number" min="0" value="2"></div>
+        <div><label>Data/hora de início (opcional)</label><input id="po_inicio" type="datetime-local"></div>
+        <div><label>Tolerância de entrada (min) — 0 = sem limite</label><input id="po_tolerancia" type="number" min="0" value="10"></div>
       </div>
       <label style="margin-top:14px">Questões (marque as que entram na prova)</label>
       <input id="po_busca_q" placeholder="Filtrar por enunciado/disciplina" oninput="carregarQuestoesProva()" style="margin-bottom:8px">
@@ -1001,7 +1003,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('po_concurso').onchange=carregarProvas;
     novaProva(); carregarQuestoesProva(); carregarProvas();
   }
-  function novaProva(){ $('po_id').value=''; $('po_titulo').value=''; $('po_duracao').value='60'; $('po_maxsaidas').value='2'; PO_SEL={}; marcarSelProva(); atualizaSelQ(); }
+  function novaProva(){ $('po_id').value=''; $('po_titulo').value=''; $('po_duracao').value='60'; $('po_maxsaidas').value='2'; $('po_inicio').value=''; $('po_tolerancia').value='0'; PO_SEL={}; marcarSelProva(); atualizaSelQ(); }
   async function carregarQuestoesProva(){
     var d=await (await fetch('/admin/questoes.json?busca='+encodeURIComponent($('po_busca_q').value))).json();
     $('po_questoes').innerHTML = d.questoes.length ? d.questoes.map(function(q){
@@ -1017,7 +1019,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     if(!$('po_concurso').value){alert('Selecione o concurso.');return;}
     if(!$('po_titulo').value.trim()){alert('Informe o título.');return;}
     if(!ids.length){alert('Selecione ao menos uma questão.');return;}
-    var body={id:$('po_id').value||undefined, concurso_id:$('po_concurso').value, titulo:$('po_titulo').value, duracao_min:$('po_duracao').value, max_saidas:$('po_maxsaidas').value, questao_ids:ids};
+    var body={id:$('po_id').value||undefined, concurso_id:$('po_concurso').value, titulo:$('po_titulo').value, duracao_min:$('po_duracao').value, max_saidas:$('po_maxsaidas').value, inicio_em:$('po_inicio').value, tolerancia_min:$('po_tolerancia').value, questao_ids:ids};
     var r=await fetch('/admin/prova',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
     alert('Prova salva!'); novaProva(); carregarProvas();
@@ -1027,8 +1029,8 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var d=await (await fetch('/admin/provas.json?concurso='+$('po_concurso').value)).json();
     $('po_lista').innerHTML = d.provas.length ? d.provas.map(function(p){
       return '<div class="card" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">'
-        +'<div><b>'+esc(p.titulo)+'</b><div class="hint">'+p.num_questoes+' questões · '+p.duracao_min+' min · máx. '+p.max_saidas+' saídas</div></div>'
-        +'<div class="row-actions"><button class="mini" onclick="editarProva('+p.id+')">Editar</button><button class="mini" onclick="gerarAcessos('+p.id+')">Gerar acessos</button><button class="mini" onclick="verAcessos('+p.id+')">Ver acessos</button><button class="del" onclick="delProva('+p.id+')">Excluir</button></div>'
+        +'<div><b>'+esc(p.titulo)+'</b><div class="hint">'+p.num_questoes+' questões · '+p.duracao_min+' min · máx. '+p.max_saidas+' saídas'+(p.inicio_em?' · início '+fmtDTcurto(p.inicio_em)+(p.tolerancia_min?(' (+'+p.tolerancia_min+'min)'):''):'')+'</div></div>'
+        +'<div class="row-actions"><button class="mini" onclick="editarProva('+p.id+')">Editar</button><button class="mini" onclick="gerarAcessos('+p.id+')">Gerar acessos</button><button class="mini" onclick="verAcessos('+p.id+')">Ver acessos</button><button class="mini" onclick="abrirResultados('+p.id+')">Resultados</button><button class="del" onclick="delProva('+p.id+')">Excluir</button></div>'
         +'</div></div>';
     }).join('') : '<p class="hint">Nenhuma prova criada para este concurso.</p>';
     PROVAS_PO=d.provas;
@@ -1037,10 +1039,13 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   function editarProva(id){
     var p=PROVAS_PO.find(function(x){return x.id===id;}); if(!p)return;
     $('po_id').value=p.id; $('po_titulo').value=p.titulo; $('po_duracao').value=p.duracao_min; $('po_maxsaidas').value=p.max_saidas;
+    $('po_inicio').value=p.inicio_em||''; $('po_tolerancia').value=p.tolerancia_min||0;
     PO_SEL={}; (p.questao_ids||[]).forEach(function(qid){PO_SEL[qid]=true;}); marcarSelProva(); atualizaSelQ();
     window.scrollTo({top:0,behavior:'smooth'});
   }
   async function delProva(id){ if(!confirm('Excluir esta prova e todos os acessos/respostas dela?'))return; var r=await fetch('/admin/prova/'+id,{method:'DELETE'}); await r.json(); carregarProvas(); }
+  function abrirResultados(id){ window.open('/admin/prova/'+id+'/resultados.html','_blank'); }
+  function fmtDTcurto(s){ var m=String(s||'').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/); return m?(m[3]+'/'+m[2]+' '+m[4]+':'+m[5]):s; }
   async function gerarAcessos(id){
     if(!confirm('Gerar códigos de acesso para todos os candidatos deste concurso?'))return;
     var r=await fetch('/admin/prova/'+id+'/acessos',{method:'POST'}); var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
