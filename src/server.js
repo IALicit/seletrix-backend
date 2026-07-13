@@ -232,7 +232,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'prova-online-v3' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'prova-online-v4' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -1639,6 +1639,23 @@ app.get('/admin/prova/:id/acessos.json', exigirSenha, async (req, res) => {
   if (!pool) return res.json({ acessos: [] });
   const { rows } = await pool.query(`SELECT k.nome,k.cpf,pr.codigo,pr.status,pr.saidas,pr.nota FROM prova_respostas pr JOIN candidatos k ON k.id=pr.candidato_id WHERE pr.prova_id=$1 ORDER BY k.nome`, [req.params.id]);
   res.json({ acessos: rows });
+});
+app.get('/admin/prova/:id/resultados.json', exigirSenha, async (req, res) => {
+  if (!pool) return res.json({});
+  const pr = await pool.query('SELECT titulo,questao_ids FROM provas_online WHERE id=$1', [req.params.id]);
+  if (!pr.rows.length) return res.status(404).json({ erro: 'Prova não encontrada.' });
+  let qids = []; try { qids = JSON.parse(pr.rows[0].questao_ids || '[]'); } catch {}
+  const qq = qids.length ? (await pool.query('SELECT id,disciplina,correta FROM questoes WHERE id = ANY($1::int[])', [qids])).rows : [];
+  const byId = {}; qq.forEach((q) => byId[q.id] = q);
+  const questoes = qids.map((i) => byId[i]).filter(Boolean).map((q) => ({ id: q.id, disciplina: q.disciplina || 'Sem disciplina', correta: q.correta }));
+  const cr = await pool.query(`SELECT k.nome,k.cpf,k.cargo,pr.status,pr.saidas,pr.nota,pr.respostas FROM prova_respostas pr JOIN candidatos k ON k.id=pr.candidato_id WHERE pr.prova_id=$1 ORDER BY k.nome`, [req.params.id]);
+  const candidatos = cr.rows.map((r) => { let resp = {}; try { resp = JSON.parse(r.respostas || '{}'); } catch {} return { nome: r.nome, cpf: r.cpf, cargo: r.cargo, status: r.status, saidas: r.saidas, nota: r.nota, respostas: resp }; });
+  res.json({ titulo: pr.rows[0].titulo, questoes, candidatos });
+});
+app.post('/admin/prova/:id/zerar', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const r = await pool.query("UPDATE prova_respostas SET status='nao_iniciado', respostas='{}', saidas=0, iniciado_em=NULL, finalizado_em=NULL, nota=NULL WHERE prova_id=$1", [req.params.id]);
+  res.json({ ok: true, zerados: r.rowCount });
 });
 app.get('/admin/prova/:id/resultados.html', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).send('Banco não configurado.');

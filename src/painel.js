@@ -1030,7 +1030,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('po_lista').innerHTML = d.provas.length ? d.provas.map(function(p){
       return '<div class="card" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">'
         +'<div><b>'+esc(p.titulo)+'</b><div class="hint">'+p.num_questoes+' questões · '+p.duracao_min+' min · máx. '+p.max_saidas+' saídas'+(p.inicio_em?' · início '+fmtDTcurto(p.inicio_em)+(p.tolerancia_min?(' (+'+p.tolerancia_min+'min)'):''):'')+'</div></div>'
-        +'<div class="row-actions"><button class="mini" onclick="editarProva('+p.id+')">Editar</button><button class="mini" onclick="gerarAcessos('+p.id+')">Gerar acessos</button><button class="mini" onclick="verAcessos('+p.id+')">Ver acessos</button><button class="mini" onclick="abrirResultados('+p.id+')">Resultados</button><button class="del" onclick="delProva('+p.id+')">Excluir</button></div>'
+        +'<div class="row-actions"><button class="mini" onclick="editarProva('+p.id+')">Editar</button><button class="mini" onclick="gerarAcessos('+p.id+')">Gerar acessos</button><button class="mini" onclick="verAcessos('+p.id+')">Ver acessos</button><button class="mini" onclick="abrirResultados('+p.id+')">Resultados PDF</button><button class="mini" onclick="excelResultados('+p.id+')">Excel</button><button class="mini" onclick="zerarProva('+p.id+')">Zerar tentativas</button><button class="del" onclick="delProva('+p.id+')">Excluir</button></div>'
         +'</div></div>';
     }).join('') : '<p class="hint">Nenhuma prova criada para este concurso.</p>';
     PROVAS_PO=d.provas;
@@ -1045,6 +1045,31 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   }
   async function delProva(id){ if(!confirm('Excluir esta prova e todos os acessos/respostas dela?'))return; var r=await fetch('/admin/prova/'+id,{method:'DELETE'}); await r.json(); carregarProvas(); }
   function abrirResultados(id){ window.open('/admin/prova/'+id+'/resultados.html','_blank'); }
+  async function zerarProva(id){
+    if(!confirm('ZERAR todas as tentativas desta prova? Todos os candidatos voltam para "não iniciado" e perdem respostas/notas já registradas. Use para testar ou reabrir a prova.'))return;
+    var r=await fetch('/admin/prova/'+id+'/zerar',{method:'POST'}); var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    alert('Tentativas zeradas: '+j.zerados+'. A prova está pronta para ser feita novamente.');
+  }
+  async function excelResultados(id){
+    if(typeof XLSX==='undefined'){ alert('A biblioteca de planilhas não carregou. Recarregue a página.'); return; }
+    var d=await (await fetch('/admin/prova/'+id+'/resultados.json')).json();
+    if(!d.questoes){ alert('Não foi possível carregar os resultados.'); return; }
+    var disciplinas=[]; d.questoes.forEach(function(q){ if(disciplinas.indexOf(q.disciplina)<0) disciplinas.push(q.disciplina); });
+    var rotulo={nao_iniciado:'Não iniciou',em_andamento:'Em andamento',finalizado:'Finalizado',eliminado:'Eliminado'};
+    var linhas=d.candidatos.map(function(c){
+      var row={'Nome':c.nome,'CPF':c.cpf,'Cargo':c.cargo||'','Situação':rotulo[c.status]||c.status,'Saídas':c.saidas||0,'Eliminado (saiu 2x+)':(c.status==='eliminado'?'SIM':''),'Saiu 1 vez':(c.status!=='eliminado'&&c.saidas===1?'SIM':'')};
+      var accD={}; disciplinas.forEach(function(x){accD[x]=0;}); var total=0;
+      d.questoes.forEach(function(q){ if(c.respostas[q.id]!=null && String(c.respostas[q.id])===String(q.correta)){ accD[q.disciplina]++; total++; } });
+      disciplinas.forEach(function(x){ row['Acertos: '+x]=accD[x]; });
+      row['Nota total (acertos)']=total;
+      d.questoes.forEach(function(q,i){ var a=c.respostas[q.id]; row['Q'+(i+1)]=(a==null||a==='')?'':String.fromCharCode(65+Number(a)); });
+      return row;
+    });
+    if(!linhas.length){ alert('Nenhum acesso gerado ainda para esta prova.'); return; }
+    var ws=XLSX.utils.json_to_sheet(linhas);
+    var wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Resultados');
+    XLSX.writeFile(wb, 'resultados_'+String(d.titulo||'prova').replace(/[^a-z0-9]/gi,'_').slice(0,40)+'.xlsx');
+  }
   function fmtDTcurto(s){ var m=String(s||'').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/); return m?(m[3]+'/'+m[2]+' '+m[4]+':'+m[5]):s; }
   async function gerarAcessos(id){
     if(!confirm('Gerar códigos de acesso para todos os candidatos deste concurso?'))return;
