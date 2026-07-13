@@ -136,8 +136,13 @@
     $('ins_info').innerHTML='<p style="line-height:1.9"><b>Questões:</b> '+PROVA.questoes.length+'<br><b>Duração:</b> '+PROVA.duracao_min+' minutos<br><b>Limite de saídas permitidas:</b> '+PROVA.max_saidas+'</p>';
     $('ins_aviso').innerHTML='<b>Atenção — regras da prova:</b><br>• A prova roda em <b>tela cheia</b>. <br>• Se você <b>minimizar, trocar de aba ou sair da tela cheia</b>, o sistema registra uma saída.<br>• Ao ultrapassar <b>'+PROVA.max_saidas+' saída(s)</b>, você será <b>eliminado</b> automaticamente.<br>• Quando o tempo acabar, a prova é enviada automaticamente.';
     var jan=$('ins_janela'), btn=$('btn_iniciar');
-    jan.innerHTML=''; btn.disabled=false;
-    if(PROVA.inicio_fmt){ jan.innerHTML='<div class="aviso" style="background:#eaf3fb;border-color:#bcd8f0;color:#0b3a5e">Horário de início: <b>'+PROVA.inicio_fmt+'</b>'+(PROVA.tolerancia_min?(' · entrada até '+PROVA.tolerancia_min+' min depois'):'')+'.</div>'; }
+    jan.innerHTML=''; btn.disabled=false; btn.textContent='Iniciar prova em tela cheia';
+    if(PROVA.status==='em_andamento'){
+      btn.textContent='Retomar prova em tela cheia';
+      jan.innerHTML='<div class="aviso" style="background:#eaf3fb;border-color:#bcd8f0;color:#0b3a5e">▶️ Você <b>já iniciou</b> esta prova. Ao entrar, você <b>retoma</b> de onde parou (o tempo continua correndo).</div>';
+      $('tela_instrucoes').style.display='flex'; return;
+    }
+    if(PROVA.inicio_fmt){ jan.innerHTML='<div class="aviso" style="background:#eaf3fb;border-color:#bcd8f0;color:#0b3a5e">Horário de início: <b>'+PROVA.inicio_fmt+'</b>'+(PROVA.tolerancia_min?(' · entrada até '+PROVA.tolerancia_min+' min depois'):' · entrada liberada a partir daí').replace('undefined','')+'.</div>'; }
     if(!PROVA.pode_iniciar){
       btn.disabled=true;
       if(PROVA.janela_motivo==='antes'){ jan.innerHTML='<div class="aviso">⏳ A prova ainda <b>não foi liberada</b>. Início: <b>'+PROVA.inicio_fmt+'</b>. Atualize a página no horário para entrar.</div>'; }
