@@ -225,7 +225,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'prova-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'import-v1' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -1508,6 +1508,44 @@ app.get('/admin/prova.html', exigirSenha, async (req, res) => {
 </div>
 </body></html>`;
   res.send(html);
+});
+
+// ---- Importar candidatos (planilha) ------------------------
+app.post('/admin/concurso/:id/importar', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const cid = parseInt(req.params.id);
+  const b = req.body || {};
+  const lista = Array.isArray(b.candidatos) ? b.candidatos : [];
+  if (!lista.length) return res.status(400).json({ erro: 'Nenhum candidato para importar.' });
+  const status = (b.status === 'pago') ? 'pago' : 'inscrito';
+  const ex = await pool.query('SELECT cpf FROM candidatos WHERE concurso_id=$1', [cid]);
+  const existentes = new Set(ex.rows.map((r) => soDigitos(r.cpf)));
+  const vistos = new Set();
+  const parseNasc = (v) => {
+    v = String(v || '').trim(); if (!v) return null;
+    let m = v.match(/^(\d{4})-(\d{2})-(\d{2})/); if (m) return m[1] + '-' + m[2] + '-' + m[3];
+    m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); if (m) return m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0');
+    return null;
+  };
+  let importados = 0, pulados = 0;
+  for (const row of lista) {
+    const nome = String(row.nome || '').trim();
+    const cpf = soDigitos(row.cpf);
+    if (!nome || cpf.length !== 11) { pulados++; continue; }
+    if (existentes.has(cpf) || vistos.has(cpf)) { pulados++; continue; }
+    vistos.add(cpf);
+    const cargo = String(row.cargo || '').trim() || 'Não informado';
+    const pcd = /^(sim|s|true|1|x|pcd)$/i.test(String(row.pcd || '').trim());
+    await pool.query(
+      `INSERT INTO candidatos (nome,cpf,nascimento,email,telefone,sexo,cargo,pcd,nome_social,cidade,uf,concurso_id,status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [nome, cpf, parseNasc(row.nascimento), String(row.email || '').trim() || null, String(row.telefone || '').trim() || null,
+       String(row.sexo || '').trim() || null, cargo, pcd, String(row.nome_social || '').trim() || null,
+       String(row.cidade || '').trim() || null, String(row.uf || '').trim().toUpperCase().slice(0, 2) || null, cid, status]);
+    importados++;
+  }
+  await pool.query("UPDATE candidatos SET protocolo='SLX2026'||LPAD(id::text,5,'0') WHERE concurso_id=$1 AND (protocolo IS NULL OR protocolo='')", [cid]);
+  res.json({ ok: true, importados, pulados });
 });
 
 app.get('/admin', exigirSenha, (req, res) => res.send(PAINEL_HTML));

@@ -2,6 +2,7 @@
 module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -394,6 +395,24 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     </div>
   </div>
 </div>
+<div id="modal_import" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:12px;max-width:640px;width:94%;padding:22px;max-height:90vh;overflow:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <h3>Importar candidatos — <span id="imp_titulo"></span></h3><button class="sec" onclick="fecharImport()">Fechar</button>
+    </div>
+    <input type="hidden" id="imp_cid">
+    <p class="hint">Selecione a planilha (Excel .xlsx/.xls ou .csv). A primeira linha deve conter os títulos das colunas.</p>
+    <input type="file" id="imp_file" accept=".xlsx,.xls,.csv" onchange="lerImport()" style="margin-top:10px">
+    <div id="imp_map" style="display:none;margin-top:14px">
+      <p id="imp_info" class="hint" style="margin-bottom:8px"></p>
+      <p style="font-weight:600;margin-bottom:6px">Relacione as colunas da sua planilha aos campos do sistema (Nome e CPF são obrigatórios):</p>
+      <div id="imp_campos" class="grid2"></div>
+      <div class="checkline" style="margin-top:10px"><input type="checkbox" id="imp_pago" checked><label for="imp_pago" style="margin:0">Marcar como pagos/confirmados (inscrição presencial já quitada)</label></div>
+      <div style="margin-top:14px;display:flex;gap:10px"><button onclick="executarImport()">Importar candidatos</button></div>
+    </div>
+    <div id="imp_result" style="display:none;margin-top:14px;padding:12px;border-radius:8px;background:var(--verde-bg);color:#0f6b41;font-weight:600"></div>
+  </div>
+</div>
 <div id="modal_etapas" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
   <div style="background:#fff;border-radius:12px;max-width:660px;width:94%;padding:22px;max-height:88vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -446,7 +465,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
           <div class="meta">\${esc(c.orgao||'')} &middot; \${c.inscritos} inscritos (\${c.pagos} pagos) &middot; taxa \${esc(c.taxa||'-')}</div>
           <div class="meta">Link: <a href="/concurso.html?c=\${esc(c.slug)}" target="_blank">/concurso.html?c=\${esc(c.slug)}</a></div>
         </div>
-        <div class="row-actions"><button class="mini" onclick='abrirEtapas(\${JSON.stringify(c.id)})'>Etapas / Docs</button><button class="mini" onclick='editarConcurso(\${JSON.stringify(c.id)})'>Editar</button></div>
+        <div class="row-actions"><button class="mini" onclick='abrirImport(\${JSON.stringify(c.id)})'>Importar Excel</button><button class="mini" onclick='abrirEtapas(\${JSON.stringify(c.id)})'>Etapas / Docs</button><button class="mini" onclick='editarConcurso(\${JSON.stringify(c.id)})'>Editar</button></div>
       </div>\`).join('') || '<p class="hint">Nenhum concurso ainda. Clique em "Novo concurso".</p>';
     // popular filtro de inscritos
     $('filtro_concurso').innerHTML = '<option value="">Todos os concursos</option>' + concursos.map(c=>'<option value="'+c.id+'">'+esc(c.titulo)+'</option>').join('');
@@ -887,6 +906,55 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     if(!ids.length){alert('Marque ao menos uma questão.');return;}
     var u='/admin/prova.html?concurso='+encodeURIComponent($('prova_concurso').value)+'&titulo='+encodeURIComponent($('prova_titulo').value||'Prova Objetiva')+'&ids='+ids.join(',');
     window.open(u,'_blank');
+  }
+
+  var IMP_ROWS=[], IMP_HEADERS=[];
+  var IMP_CAMPOS=[['nome','Nome *'],['cpf','CPF *'],['nascimento','Nascimento'],['email','E-mail'],['telefone','Telefone / WhatsApp'],['sexo','Sexo'],['cargo','Cargo'],['cidade','Cidade'],['uf','UF'],['pcd','PcD'],['nome_social','Nome social']];
+  function abrirImport(id){
+    var c=CONCURSOS.find(function(x){return x.id===id;});
+    $('imp_cid').value=id; $('imp_titulo').textContent=c?c.titulo:'';
+    $('imp_file').value=''; $('imp_map').style.display='none'; $('imp_result').style.display='none';
+    IMP_ROWS=[]; IMP_HEADERS=[]; $('modal_import').style.display='flex';
+  }
+  function fecharImport(){ $('modal_import').style.display='none'; }
+  function normHdr(s){ return String(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
+  function adivinha(field, headers){
+    var kw={nome:['nome completo','nome'],cpf:['cpf'],nascimento:['nasc','data nasc','nascimento'],email:['email','e-mail','mail'],telefone:['telefone','celular','whats','fone','contato'],sexo:['sexo','genero'],cargo:['cargo','vaga','funcao','função'],cidade:['cidade','municipio'],uf:['uf','estado'],pcd:['pcd','defic'],nome_social:['nome social','social']};
+    var list=kw[field]||[field];
+    for(var i=0;i<list.length;i++){ for(var h=0;h<headers.length;h++){ var nh=normHdr(headers[h]); if(field==='nome' && nh.indexOf('social')>=0) continue; if(nh.indexOf(normHdr(list[i]))>=0) return headers[h]; } }
+    return '';
+  }
+  async function lerImport(){
+    var f=$('imp_file').files[0]; if(!f)return;
+    if(typeof XLSX==='undefined'){ alert('A biblioteca de leitura de planilhas não carregou. Verifique a internet e recarregue a página.'); return; }
+    try{
+      var buf=await f.arrayBuffer();
+      var wb=XLSX.read(new Uint8Array(buf),{type:'array',cellDates:true});
+      var ws=wb.Sheets[wb.SheetNames[0]];
+      IMP_ROWS=XLSX.utils.sheet_to_json(ws,{defval:'',raw:false});
+      if(!IMP_ROWS.length){ alert('A planilha está vazia ou sem títulos na primeira linha.'); return; }
+      IMP_HEADERS=Object.keys(IMP_ROWS[0]);
+      $('imp_info').innerHTML='<b>'+IMP_ROWS.length+'</b> linha(s) encontrada(s). Colunas: '+IMP_HEADERS.map(esc).join(', ');
+      $('imp_campos').innerHTML=IMP_CAMPOS.map(function(c){
+        var opts='<option value="">— não importar —</option>'+IMP_HEADERS.map(function(h){return '<option value="'+esc(h).replace(/"/g,'&quot;')+'"'+(adivinha(c[0],IMP_HEADERS)===h?' selected':'')+'>'+esc(h)+'</option>';}).join('');
+        return '<div><label>'+c[1]+'</label><select id="map_'+c[0]+'">'+opts+'</select></div>';
+      }).join('');
+      $('imp_map').style.display='block'; $('imp_result').style.display='none';
+    }catch(e){ alert('Não foi possível ler a planilha: '+(e.message||e)); }
+  }
+  async function executarImport(){
+    if(!$('map_nome').value||!$('map_cpf').value){ alert('Selecione as colunas de Nome e CPF.'); return; }
+    var cands=IMP_ROWS.map(function(row){
+      var o={}; IMP_CAMPOS.forEach(function(c){ var col=$('map_'+c[0]).value; o[c[0]]= col? String(row[col]==null?'':row[col]) : ''; });
+      return o;
+    });
+    var status=$('imp_pago').checked?'pago':'inscrito';
+    $('imp_result').style.display='block'; $('imp_result').style.background='#eef2f6'; $('imp_result').style.color='#333'; $('imp_result').textContent='Importando, aguarde...';
+    var r=await fetch('/admin/concurso/'+$('imp_cid').value+'/importar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({candidatos:cands,status:status})});
+    var j=await r.json();
+    if(!r.ok){ $('imp_result').style.background='#fde8e8'; $('imp_result').style.color='#a12626'; $('imp_result').textContent=j.erro||'Erro na importação'; return; }
+    $('imp_result').style.background='var(--verde-bg)'; $('imp_result').style.color='#0f6b41';
+    $('imp_result').innerHTML='✓ Importados: <b>'+j.importados+'</b>. Ignorados (duplicados ou sem Nome/CPF válido): <b>'+j.pulados+'</b>.';
   }
 
   carregarConcursos();
