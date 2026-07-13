@@ -35,6 +35,14 @@
  .alt:hover{background:#f6fafc}
  .alt.sel{border-color:var(--azul);background:#eaf3fb}
  .alt .letra{font-weight:800;color:var(--navy)}
+ .pdfwrap{margin-bottom:16px}
+ .pdfframe{width:100%;height:68vh;border:1px solid var(--linha);border-radius:10px;background:#fff}
+ .pdfgrid{background:#fff;border:1px solid var(--linha);border-radius:12px;padding:16px}
+ .pdfrow{display:flex;align-items:center;gap:8px;margin:7px 0;flex-wrap:wrap}
+ .pdfqn{width:30px;text-align:right;font-weight:800;color:var(--navy)}
+ .pdfalt{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border:1.5px solid var(--linha);border-radius:50%;font-weight:700;color:var(--navy);cursor:pointer;user-select:none}
+ .pdfalt:hover{background:#f6fafc}
+ .pdfalt.sel{border-color:var(--azul);background:var(--azul);color:#fff}
  .rodape{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--linha);padding:12px 16px;display:flex;justify-content:center}
  .rodape button{max-width:340px}
  /* Overlay tela cheia */
@@ -166,6 +174,21 @@
   }
 
   function renderQuestoes(){
+    if(PROVA.tipo==='pdf'){
+      var pdfUrl='/api/prova/pdf?cpf='+encodeURIComponent(SES.cpf)+'&codigo='+encodeURIComponent(SES.codigo);
+      var grid='';
+      for(var q=1;q<=PROVA.num_questoes;q++){
+        var alts='';
+        for(var a=0;a<PROVA.num_alternativas;a++){
+          var sel=String(RESP[q])===String(a)?' sel':'';
+          alts+='<span class="pdfalt'+sel+'" id="alt_'+q+'_'+a+'" onclick="responder('+q+','+a+')">'+String.fromCharCode(65+a)+'</span>';
+        }
+        grid+='<div class="pdfrow"><span class="pdfqn">'+q+'</span>'+alts+'</div>';
+      }
+      $('pv_questoes').innerHTML='<div class="pdfwrap"><iframe class="pdfframe" src="'+pdfUrl+'"></iframe></div>'
+        +'<div class="pdfgrid"><div style="font-weight:700;color:var(--navy);margin-bottom:8px">Marque suas respostas</div>'+grid+'</div>';
+      return;
+    }
     $('pv_questoes').innerHTML=PROVA.questoes.map(function(q,idx){
       var alts=q.alternativas.map(function(a,i){
         var sel=String(RESP[q.id])===String(i)?' sel':'';
@@ -180,9 +203,8 @@
   async function responder(qid,alt){
     if(!RODANDO)return;
     RESP[qid]=alt;
-    (PROVA.questoes.find(function(q){return q.id===qid;})||{alternativas:[]}).alternativas.forEach(function(_,i){
-      var el=$('alt_'+qid+'_'+i); if(el) el.classList.toggle('sel', i===alt);
-    });
+    var n = PROVA.tipo==='pdf' ? PROVA.num_alternativas : ((PROVA.questoes.find(function(q){return q.id===qid;})||{alternativas:[]}).alternativas.length);
+    for(var i=0;i<n;i++){ var el=$('alt_'+qid+'_'+i); if(el) el.classList.toggle('sel', i===alt); }
     var res=await api('responder',{qid:qid,alt:alt});
     if(res.j && res.j.status==='eliminado') telaFim('eliminado');
     if(res.j && res.j.status==='finalizado') telaFim('finalizado', res.j.nota);
@@ -239,10 +261,13 @@
     } else {
       $('fim_titulo').innerHTML='<span class="fim-ok">Prova finalizada ✓</span>';
       var resp=respostas||RESP||{};
-      var gab=(PROVA&&PROVA.questoes?PROVA.questoes:[]).map(function(q,i){
-        var a=resp[q.id]; var letra=(a==null||a==='')?'—':String.fromCharCode(65+Number(a));
-        return '<div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--linha);padding:6px 2px"><span>Questão '+(i+1)+'</span><b>'+letra+'</b></div>';
-      }).join('');
+      var lista;
+      if(PROVA && PROVA.tipo==='pdf'){
+        lista=[]; for(var q=1;q<=PROVA.num_questoes;q++){ var av=resp[q]; lista.push({n:q,letra:(av==null||av==='')?'—':String.fromCharCode(65+Number(av))}); }
+      } else {
+        lista=(PROVA&&PROVA.questoes?PROVA.questoes:[]).map(function(q,i){ var a=resp[q.id]; return {n:i+1,letra:(a==null||a==='')?'—':String.fromCharCode(65+Number(a))}; });
+      }
+      var gab=lista.map(function(x){ return '<div style="display:flex;justify-content:space-between;border-bottom:1px solid var(--linha);padding:6px 2px"><span>Questão '+x.n+'</span><b>'+x.letra+'</b></div>'; }).join('');
       $('fim_msg').innerHTML='Sua prova foi enviada com sucesso. Anote suas respostas abaixo para conferência:'
         +'<div style="margin-top:14px;text-align:left;border:1px solid var(--linha);border-radius:10px;padding:12px 14px;max-height:50vh;overflow:auto"><div style="font-weight:700;color:var(--navy);margin-bottom:6px">Suas respostas</div>'+gab+'</div>'
         +'<p style="margin-top:12px;font-size:.85rem;color:var(--suave)">Você já pode fechar esta janela.</p>';
