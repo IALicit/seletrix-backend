@@ -518,7 +518,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
           <div class="meta">\${esc(c.orgao||'')} &middot; \${c.inscritos} inscritos (\${c.pagos} pagos) &middot; taxa \${esc(c.taxa||'-')}</div>
           <div class="meta">Link: <a href="/concurso.html?c=\${esc(c.slug)}" target="_blank">/concurso.html?c=\${esc(c.slug)}</a></div>
         </div>
-        <div class="row-actions"><button class="mini" onclick='abrirImport(\${JSON.stringify(c.id)})'>Importar Excel</button><button class="mini" onclick='abrirEtapas(\${JSON.stringify(c.id)})'>Etapas / Docs</button><button class="mini" onclick='editarConcurso(\${JSON.stringify(c.id)})'>Editar</button></div>
+        <div class="row-actions"><button class="mini" onclick='abrirImport(\${JSON.stringify(c.id)})'>Importar Excel</button><button class="mini" onclick='abrirEtapas(\${JSON.stringify(c.id)})'>Etapas / Docs</button><button class="mini" onclick='editarConcurso(\${JSON.stringify(c.id)})'>Editar</button><button class="del" onclick='excluirConcurso(\${JSON.stringify(c.id)})'>Excluir</button></div>
       </div>\`).join('') || '<p class="hint">Nenhum concurso ainda. Clique em "Novo concurso".</p>';
     // popular filtro de inscritos
     $('filtro_concurso').innerHTML = '<option value="">Todos os concursos</option>' + concursos.map(c=>'<option value="'+c.id+'">'+esc(c.titulo)+'</option>').join('');
@@ -1146,5 +1146,13 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     navigator.clipboard.writeText(txt).then(function(){alert('Lista copiada!');},function(){alert('Não foi possível copiar.');});
   }
 
+  async function excluirConcurso(id){
+    var c=CONCURSOS.find(function(x){return x.id===id;}); var nome=c?c.titulo:'';
+    if(!confirm('EXCLUIR o concurso "'+nome+'"?\\n\\nIsso apaga PERMANENTEMENTE todos os inscritos, escolas/salas, etapas, documentos, brasão, edital e provas online ligados a ele. Não dá para desfazer.'))return;
+    if(!confirm('Tem certeza absoluta? Esta ação é irreversível.'))return;
+    var r=await fetch('/admin/concurso/'+id,{method:'DELETE'}); var j=await r.json();
+    if(!r.ok){alert(j.erro||'Erro ao excluir.');return;}
+    alert('Concurso excluído.'); carregarConcursos();
+  }
   carregarConcursos();
 </script></body></html>`;

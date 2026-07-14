@@ -232,7 +232,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'prova-pdf-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'excluir-concurso-v1' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -1803,6 +1803,35 @@ app.post('/api/prova/finalizar', async (req, res) => {
 });
 
 app.get('/admin', exigirSenha, (req, res) => res.send(PAINEL_HTML));
+
+app.delete('/admin/concurso/:id', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const id = parseInt(req.params.id);
+  if (!id) return res.status(400).json({ erro: 'Concurso inválido.' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM titulos WHERE candidato_id IN (SELECT id FROM candidatos WHERE concurso_id=$1)', [id]);
+    await client.query('DELETE FROM prova_respostas WHERE candidato_id IN (SELECT id FROM candidatos WHERE concurso_id=$1) OR prova_id IN (SELECT id FROM provas_online WHERE concurso_id=$1)', [id]);
+    await client.query('DELETE FROM provas_online WHERE concurso_id=$1', [id]);
+    await client.query('DELETE FROM candidatos WHERE concurso_id=$1', [id]);
+    await client.query('DELETE FROM salas WHERE escola_id IN (SELECT id FROM escolas WHERE concurso_id=$1)', [id]);
+    await client.query('DELETE FROM escolas WHERE concurso_id=$1', [id]);
+    await client.query('DELETE FROM etapa_arquivos WHERE etapa_id IN (SELECT id FROM etapas WHERE concurso_id=$1)', [id]);
+    await client.query('DELETE FROM etapas WHERE concurso_id=$1', [id]);
+    await client.query('DELETE FROM documentos WHERE concurso_id=$1', [id]);
+    await client.query('DELETE FROM edital_pdf WHERE concurso_id=$1', [id]);
+    await client.query('DELETE FROM brasao WHERE concurso_id=$1', [id]);
+    await client.query('DELETE FROM concursos WHERE id=$1', [id]);
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ erro: 'Falha ao excluir: ' + e.message });
+  } finally {
+    client.release();
+  }
+});
 const PAINEL_HTML = require('./painel.js');
 
 inicializarBanco().catch((e) => console.error('Falha banco:', e.message))
