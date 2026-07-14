@@ -58,6 +58,11 @@ async function inicializarBanco() {
   // Brasão / logo do órgão (imagem) por concurso
   await pool.query(`CREATE TABLE IF NOT EXISTS brasao (concurso_id INT PRIMARY KEY, mime TEXT, dados BYTEA, tamanho INT, criado_em TIMESTAMPTZ DEFAULT now());`);
   await pool.query(`ALTER TABLE concursos ADD COLUMN IF NOT EXISTS brasao_url TEXT`);
+  for (const col of ['pagamento_gateway TEXT DEFAULT \'asaas\'', 'bb_client_id TEXT', 'bb_client_secret TEXT', 'bb_app_key TEXT',
+    'bb_convenio TEXT', 'bb_carteira TEXT', 'bb_variacao TEXT', 'bb_agencia TEXT', 'bb_conta TEXT',
+    'bb_beneficiario_nome TEXT', 'bb_beneficiario_doc TEXT', 'bb_ambiente TEXT DEFAULT \'homologacao\'']) {
+    await pool.query(`ALTER TABLE concursos ADD COLUMN IF NOT EXISTS ${col}`);
+  }
   // Campos extras do concurso (gratuito / títulos)
   for (const col of ['gratuito BOOLEAN DEFAULT FALSE', 'pede_titulos BOOLEAN DEFAULT FALSE', "tipos_titulos TEXT DEFAULT '[]'"]) {
     await pool.query(`ALTER TABLE concursos ADD COLUMN IF NOT EXISTS ${col}`);
@@ -242,7 +247,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'boleto-2via-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'pagamento-config-v1' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -627,7 +632,30 @@ app.get('/admin/concursos.json', exigirSenha, async (req, res) => {
       (SELECT COUNT(*)::int FROM candidatos k WHERE k.concurso_id=c.id) AS inscritos,
       (SELECT COUNT(*)::int FROM candidatos k WHERE k.concurso_id=c.id AND k.status='pago') AS pagos
     FROM concursos c ORDER BY c.criado_em DESC`);
-  res.json({ concursos: rows.map((r) => ({ ...parseConcurso(r), inscritos: r.inscritos, pagos: r.pagos })) });
+  res.json({ concursos: rows.map((r) => ({ ...parseConcurso(r), inscritos: r.inscritos, pagos: r.pagos,
+    pagamento_gateway: r.pagamento_gateway || 'asaas', bb_client_id: r.bb_client_id || '', bb_app_key: r.bb_app_key || '',
+    bb_convenio: r.bb_convenio || '', bb_carteira: r.bb_carteira || '', bb_variacao: r.bb_variacao || '',
+    bb_agencia: r.bb_agencia || '', bb_conta: r.bb_conta || '', bb_beneficiario_nome: r.bb_beneficiario_nome || '',
+    bb_beneficiario_doc: r.bb_beneficiario_doc || '', bb_ambiente: r.bb_ambiente || 'homologacao', bb_secret_set: !!r.bb_client_secret })) });
+});
+
+app.post('/admin/concurso/:id/pagamento', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const id = parseInt(req.params.id);
+  const b = req.body || {};
+  const lim = (v) => String(v == null ? '' : v).trim().slice(0, 300);
+  const gateway = (b.pagamento_gateway === 'bb') ? 'bb' : 'asaas';
+  const amb = (b.bb_ambiente === 'producao') ? 'producao' : 'homologacao';
+  // client_secret só é atualizado se enviado (não vazio); senão mantém o atual
+  const temSecret = String(b.bb_client_secret || '').trim().length > 0;
+  const campos = ['pagamento_gateway=$1', 'bb_client_id=$2', 'bb_app_key=$3', 'bb_convenio=$4', 'bb_carteira=$5',
+    'bb_variacao=$6', 'bb_agencia=$7', 'bb_conta=$8', 'bb_beneficiario_nome=$9', 'bb_beneficiario_doc=$10', 'bb_ambiente=$11'];
+  const vals = [gateway, lim(b.bb_client_id), lim(b.bb_app_key), lim(b.bb_convenio), lim(b.bb_carteira),
+    lim(b.bb_variacao), lim(b.bb_agencia), lim(b.bb_conta), lim(b.bb_beneficiario_nome), lim(b.bb_beneficiario_doc), amb];
+  if (temSecret) { campos.push('bb_client_secret=$12'); vals.push(String(b.bb_client_secret).trim()); vals.push(id); }
+  else vals.push(id);
+  await pool.query(`UPDATE concursos SET ${campos.join(',')} WHERE id=$${vals.length}`, vals);
+  res.json({ ok: true });
 });
 
 app.post('/admin/concurso', exigirSenha, async (req, res) => {

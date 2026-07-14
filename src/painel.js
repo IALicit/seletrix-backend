@@ -466,6 +466,33 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     </div>
   </div>
 </div>
+<div id="modal_pagamento" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:12px;max-width:680px;width:94%;padding:22px;max-height:92vh;overflow:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <h3>Configuração de pagamento — <span id="pg_titulo"></span></h3><button class="sec" onclick="document.getElementById('modal_pagamento').style.display='none'">Fechar</button>
+    </div>
+    <input type="hidden" id="pg_cid">
+    <label>Onde o boleto é gerado</label>
+    <select id="pg_gateway" onchange="togglePg()"><option value="asaas">ASAAS (conta padrão)</option><option value="bb">Banco do Brasil (conta do cliente)</option></select>
+    <div id="pg_bloco_bb" style="display:none;margin-top:12px;border-top:1px solid var(--linha);padding-top:12px">
+      <p class="hint" style="margin-bottom:10px">Credenciais do convênio de cobrança do BB (fornecidas pela prefeitura / Portal Developers BB). Ficam guardadas com segurança e não são exibidas de volta.</p>
+      <div class="grid2">
+        <div><label>Ambiente</label><select id="pg_bb_ambiente"><option value="homologacao">Homologação (testes)</option><option value="producao">Produção</option></select></div>
+        <div><label>Client ID</label><input id="pg_bb_client_id"></div>
+        <div><label>Client Secret</label><input id="pg_bb_client_secret" type="password" placeholder="deixe em branco p/ manter"></div>
+        <div><label>Chave de aplicação (gw-dev-app-key)</label><input id="pg_bb_app_key"></div>
+        <div><label>Nº do Convênio</label><input id="pg_bb_convenio"></div>
+        <div><label>Carteira</label><input id="pg_bb_carteira" placeholder="ex.: 17"></div>
+        <div><label>Variação da carteira</label><input id="pg_bb_variacao" placeholder="ex.: 35"></div>
+        <div><label>Agência</label><input id="pg_bb_agencia"></div>
+        <div><label>Conta</label><input id="pg_bb_conta"></div>
+        <div><label>Beneficiário (nome da prefeitura)</label><input id="pg_bb_beneficiario_nome"></div>
+        <div><label>CNPJ do beneficiário</label><input id="pg_bb_beneficiario_doc"></div>
+      </div>
+    </div>
+    <div style="margin-top:16px"><button onclick="salvarPagamento()">Salvar configuração</button></div>
+  </div>
+</div>
 <div id="modal_acessos" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
   <div style="background:#fff;border-radius:12px;max-width:680px;width:94%;padding:22px;max-height:90vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -548,7 +575,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
           <div class="meta">\${esc(c.orgao||'')} &middot; \${c.inscritos} inscritos (\${c.pagos} pagos) &middot; taxa \${esc(c.taxa||'-')}</div>
           <div class="meta">Link: <a href="/concurso.html?c=\${esc(c.slug)}" target="_blank">/concurso.html?c=\${esc(c.slug)}</a></div>
         </div>
-        <div class="row-actions"><button class="mini" onclick='abrirImport(\${JSON.stringify(c.id)})'>Importar Excel</button><button class="mini" onclick='abrirEtapas(\${JSON.stringify(c.id)})'>Etapas / Docs</button><button class="mini" onclick='editarConcurso(\${JSON.stringify(c.id)})'>Editar</button><button class="del" onclick='excluirConcurso(\${JSON.stringify(c.id)})'>Excluir</button></div>
+        <div class="row-actions"><button class="mini" onclick='abrirPagamento(\${JSON.stringify(c.id)})'>Pagamento</button><button class="mini" onclick='abrirImport(\${JSON.stringify(c.id)})'>Importar Excel</button><button class="mini" onclick='abrirEtapas(\${JSON.stringify(c.id)})'>Etapas / Docs</button><button class="mini" onclick='editarConcurso(\${JSON.stringify(c.id)})'>Editar</button><button class="del" onclick='excluirConcurso(\${JSON.stringify(c.id)})'>Excluir</button></div>
       </div>\`).join('') || '<p class="hint">Nenhum concurso ainda. Clique em "Novo concurso".</p>';
     // popular filtro de inscritos
     $('filtro_concurso').innerHTML = '<option value="">Todos os concursos</option>' + concursos.map(c=>'<option value="'+c.id+'">'+esc(c.titulo)+'</option>').join('');
@@ -1237,6 +1264,30 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var r=await fetch('/admin/recurso/'+id+'/responder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:status,resposta:resposta})});
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
     carregarRecursos();
+  }
+
+  function togglePg(){ $('pg_bloco_bb').style.display = $('pg_gateway').value==='bb' ? 'block' : 'none'; }
+  function abrirPagamento(id){
+    var c=CONCURSOS.find(function(x){return x.id===id;}); if(!c)return;
+    $('pg_cid').value=id; $('pg_titulo').textContent=c.titulo;
+    $('pg_gateway').value=c.pagamento_gateway||'asaas';
+    $('pg_bb_ambiente').value=c.bb_ambiente||'homologacao';
+    $('pg_bb_client_id').value=c.bb_client_id||'';
+    $('pg_bb_client_secret').value=''; $('pg_bb_client_secret').placeholder=c.bb_secret_set?'•••••• já salvo (deixe em branco p/ manter)':'';
+    $('pg_bb_app_key').value=c.bb_app_key||''; $('pg_bb_convenio').value=c.bb_convenio||'';
+    $('pg_bb_carteira').value=c.bb_carteira||''; $('pg_bb_variacao').value=c.bb_variacao||'';
+    $('pg_bb_agencia').value=c.bb_agencia||''; $('pg_bb_conta').value=c.bb_conta||'';
+    $('pg_bb_beneficiario_nome').value=c.bb_beneficiario_nome||''; $('pg_bb_beneficiario_doc').value=c.bb_beneficiario_doc||'';
+    togglePg(); $('modal_pagamento').style.display='flex';
+  }
+  async function salvarPagamento(){
+    var body={pagamento_gateway:$('pg_gateway').value, bb_ambiente:$('pg_bb_ambiente').value, bb_client_id:$('pg_bb_client_id').value,
+      bb_client_secret:$('pg_bb_client_secret').value, bb_app_key:$('pg_bb_app_key').value, bb_convenio:$('pg_bb_convenio').value,
+      bb_carteira:$('pg_bb_carteira').value, bb_variacao:$('pg_bb_variacao').value, bb_agencia:$('pg_bb_agencia').value,
+      bb_conta:$('pg_bb_conta').value, bb_beneficiario_nome:$('pg_bb_beneficiario_nome').value, bb_beneficiario_doc:$('pg_bb_beneficiario_doc').value};
+    var r=await fetch('/admin/concurso/'+$('pg_cid').value+'/pagamento',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    alert('Configuração de pagamento salva!'); $('modal_pagamento').style.display='none'; carregarConcursos();
   }
 
   carregarConcursos();
