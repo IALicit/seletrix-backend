@@ -41,7 +41,8 @@ async function inicializarBanco() {
   for (const col of [
     'asaas_customer_id TEXT', 'asaas_payment_id TEXT', 'invoice_url TEXT', 'concurso_id INT', 'sala_id INT',
     'bb_nosso_numero TEXT', 'bb_linha_digitavel TEXT', 'bb_codigo_barras TEXT', 'bb_qrcode_pix TEXT',
-    'cep TEXT', 'endereco TEXT', 'bairro TEXT'
+    'cep TEXT', 'endereco TEXT', 'bairro TEXT',
+    'condicao_especial TEXT', 'laudo_mime TEXT', 'laudo_dados BYTEA', 'laudo_nome TEXT'
   ]) {
     await pool.query(`ALTER TABLE candidatos ADD COLUMN IF NOT EXISTS ${col}`);
   }
@@ -66,7 +67,7 @@ async function inicializarBanco() {
     await pool.query(`ALTER TABLE concursos ADD COLUMN IF NOT EXISTS ${col}`);
   }
   // Campos extras do concurso (gratuito / títulos)
-  for (const col of ['gratuito BOOLEAN DEFAULT FALSE', 'pede_titulos BOOLEAN DEFAULT FALSE', "tipos_titulos TEXT DEFAULT '[]'"]) {
+  for (const col of ['gratuito BOOLEAN DEFAULT FALSE', 'pede_titulos BOOLEAN DEFAULT FALSE', "tipos_titulos TEXT DEFAULT '[]'", 'pede_laudo BOOLEAN DEFAULT FALSE']) {
     await pool.query(`ALTER TABLE concursos ADD COLUMN IF NOT EXISTS ${col}`);
   }
   // Datas para situação automática (abertas / andamento / encerrado)
@@ -160,7 +161,7 @@ function parseConcurso(r) {
     id: r.id, slug: r.slug, titulo: r.titulo, orgao: r.orgao, periodo: r.periodo, taxa: r.taxa,
     prova: r.prova, vagas: r.vagas, pdf_url: r.pdf_url, taxa_valor: Number(r.taxa_valor) || 0,
     dias_vencimento: r.dias_vencimento || 5, cargos, aberto: r.aberto,
-    gratuito: !!r.gratuito, pede_titulos: !!r.pede_titulos, tipos_titulos: tipos,
+    gratuito: !!r.gratuito, pede_titulos: !!r.pede_titulos, pede_laudo: !!r.pede_laudo, tipos_titulos: tipos,
     data_inicio: di, data_fim: df, data_encerramento: de,
     titulos_inicio: ti, titulos_fim: tf, titulos_status: tc.status, pode_titulos: tc.pode,
     brasao_url: r.brasao_url || null,
@@ -357,7 +358,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'bb-boleto-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'laudo-pcd-v1' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -511,7 +512,8 @@ app.post('/api/candidato/login', async (req, res) => {
     return res.status(401).json({ erro: 'CPF ou senha inválidos, ou você ainda não fez nenhuma inscrição.' });
   const { rows } = await pool.query(
     `SELECT k.id, k.protocolo, k.cargo, k.status, k.invoice_url, k.criado_em, k.concurso_id,
-            c.titulo AS concurso, c.slug, c.gratuito, c.prova,
+            k.condicao_especial, (k.laudo_dados IS NOT NULL) AS tem_laudo, k.laudo_nome,
+            c.titulo AS concurso, c.slug, c.gratuito, c.prova, c.pede_laudo,
             c.pede_titulos, c.tipos_titulos, c.titulos_inicio_dt, c.titulos_fim_dt
      FROM candidatos k LEFT JOIN concursos c ON c.id=k.concurso_id
      WHERE k.cpf=$1 ORDER BY k.id DESC`, [cpf]);
@@ -544,6 +546,7 @@ app.post('/api/candidato/login', async (req, res) => {
       pede_titulos: !!r.pede_titulos, tipos_titulos: tipos, titulos_inicio: ti, titulos_fim: tf,
       titulos_status: tc.status, pode_titulos: tc.pode, titulos: porCand[r.id] || [],
       recurso_fases: fasesPorConc[r.concurso_id] || [], meus_recursos: recursosPorCand[r.id] || [],
+      pede_laudo: !!r.pede_laudo, condicao_especial: r.condicao_especial || '', tem_laudo: !!r.tem_laudo, laudo_nome: r.laudo_nome || '',
     };
   });
   res.json({ ok: true, nome: lg.rows[0].nome, inscricoes });
@@ -617,6 +620,46 @@ app.post('/api/candidato/boleto', async (req, res) => {
   } catch (e) {
     res.status(500).json({ erro: 'Não foi possível gerar o boleto agora: ' + e.message });
   }
+});
+app.post('/api/candidato/laudo', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const b = req.body || {};
+  const cpf = await autenticaCandidato(b);
+  if (!cpf) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
+  const cand = await pool.query('SELECT k.id, c.pede_laudo FROM candidatos k LEFT JOIN concursos c ON c.id=k.concurso_id WHERE k.id=$1 AND k.cpf=$2', [parseInt(b.inscricao_id), cpf]);
+  if (!cand.rows.length) return res.status(404).json({ erro: 'Inscrição não encontrada.' });
+  if (!cand.rows[0].pede_laudo) return res.status(403).json({ erro: 'Este concurso não solicita laudo/condição especial.' });
+  const cond = String(b.condicao_especial || '').trim().slice(0, 1000);
+  if (b.dataBase64) {
+    const buf = decodeB64(b.dataBase64);
+    if (!buf) return res.status(400).json({ erro: 'Arquivo inválido.' });
+    const mime = mimeDe(buf);
+    if (!mime) return res.status(400).json({ erro: 'Envie PDF, JPG ou PNG.' });
+    if (buf.length > 5 * 1024 * 1024) return res.status(400).json({ erro: 'Arquivo muito grande (máx. 5 MB).' });
+    await pool.query('UPDATE candidatos SET condicao_especial=$1, laudo_mime=$2, laudo_dados=$3, laudo_nome=$4, pcd=TRUE WHERE id=$5',
+      [cond, mime, buf, String(b.filename || 'laudo').slice(0, 200), cand.rows[0].id]);
+  } else {
+    await pool.query('UPDATE candidatos SET condicao_especial=$1 WHERE id=$2', [cond, cand.rows[0].id]);
+  }
+  res.json({ ok: true });
+});
+app.get('/api/candidato/laudo/:id', async (req, res) => {
+  if (!pool) return res.status(503).send('Indisponível.');
+  const cpf = await autenticaCandidato({ cpf: req.query.cpf, senha: req.query.senha });
+  if (!cpf) return res.status(401).send('Sessão inválida.');
+  const { rows } = await pool.query('SELECT laudo_mime, laudo_dados, laudo_nome FROM candidatos WHERE id=$1 AND cpf=$2', [parseInt(req.params.id), cpf]);
+  if (!rows.length || !rows[0].laudo_dados) return res.status(404).send('Sem laudo.');
+  res.setHeader('Content-Type', rows[0].laudo_mime || 'application/octet-stream');
+  res.setHeader('Content-Disposition', 'inline; filename="' + (rows[0].laudo_nome || 'laudo') + '"');
+  res.send(rows[0].laudo_dados);
+});
+app.get('/admin/candidato/:id/laudo', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Indisponível.');
+  const { rows } = await pool.query('SELECT laudo_mime, laudo_dados, laudo_nome FROM candidatos WHERE id=$1', [parseInt(req.params.id)]);
+  if (!rows.length || !rows[0].laudo_dados) return res.status(404).send('Sem laudo.');
+  res.setHeader('Content-Type', rows[0].laudo_mime || 'application/octet-stream');
+  res.setHeader('Content-Disposition', 'inline; filename="' + (rows[0].laudo_nome || 'laudo') + '"');
+  res.send(rows[0].laudo_dados);
 });
 app.post('/api/candidato/recurso', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
@@ -785,7 +828,7 @@ app.post('/admin/concurso', exigirSenha, async (req, res) => {
       prova: lim(b.prova), vagas: lim(b.vagas), pdf_url: lim(b.pdf_url),
       taxa_valor: Math.max(0, Number(String(b.taxa_valor).replace(',', '.')) || 0),
       dias_vencimento: Math.max(1, parseInt(b.dias_vencimento) || 5),
-      aberto: bool(b.aberto), gratuito: bool(b.gratuito), pede_titulos: bool(b.pede_titulos),
+      aberto: bool(b.aberto), gratuito: bool(b.gratuito), pede_titulos: bool(b.pede_titulos), pede_laudo: bool(b.pede_laudo),
       data_inicio: dnull(b.data_inicio), data_fim: dnull(b.data_fim), data_encerramento: dnull(b.data_encerramento),
       titulos_inicio_dt: dtnull(b.titulos_inicio), titulos_fim_dt: dtnull(b.titulos_fim),
       cargos,
@@ -797,12 +840,12 @@ app.post('/admin/concurso', exigirSenha, async (req, res) => {
       if (!q.rows.length) break; slug = base + '-' + (n++);
     }
     if (b.id) {
-      await pool.query(`UPDATE concursos SET slug=$1,titulo=$2,orgao=$3,periodo=$4,taxa=$5,prova=$6,vagas=$7,pdf_url=$8,taxa_valor=$9,dias_vencimento=$10,cargos=$11,aberto=$12,gratuito=$13,pede_titulos=$14,tipos_titulos=$15,data_inicio=$16,data_fim=$17,data_encerramento=$18,titulos_inicio_dt=$19,titulos_fim_dt=$20 WHERE id=$21`,
-        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), dados.data_inicio, dados.data_fim, dados.data_encerramento, dados.titulos_inicio_dt, dados.titulos_fim_dt, b.id]);
+      await pool.query(`UPDATE concursos SET slug=$1,titulo=$2,orgao=$3,periodo=$4,taxa=$5,prova=$6,vagas=$7,pdf_url=$8,taxa_valor=$9,dias_vencimento=$10,cargos=$11,aberto=$12,gratuito=$13,pede_titulos=$14,tipos_titulos=$15,data_inicio=$16,data_fim=$17,data_encerramento=$18,titulos_inicio_dt=$19,titulos_fim_dt=$20,pede_laudo=$21 WHERE id=$22`,
+        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), dados.data_inicio, dados.data_fim, dados.data_encerramento, dados.titulos_inicio_dt, dados.titulos_fim_dt, dados.pede_laudo, b.id]);
       return res.json({ ok: true, id: b.id, slug });
     } else {
-      const ins = await pool.query(`INSERT INTO concursos (slug,titulo,orgao,periodo,taxa,prova,vagas,pdf_url,taxa_valor,dias_vencimento,cargos,aberto,gratuito,pede_titulos,tipos_titulos,data_inicio,data_fim,data_encerramento,titulos_inicio_dt,titulos_fim_dt) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING id`,
-        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), dados.data_inicio, dados.data_fim, dados.data_encerramento, dados.titulos_inicio_dt, dados.titulos_fim_dt]);
+      const ins = await pool.query(`INSERT INTO concursos (slug,titulo,orgao,periodo,taxa,prova,vagas,pdf_url,taxa_valor,dias_vencimento,cargos,aberto,gratuito,pede_titulos,tipos_titulos,data_inicio,data_fim,data_encerramento,titulos_inicio_dt,titulos_fim_dt,pede_laudo) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) RETURNING id`,
+        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), dados.data_inicio, dados.data_fim, dados.data_encerramento, dados.titulos_inicio_dt, dados.titulos_fim_dt, dados.pede_laudo]);
       return res.json({ ok: true, id: ins.rows[0].id, slug });
     }
   } catch (e) { console.error('concurso:', e.message); res.status(500).json({ erro: 'Não foi possível salvar.' }); }
