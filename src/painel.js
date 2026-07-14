@@ -80,6 +80,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   <div class="tab" data-t="alocacao">Alocação</div>
   <div class="tab" data-t="questoes">Questões</div>
   <div class="tab" data-t="prova_online">Prova Online</div>
+  <div class="tab" data-t="recursos">Recursos</div>
 </div>
 <div class="wrap">
   <section id="concursos">
@@ -400,6 +401,34 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       <div id="po_lista" style="margin-top:12px"></div>
     </div>
   </section>
+
+  <section id="recursos" style="display:none">
+    <div class="card">
+      <div class="grid2">
+        <div><label>Concurso</label><select id="rec_concurso" onchange="carregarFases();carregarRecursos()"></select></div>
+      </div>
+      <h3 style="font-size:1rem;color:var(--navy);margin:14px 0 8px">Fases de recurso (prazos)</h3>
+      <p class="hint" style="margin-bottom:8px">Sugestões: <span id="rec_sugestoes"></span></p>
+      <input type="hidden" id="rf_id">
+      <div class="grid2">
+        <div><label>Nome da fase</label><input id="rf_nome" placeholder="Ex.: Recurso — Gabarito Preliminar"></div>
+        <div><label>Abertura</label><input id="rf_abertura" type="datetime-local"></div>
+        <div><label>Fechamento</label><input id="rf_fechamento" type="datetime-local"></div>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:10px"><button onclick="salvarFase()">Salvar fase</button><button class="sec" onclick="limparFase()">Limpar</button></div>
+      <div id="rec_fases_lista" style="margin-top:14px"></div>
+    </div>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <h3 style="font-size:1rem;color:var(--navy);margin:0">Recursos interpostos</h3>
+        <div style="display:flex;gap:8px">
+          <select id="rec_f_fase" onchange="carregarRecursos()"><option value="">Todas as fases</option></select>
+          <select id="rec_f_status" onchange="carregarRecursos()"><option value="">Todos</option><option value="pendente">Pendentes</option><option value="deferido">Deferidos</option><option value="indeferido">Indeferidos</option></select>
+        </div>
+      </div>
+      <div id="rec_lista" style="margin-top:12px"></div>
+    </div>
+  </section>
 </div>
 <div id="modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
   <div style="background:#fff;border-radius:12px;max-width:520px;width:92%;padding:20px;max-height:80vh;overflow:auto">
@@ -490,13 +519,14 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   let CONCURSOS = [], cargosEdit = [], tiposEdit = [], INSCRITOS = [];
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
     document.querySelectorAll('.tab').forEach(x => x.classList.remove('on')); t.classList.add('on');
-    ['concursos','inscritos','relatorios','locacao','alocacao','questoes','prova_online'].forEach(s => $(s).style.display = s === t.dataset.t ? 'block' : 'none');
+    ['concursos','inscritos','relatorios','locacao','alocacao','questoes','prova_online','recursos'].forEach(s => $(s).style.display = s === t.dataset.t ? 'block' : 'none');
     if (t.dataset.t === 'inscritos') carregarInscritos();
     if (t.dataset.t === 'relatorios') popularRelConcursos();
     if (t.dataset.t === 'locacao') popularLocConcursos();
     if (t.dataset.t === 'alocacao') popularAlConcursos();
     if (t.dataset.t === 'questoes') { if(!QALTS.length) novaQuestao(); popularProvaConcursos(); carregarQuestoes(); }
     if (t.dataset.t === 'prova_online') { popularProvaOnline(); }
+    if (t.dataset.t === 'recursos') { popularRecursos(); }
   });
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
   function combinaDT(data, hora, horaPadrao){ if(!data) return ''; return data+'T'+((hora||horaPadrao)).slice(0,5); }
@@ -1154,5 +1184,60 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     if(!r.ok){alert(j.erro||'Erro ao excluir.');return;}
     alert('Concurso excluído.'); carregarConcursos();
   }
+  var REC_SUGEST=['Recurso — Lista de Inscritos','Recurso — Locais de Prova','Recurso — Gabarito','Recurso — Resultado Preliminar','Recurso — Resultado Final'];
+  function popularRecursos(){
+    $('rec_concurso').innerHTML='<option value="">Selecione o concurso...</option>'+CONCURSOS.map(function(c){return '<option value="'+c.id+'">'+esc(c.titulo)+'</option>';}).join('');
+    $('rec_sugestoes').innerHTML=REC_SUGEST.map(function(n,i){return '<a href="#" onclick="usarSugestao('+i+');return false" style="color:var(--azul);margin-right:10px">'+esc(n)+'</a>';}).join('');
+    limparFase(); $('rec_fases_lista').innerHTML=''; $('rec_lista').innerHTML='<p class="hint">Selecione um concurso.</p>';
+  }
+  function usarSugestao(i){ $('rf_nome').value=REC_SUGEST[i]; }
+  function limparFase(){ $('rf_id').value=''; $('rf_nome').value=''; $('rf_abertura').value=''; $('rf_fechamento').value=''; }
+  async function carregarFases(){
+    if(!$('rec_concurso').value){ $('rec_fases_lista').innerHTML=''; return; }
+    var d=await (await fetch('/admin/recurso-fases.json?concurso='+$('rec_concurso').value)).json();
+    var rot={antes:'⏳ Não aberta',aberto:'🟢 Aberta',depois:'🔒 Encerrada',indefinido:'⚠️ Sem prazo definido'};
+    $('rec_f_fase').innerHTML='<option value="">Todas as fases</option>'+d.fases.map(function(f){return '<option value="'+f.id+'">'+esc(f.nome)+'</option>';}).join('');
+    $('rec_fases_lista').innerHTML = d.fases.length ? d.fases.map(function(f){
+      return '<div class="card" style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center"><div><b>'+esc(f.nome)+'</b> <span class="tag on">'+rot[f.status]+'</span><div class="hint">'+(f.abertura?fmtDTcurto(f.abertura):'—')+' até '+(f.fechamento?fmtDTcurto(f.fechamento):'—')+'</div></div><div class="row-actions"><button class="mini" onclick="editarFase('+f.id+')">Editar</button><button class="del" onclick="delFase('+f.id+')">Excluir</button></div></div></div>';
+    }).join('') : '<p class="hint">Nenhuma fase criada. Adicione acima (pode usar as sugestões).</p>';
+    REC_FASES=d.fases;
+  }
+  var REC_FASES=[];
+  function editarFase(id){ var f=REC_FASES.find(function(x){return x.id===id;}); if(!f)return; $('rf_id').value=f.id; $('rf_nome').value=f.nome; $('rf_abertura').value=f.abertura||''; $('rf_fechamento').value=f.fechamento||''; window.scrollTo({top:0,behavior:'smooth'}); }
+  async function salvarFase(){
+    if(!$('rec_concurso').value){alert('Selecione o concurso.');return;}
+    if(!$('rf_nome').value.trim()){alert('Informe o nome da fase.');return;}
+    var body={id:$('rf_id').value||undefined, concurso_id:$('rec_concurso').value, nome:$('rf_nome').value, abertura:$('rf_abertura').value, fechamento:$('rf_fechamento').value};
+    var r=await fetch('/admin/recurso-fase',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    limparFase(); carregarFases();
+  }
+  async function delFase(id){ if(!confirm('Excluir esta fase e TODOS os recursos interpostos nela?'))return; var r=await fetch('/admin/recurso-fase/'+id,{method:'DELETE'}); await r.json(); carregarFases(); carregarRecursos(); }
+  async function carregarRecursos(){
+    if(!$('rec_concurso').value){ $('rec_lista').innerHTML='<p class="hint">Selecione um concurso.</p>'; return; }
+    var p='concurso='+$('rec_concurso').value+'&fase='+encodeURIComponent($('rec_f_fase').value)+'&status='+encodeURIComponent($('rec_f_status').value);
+    var d=await (await fetch('/admin/recursos.json?'+p)).json();
+    var rot={pendente:'⏳ Pendente',deferido:'✅ Deferido',indeferido:'❌ Indeferido'};
+    $('rec_lista').innerHTML = d.recursos.length ? d.recursos.map(function(r){
+      var anexo=r.tem_anexo?' · <a href="/admin/recurso/'+r.id+'/anexo" target="_blank" style="color:var(--azul)">📎 anexo</a>':'';
+      return '<div class="card" style="margin-bottom:10px">'
+        +'<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><div><b>'+esc(r.candidato)+'</b> <span class="hint">('+esc(r.protocolo||'')+')</span><div class="hint">'+esc(r.fase_nome||'—')+anexo+'</div></div><span class="tag on">'+rot[r.status]+'</span></div>'
+        +'<div style="margin:8px 0;white-space:pre-wrap;background:var(--papel,#f4f7f9);padding:10px;border-radius:8px">'+esc(r.texto)+'</div>'
+        +'<div class="grid2"><div><label>Resposta da banca</label><textarea id="resp_'+r.id+'" rows="2">'+esc(r.resposta||'')+'</textarea></div></div>'
+        +'<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="mini" onclick="recDeferir('+r.id+')">Deferir</button><button class="mini" onclick="recIndeferir('+r.id+')">Indeferir</button><button class="sec" onclick="recPendente('+r.id+')">Salvar como pendente</button></div>'
+        +'</div>';
+    }).join('') : '<p class="hint">Nenhum recurso interposto (com os filtros atuais).</p>';
+  }
+  function recDeferir(id){ responderRec(id,'deferido'); }
+  function recIndeferir(id){ responderRec(id,'indeferido'); }
+  function recPendente(id){ responderRec(id,'pendente'); }
+  async function responderRec(id,status){
+    var resposta=$('resp_'+id)?$('resp_'+id).value:'';
+    if((status==='deferido'||status==='indeferido') && !resposta.trim()){ if(!confirm('Responder sem justificativa? Recomendo escrever a resposta ao candidato.')) return; }
+    var r=await fetch('/admin/recurso/'+id+'/responder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:status,resposta:resposta})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    carregarRecursos();
+  }
+
   carregarConcursos();
 </script></body></html>`;

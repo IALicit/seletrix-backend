@@ -101,6 +101,10 @@ async function inicializarBanco() {
   await pool.query(`CREATE TABLE IF NOT EXISTS prova_respostas (id SERIAL PRIMARY KEY, prova_id INT, candidato_id INT, codigo TEXT,
     respostas TEXT DEFAULT '{}', status TEXT DEFAULT 'nao_iniciado', saidas INT DEFAULT 0,
     iniciado_em TIMESTAMPTZ, finalizado_em TIMESTAMPTZ, nota INT, UNIQUE(prova_id, candidato_id));`);
+  // Recursos: fases (com prazo) + recursos interpostos pelos candidatos
+  await pool.query(`CREATE TABLE IF NOT EXISTS recurso_fases (id SERIAL PRIMARY KEY, concurso_id INT, nome TEXT, abertura TEXT, fechamento TEXT, criado_em TIMESTAMPTZ DEFAULT now());`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS recursos (id SERIAL PRIMARY KEY, concurso_id INT, fase_id INT, candidato_id INT, texto TEXT,
+    anexo_mime TEXT, anexo_dados BYTEA, anexo_nome TEXT, status TEXT DEFAULT 'pendente', resposta TEXT, respondido_em TIMESTAMPTZ, criado_em TIMESTAMPTZ DEFAULT now());`);
   const { rows: qc } = await pool.query('SELECT COUNT(*)::int n FROM concursos');
   if (qc[0].n === 0) {
     let cfg = { titulo: 'Edital nº 01/2026', orgao: '', periodo: '', taxa: '', prova: '', vagas: '', pdf_url: '', taxa_valor: 0, dias_vencimento: 5, cargos: ['Especialista', 'Mestre'] };
@@ -232,7 +236,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'excluir-concurso-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'recursos-v1' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -385,18 +389,30 @@ app.post('/api/candidato/login', async (req, res) => {
   if (!lg.rows.length || !verificaSenha(senha, lg.rows[0].senha_hash))
     return res.status(401).json({ erro: 'CPF ou senha inválidos, ou você ainda não fez nenhuma inscrição.' });
   const { rows } = await pool.query(
-    `SELECT k.id, k.protocolo, k.cargo, k.status, k.invoice_url, k.criado_em,
+    `SELECT k.id, k.protocolo, k.cargo, k.status, k.invoice_url, k.criado_em, k.concurso_id,
             c.titulo AS concurso, c.slug, c.gratuito, c.prova,
             c.pede_titulos, c.tipos_titulos, c.titulos_inicio_dt, c.titulos_fim_dt
      FROM candidatos k LEFT JOIN concursos c ON c.id=k.concurso_id
      WHERE k.cpf=$1 ORDER BY k.id DESC`, [cpf]);
   const ids = rows.map((r) => r.id);
+  const concIds = Array.from(new Set(rows.map((r) => r.concurso_id).filter(Boolean)));
   const porCand = {};
   if (ids.length) {
     const t = await pool.query('SELECT id, candidato_id, tipo, filename FROM titulos WHERE candidato_id = ANY($1::int[]) ORDER BY id', [ids]);
     t.rows.forEach((x) => { (porCand[x.candidato_id] = porCand[x.candidato_id] || []).push({ id: x.id, tipo: x.tipo, filename: x.filename }); });
   }
   const agora = agoraBR();
+  const fasesPorConc = {};
+  if (concIds.length) {
+    const f = await pool.query('SELECT id, concurso_id, nome, abertura, fechamento FROM recurso_fases WHERE concurso_id = ANY($1::int[]) ORDER BY id', [concIds]);
+    f.rows.forEach((x) => { const c = calcFase(x.abertura, x.fechamento, agora); (fasesPorConc[x.concurso_id] = fasesPorConc[x.concurso_id] || []).push({ id: x.id, nome: x.nome, abertura: x.abertura, fechamento: x.fechamento, status: c.status, pode: c.pode }); });
+  }
+  const recursosPorCand = {};
+  if (ids.length) {
+    const rc = await pool.query(`SELECT r.id, r.candidato_id, r.texto, r.status, r.resposta, r.criado_em, r.anexo_nome, (r.anexo_dados IS NOT NULL) AS tem_anexo, f.nome AS fase_nome
+      FROM recursos r LEFT JOIN recurso_fases f ON f.id=r.fase_id WHERE r.candidato_id = ANY($1::int[]) ORDER BY r.id DESC`, [ids]);
+    rc.rows.forEach((x) => { (recursosPorCand[x.candidato_id] = recursosPorCand[x.candidato_id] || []).push(x); });
+  }
   const inscricoes = rows.map((r) => {
     let tipos = []; try { tipos = JSON.parse(r.tipos_titulos || '[]'); } catch {}
     const ti = r.titulos_inicio_dt || null, tf = r.titulos_fim_dt || null;
@@ -406,10 +422,17 @@ app.post('/api/candidato/login', async (req, res) => {
       concurso: r.concurso, slug: r.slug, gratuito: r.gratuito, prova: r.prova,
       pede_titulos: !!r.pede_titulos, tipos_titulos: tipos, titulos_inicio: ti, titulos_fim: tf,
       titulos_status: tc.status, pode_titulos: tc.pode, titulos: porCand[r.id] || [],
+      recurso_fases: fasesPorConc[r.concurso_id] || [], meus_recursos: recursosPorCand[r.id] || [],
     };
   });
   res.json({ ok: true, nome: lg.rows[0].nome, inscricoes });
 });
+function calcFase(ab, fe, agora) {
+  if (!ab || !fe) return { status: 'indefinido', pode: false };
+  if (agora < ab) return { status: 'antes', pode: false };
+  if (agora > fe) return { status: 'depois', pode: false };
+  return { status: 'aberto', pode: true };
+}
 
 // Candidato envia um título (só dentro da janela)
 async function autenticaCandidato(b) {
@@ -450,6 +473,99 @@ app.post('/api/candidato/titulo/excluir', async (req, res) => {
   if (!concurso || !concurso.pode_titulos) return res.status(403).json({ erro: 'Fora do período de envio; não é possível remover.' });
   await pool.query('DELETE FROM titulos WHERE id=$1', [t.rows[0].id]);
   res.json({ ok: true });
+});
+
+app.post('/api/candidato/recurso', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const b = req.body || {};
+  const cpf = await autenticaCandidato(b);
+  if (!cpf) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
+  const cand = await pool.query('SELECT id, concurso_id FROM candidatos WHERE id=$1 AND cpf=$2', [parseInt(b.inscricao_id), cpf]);
+  if (!cand.rows.length) return res.status(404).json({ erro: 'Inscrição não encontrada.' });
+  const fase = await pool.query('SELECT * FROM recurso_fases WHERE id=$1 AND concurso_id=$2', [parseInt(b.fase_id), cand.rows[0].concurso_id]);
+  if (!fase.rows.length) return res.status(404).json({ erro: 'Fase de recurso não encontrada.' });
+  const cf = calcFase(fase.rows[0].abertura, fase.rows[0].fechamento, agoraBR());
+  if (!cf.pode) return res.status(403).json({ erro: 'O prazo desta fase de recurso não está aberto.' });
+  const texto = String(b.texto || '').trim();
+  if (texto.length < 5) return res.status(400).json({ erro: 'Escreva o texto do recurso.' });
+  let mime = null, buf = null, nome = null;
+  if (b.dataBase64) {
+    buf = decodeB64(b.dataBase64);
+    if (!buf) return res.status(400).json({ erro: 'Anexo inválido.' });
+    mime = mimeDe(buf);
+    if (!mime) return res.status(400).json({ erro: 'Anexo deve ser PDF, JPG ou PNG.' });
+    if (buf.length > 5 * 1024 * 1024) return res.status(400).json({ erro: 'Anexo muito grande (máx. 5 MB).' });
+    nome = String(b.filename || 'anexo').slice(0, 200);
+  }
+  await pool.query('INSERT INTO recursos (concurso_id,fase_id,candidato_id,texto,anexo_mime,anexo_dados,anexo_nome) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+    [cand.rows[0].concurso_id, fase.rows[0].id, cand.rows[0].id, texto.slice(0, 5000), mime, buf, nome]);
+  res.json({ ok: true });
+});
+app.get('/api/candidato/recurso/:id/anexo', async (req, res) => {
+  if (!pool) return res.status(503).send('Indisponível.');
+  const cpf = await autenticaCandidato({ cpf: req.query.cpf, senha: req.query.senha });
+  if (!cpf) return res.status(401).send('Sessão inválida.');
+  const { rows } = await pool.query('SELECT r.anexo_mime, r.anexo_dados, r.anexo_nome FROM recursos r JOIN candidatos k ON k.id=r.candidato_id WHERE r.id=$1 AND k.cpf=$2', [parseInt(req.params.id), cpf]);
+  if (!rows.length || !rows[0].anexo_dados) return res.status(404).send('Sem anexo.');
+  res.setHeader('Content-Type', rows[0].anexo_mime || 'application/octet-stream');
+  res.setHeader('Content-Disposition', 'inline; filename="' + (rows[0].anexo_nome || 'anexo') + '"');
+  res.send(rows[0].anexo_dados);
+});
+
+// ---- Recursos: admin (banca) -------------------------------
+app.get('/admin/recurso-fases.json', exigirSenha, async (req, res) => {
+  if (!pool) return res.json({ fases: [] });
+  const cid = parseInt(req.query.concurso) || 0;
+  const { rows } = await pool.query('SELECT id,nome,abertura,fechamento FROM recurso_fases WHERE concurso_id=$1 ORDER BY id', [cid]);
+  const agora = agoraBR();
+  res.json({ fases: rows.map((r) => ({ ...r, status: calcFase(r.abertura, r.fechamento, agora).status })) });
+});
+app.post('/admin/recurso-fase', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const b = req.body || {};
+  const cid = parseInt(b.concurso_id) || 0;
+  const nome = String(b.nome || '').trim().slice(0, 160);
+  const ab = String(b.abertura || '').trim().slice(0, 16) || null;
+  const fe = String(b.fechamento || '').trim().slice(0, 16) || null;
+  if (!cid) return res.status(400).json({ erro: 'Selecione o concurso.' });
+  if (!nome) return res.status(400).json({ erro: 'Informe o nome da fase.' });
+  if (b.id) { await pool.query('UPDATE recurso_fases SET nome=$1,abertura=$2,fechamento=$3 WHERE id=$4', [nome, ab, fe, b.id]); return res.json({ ok: true, id: b.id }); }
+  const r = await pool.query('INSERT INTO recurso_fases (concurso_id,nome,abertura,fechamento) VALUES ($1,$2,$3,$4) RETURNING id', [cid, nome, ab, fe]);
+  res.json({ ok: true, id: r.rows[0].id });
+});
+app.delete('/admin/recurso-fase/:id', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  await pool.query('DELETE FROM recursos WHERE fase_id=$1', [req.params.id]);
+  await pool.query('DELETE FROM recurso_fases WHERE id=$1', [req.params.id]);
+  res.json({ ok: true });
+});
+app.get('/admin/recursos.json', exigirSenha, async (req, res) => {
+  if (!pool) return res.json({ recursos: [] });
+  const cid = parseInt(req.query.concurso) || 0;
+  const params = [cid]; let filtro = '';
+  if (req.query.fase) { params.push(parseInt(req.query.fase)); filtro += ' AND r.fase_id=$' + params.length; }
+  if (req.query.status) { params.push(req.query.status); filtro += ' AND r.status=$' + params.length; }
+  const { rows } = await pool.query(`SELECT r.id, r.texto, r.status, r.resposta, r.criado_em, r.respondido_em, r.anexo_nome, (r.anexo_dados IS NOT NULL) AS tem_anexo,
+      k.nome AS candidato, k.cpf, k.protocolo, f.nome AS fase_nome
+    FROM recursos r JOIN candidatos k ON k.id=r.candidato_id LEFT JOIN recurso_fases f ON f.id=r.fase_id
+    WHERE r.concurso_id=$1${filtro} ORDER BY r.id DESC`, params);
+  res.json({ recursos: rows });
+});
+app.post('/admin/recurso/:id/responder', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const b = req.body || {};
+  const status = ['deferido', 'indeferido', 'pendente'].includes(b.status) ? b.status : 'pendente';
+  const resposta = String(b.resposta || '').trim().slice(0, 5000);
+  await pool.query('UPDATE recursos SET status=$1, resposta=$2, respondido_em=now() WHERE id=$3', [status, resposta, req.params.id]);
+  res.json({ ok: true });
+});
+app.get('/admin/recurso/:id/anexo', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Indisponível.');
+  const { rows } = await pool.query('SELECT anexo_mime, anexo_dados, anexo_nome FROM recursos WHERE id=$1', [parseInt(req.params.id)]);
+  if (!rows.length || !rows[0].anexo_dados) return res.status(404).send('Sem anexo.');
+  res.setHeader('Content-Type', rows[0].anexo_mime || 'application/octet-stream');
+  res.setHeader('Content-Disposition', 'inline; filename="' + (rows[0].anexo_nome || 'anexo') + '"');
+  res.send(rows[0].anexo_dados);
 });
 
 // ---- Webhook ASAAS -----------------------------------------
