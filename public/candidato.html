@@ -171,6 +171,25 @@
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao enviar');return;}
     alert('Recurso enviado com sucesso!'); recarregar();
   }
+  function laudoBlock(r){
+    if(!r.pede_laudo) return '';
+    var atual = r.tem_laudo ? ('<div class="rec-resp">Laudo enviado ✓ <a href="/api/candidato/laudo/'+r.id+'?cpf='+encodeURIComponent(SESSAO.cpf)+'&senha='+encodeURIComponent(SESSAO.senha)+'" target="_blank">📎 '+esc(r.laudo_nome||'ver laudo')+'</a></div>') : '';
+    return '<div class="titulos-box"><h4>Condição especial / Laudo (PcD)</h4>'
+      +'<p class="tit-hint">Se você é PcD ou precisa de atendimento especial, descreva a condição e anexe o laudo (PDF, JPG ou PNG · até 5 MB).</p>'
+      +'<textarea id="cond_'+r.id+'" rows="2" placeholder="Descreva sua condição especial">'+esc(r.condicao_especial||'')+'</textarea>'
+      +'<input type="file" id="laudo_'+r.id+'" accept=".pdf,.jpg,.jpeg,.png" style="display:block;margin:8px 0">'
+      +atual
+      +'<button class="tit-btn" onclick="enviarLaudo('+r.id+')">Salvar condição / laudo</button></div>';
+  }
+  async function enviarLaudo(id){
+    var cond=$('cond_'+id)?$('cond_'+id).value.trim():'';
+    var inp=$('laudo_'+id); var b64=null,fname=null;
+    if(inp && inp.files[0]){ if(inp.files[0].size>5*1024*1024){alert('Arquivo máximo 5 MB.');return;} b64=await toB64(inp.files[0]); fname=inp.files[0].name; }
+    if(!cond && !b64){alert('Descreva a condição especial ou anexe o laudo.');return;}
+    var r=await fetch('/api/candidato/laudo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf:SESSAO.cpf,senha:SESSAO.senha,inscricao_id:id,condicao_especial:cond,dataBase64:b64,filename:fname})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    alert('Enviado com sucesso!'); recarregar();
+  }
   function cardInsc(r){
     var s=statusInfo(r);
     var acoes = '';
@@ -182,6 +201,7 @@
       + '<div class="acoes">'+acoes+'</div>'
       + titulosBlock(r)
       + recursosBlock(r)
+      + laudoBlock(r)
       + '</div>';
   }
   function render(j){
