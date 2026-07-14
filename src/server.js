@@ -39,7 +39,9 @@ async function inicializarBanco() {
     pcd BOOLEAN DEFAULT FALSE, nome_social TEXT, cidade TEXT, uf TEXT,
     status TEXT DEFAULT 'inscrito', criado_em TIMESTAMPTZ DEFAULT now());`);
   for (const col of [
-    'asaas_customer_id TEXT', 'asaas_payment_id TEXT', 'invoice_url TEXT', 'concurso_id INT', 'sala_id INT'
+    'asaas_customer_id TEXT', 'asaas_payment_id TEXT', 'invoice_url TEXT', 'concurso_id INT', 'sala_id INT',
+    'bb_nosso_numero TEXT', 'bb_linha_digitavel TEXT', 'bb_codigo_barras TEXT', 'bb_qrcode_pix TEXT',
+    'cep TEXT', 'endereco TEXT', 'bairro TEXT'
   ]) {
     await pool.query(`ALTER TABLE candidatos ADD COLUMN IF NOT EXISTS ${col}`);
   }
@@ -185,23 +187,131 @@ async function asaas(p, method, body) {
   if (!r.ok) throw new Error((j.errors && j.errors[0] && j.errors[0].description) || ('ASAAS HTTP ' + r.status));
   return j;
 }
-async function criarCobranca(cand, concurso) {
-  const cliente = await asaas('/customers', 'POST', { name: cand.nome, cpfCnpj: cand.cpf, email: cand.email || undefined, mobilePhone: cand.telefone || undefined });
-  // Vencimento = 1 dia após o término das inscrições (data_fim).
-  // Sem data_fim: usa dias_vencimento (comportamento antigo). Nunca no passado: mínimo amanhã.
+// ---- Banco do Brasil (API Cobrança) ------------------------
+const bbTokenCache = {}; // por concurso: { token, exp }
+function bbUrls(cfg) {
+  const prod = cfg.bb_ambiente === 'producao';
+  return {
+    oauth: prod ? 'https://oauth.bb.com.br/oauth/token' : 'https://oauth.hm.bb.com.br/oauth/token',
+    api: prod ? 'https://api.bb.com.br' : 'https://api.hm.bb.com.br',
+  };
+}
+async function bbToken(cfg) {
+  const c = bbTokenCache[cfg.id];
+  if (c && c.exp > Date.now() + 60000) return c.token;
+  const u = bbUrls(cfg);
+  const basic = Buffer.from(`${cfg.bb_client_id}:${cfg.bb_client_secret}`).toString('base64');
+  const r = await fetch(u.oauth, {
+    method: 'POST',
+    headers: { Authorization: 'Basic ' + basic, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'grant_type=client_credentials&scope=cobrancas.boletos-requisicao cobrancas.boletos-info',
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.access_token) throw new Error('BB OAuth: ' + (j.error_description || j.error || ('HTTP ' + r.status)));
+  bbTokenCache[cfg.id] = { token: j.access_token, exp: Date.now() + ((j.expires_in || 600) * 1000) };
+  return j.access_token;
+}
+const soNum = (s) => String(s || '').replace(/\D/g, '');
+function bbDataBR(ymd) { const m = String(ymd || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? (m[3] + '.' + m[2] + '.' + m[1]) : ymd; }
+async function bbRegistrarBoleto(cfg, cand, valor, dueYmd) {
+  const token = await bbToken(cfg);
+  const u = bbUrls(cfg);
+  const conv = soNum(cfg.bb_convenio);
+  const conv7 = conv.padStart(7, '0').slice(-7);
+  const seq10 = soNum(String(cand.id || Date.now())).padStart(10, '0').slice(-10);
+  const numeroTituloCliente = '000' + conv7 + seq10; // 20 dígitos
+  const corpo = {
+    numeroConvenio: Number(conv), numeroCarteira: Number(soNum(cfg.bb_carteira) || 17),
+    numeroVariacaoCarteira: Number(soNum(cfg.bb_variacao) || 0), codigoModalidade: 1,
+    dataEmissao: bbDataBR(new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10)),
+    dataVencimento: bbDataBR(dueYmd), valorOriginal: Number(Number(valor).toFixed(2)),
+    indicadorAceiteTituloVencido: 'S', numeroDiasLimiteRecebimento: 30,
+    codigoAceite: 'A', codigoTipoTitulo: 2, descricaoTipoTitulo: 'DM',
+    indicadorPermissaoRecebimentoParcial: 'N',
+    numeroTituloBeneficiario: String(cand.protocolo || cand.id).slice(0, 15),
+    campoUtilizacaoBeneficiario: (cfg.bb_beneficiario_nome || 'Inscricao').slice(0, 30),
+    numeroTituloCliente,
+    mensagemBloquetoOcorrencia: ('Inscricao ' + (cand.protocolo || '')).slice(0, 30),
+    pagador: {
+      tipoInscricao: 1, numeroInscricao: Number(soNum(cand.cpf)),
+      nome: (cand.nome || '').slice(0, 60), endereco: (cand.endereco || 'Nao informado').slice(0, 60),
+      cep: Number(soNum(cand.cep) || 0) || 1310100, cidade: (cand.cidade || 'Sao Paulo').slice(0, 30),
+      bairro: (cand.bairro || 'Centro').slice(0, 30), uf: (cand.uf || 'SP').slice(0, 2),
+      telefone: soNum(cand.telefone).slice(0, 11) || undefined,
+    },
+    indicadorPix: 'S',
+  };
+  const r = await fetch(u.api + '/cobrancas/v2/boletos?gw-dev-app-key=' + encodeURIComponent(cfg.bb_app_key), {
+    method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(corpo),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error('BB boleto: ' + ((j.erros && j.erros[0] && (j.erros[0].mensagem || j.erros[0].textoMensagem)) || j.message || ('HTTP ' + r.status)));
+  const pix = j.qrCode || {};
+  return {
+    nossoNumero: j.numero || numeroTituloCliente,
+    linhaDigitavel: j.linhaDigitavel || '',
+    codigoBarras: j.codigoBarraNumerico || '',
+    qrCodePix: pix.emv || pix.txId || '',
+  };
+}
+async function bbConsultarBoleto(cfg, id) {
+  const token = await bbToken(cfg);
+  const u = bbUrls(cfg);
+  const conv = Number(soNum(cfg.bb_convenio));
+  const r = await fetch(u.api + '/cobrancas/v2/boletos/' + id + '?gw-dev-app-key=' + encodeURIComponent(cfg.bb_app_key) + '&numeroConvenio=' + conv, {
+    method: 'GET', headers: { Authorization: 'Bearer ' + token },
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error('BB consulta: HTTP ' + r.status);
+  // codigoEstadoTituloCobranca: 06/07 = liquidado (varia); valorPagoSacado > 0 indica pagamento
+  const pago = Number(j.valorPagoSacado || j.valorPago || 0) > 0 || [6, 7].includes(Number(j.codigoEstadoTituloCobranca));
+  return { pago, raw: j };
+}
+
+function calcVencimento(concurso) {
   const maisUmDia = (ymd) => { const d = new Date(ymd + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); };
   let due;
   if (concurso.data_fim) due = maisUmDia(String(concurso.data_fim).slice(0, 10));
   else due = new Date(Date.now() + (parseInt(concurso.dias_vencimento) || 5) * 86400000).toISOString().slice(0, 10);
   const amanha = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
   if (due < amanha) due = amanha;
+  return due;
+}
+async function criarCobranca(cand, concurso) {
+  const due = calcVencimento(concurso);
+  // Gateway Banco do Brasil
+  if (concurso.pagamento_gateway === 'bb') {
+    const cfg = await lerConfigBB(concurso.id);
+    if (!cfg || !cfg.bb_client_id || !cfg.bb_client_secret || !cfg.bb_app_key || !cfg.bb_convenio) throw new Error('Configuração do Banco do Brasil incompleta neste concurso.');
+    let full = cand;
+    if (cand.id) { const q = await pool.query('SELECT * FROM candidatos WHERE id=$1', [cand.id]); if (q.rows[0]) full = { ...q.rows[0], protocolo: cand.protocolo || q.rows[0].protocolo }; }
+    const bb = await bbRegistrarBoleto(cfg, full, Number(concurso.taxa_valor), due);
+    const base = (process.env.PUBLIC_URL || '').trim();
+    const invoiceUrl = (base || '') + '/boleto/' + encodeURIComponent(cand.protocolo || full.protocolo || '');
+    return { provider: 'bb', paymentId: bb.nossoNumero, invoiceUrl, bb };
+  }
+  // Gateway ASAAS (padrão)
+  const cliente = await asaas('/customers', 'POST', { name: cand.nome, cpfCnpj: cand.cpf, email: cand.email || undefined, mobilePhone: cand.telefone || undefined });
   const base = (process.env.PUBLIC_URL || '').trim();
   const cobranca = await asaas('/payments', 'POST', {
     customer: cliente.id, billingType: 'UNDEFINED', value: Number(concurso.taxa_valor),
     dueDate: due, description: (concurso.titulo || 'Inscrição') + ' — ' + cand.cargo,
     externalReference: cand.protocolo, callback: base ? { successUrl: base, autoRedirect: false } : undefined,
   });
-  return { customerId: cliente.id, paymentId: cobranca.id, invoiceUrl: cobranca.invoiceUrl };
+  return { provider: 'asaas', customerId: cliente.id, paymentId: cobranca.id, invoiceUrl: cobranca.invoiceUrl };
+}
+async function lerConfigBB(concursoId) {
+  const { rows } = await pool.query('SELECT id,bb_client_id,bb_client_secret,bb_app_key,bb_convenio,bb_carteira,bb_variacao,bb_agencia,bb_conta,bb_beneficiario_nome,bb_beneficiario_doc,bb_ambiente FROM concursos WHERE id=$1', [concursoId]);
+  return rows[0] || null;
+}
+async function persistirPagamento(candId, pay) {
+  if (pay.provider === 'bb') {
+    await pool.query('UPDATE candidatos SET asaas_payment_id=$1, invoice_url=$2, bb_nosso_numero=$3, bb_linha_digitavel=$4, bb_codigo_barras=$5, bb_qrcode_pix=$6 WHERE id=$7',
+      [pay.paymentId, pay.invoiceUrl, pay.bb.nossoNumero, pay.bb.linhaDigitavel, pay.bb.codigoBarras, pay.bb.qrCodePix, candId]);
+  } else {
+    await pool.query('UPDATE candidatos SET asaas_customer_id=$1, asaas_payment_id=$2, invoice_url=$3 WHERE id=$4',
+      [pay.customerId, pay.paymentId, pay.invoiceUrl, candId]);
+  }
 }
 
 // ---- Utilidades --------------------------------------------
@@ -247,7 +357,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'pagamento-config-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'bb-boleto-v1' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -372,12 +482,12 @@ app.post('/api/inscricao', async (req, res) => {
       }
     }
 
-    const cobrar = temAsaas && !concurso.gratuito && Number(concurso.taxa_valor) > 0;
+    const cobrar = !concurso.gratuito && Number(concurso.taxa_valor) > 0 && (concurso.pagamento_gateway === 'bb' || temAsaas);
     if (!cobrar) return res.json({ ok: true, protocolo, nome, cargo, invoiceUrl: null, cobrar: false });
     try {
-      const pay = await criarCobranca({ nome, cpf, email, telefone, cargo, protocolo }, concurso);
-      await pool.query('UPDATE candidatos SET status=$1, asaas_customer_id=$2, asaas_payment_id=$3, invoice_url=$4 WHERE id=$5',
-        ['aguardando_pagamento', pay.customerId, pay.paymentId, pay.invoiceUrl, id]);
+      const pay = await criarCobranca({ id, nome, cpf, email, telefone, cargo, protocolo }, concurso);
+      await pool.query("UPDATE candidatos SET status='aguardando_pagamento' WHERE id=$1", [id]);
+      await persistirPagamento(id, pay);
       return res.json({ ok: true, protocolo, nome, cargo, invoiceUrl: pay.invoiceUrl, cobrar: true });
     } catch (e) {
       console.error('ASAAS falhou:', e.message);
@@ -499,10 +609,10 @@ app.post('/api/candidato/boleto', async (req, res) => {
   if (!concurso) return res.status(404).json({ erro: 'Concurso não encontrado.' });
   if (concurso.gratuito || !(Number(concurso.taxa_valor) > 0)) return res.status(400).json({ erro: 'Esta inscrição é gratuita, não há boleto.' });
   if (c.invoice_url) return res.json({ ok: true, invoice_url: c.invoice_url });
-  if (!temAsaas) return res.status(400).json({ erro: 'Pagamento indisponível no momento. Tente mais tarde.' });
+  if (concurso.pagamento_gateway !== 'bb' && !temAsaas) return res.status(400).json({ erro: 'Pagamento indisponível no momento. Tente mais tarde.' });
   try {
-    const pay = await criarCobranca({ nome: c.nome, cpf: c.cpf, email: c.email, telefone: c.telefone, cargo: c.cargo, protocolo: c.protocolo }, concurso);
-    await pool.query('UPDATE candidatos SET asaas_customer_id=$1, asaas_payment_id=$2, invoice_url=$3 WHERE id=$4', [pay.customerId, pay.paymentId, pay.invoiceUrl, c.id]);
+    const pay = await criarCobranca({ id: c.id, nome: c.nome, cpf: c.cpf, email: c.email, telefone: c.telefone, cargo: c.cargo, protocolo: c.protocolo }, concurso);
+    await persistirPagamento(c.id, pay);
     res.json({ ok: true, invoice_url: pay.invoiceUrl });
   } catch (e) {
     res.status(500).json({ erro: 'Não foi possível gerar o boleto agora: ' + e.message });
@@ -834,9 +944,9 @@ app.post('/admin/cobranca/:id', exigirSenha, async (req, res) => {
     const c = rows[0];
     const concurso = await lerConcursoPorChave(String(c.concurso_id));
     if (!concurso || Number(concurso.taxa_valor) <= 0) return res.status(400).json({ erro: 'Defina o valor da taxa do concurso (mín. R$ 5,00).' });
-    const pay = await criarCobranca({ nome: c.nome, cpf: c.cpf, email: c.email, telefone: c.telefone, cargo: c.cargo, protocolo: c.protocolo }, concurso);
-    await pool.query('UPDATE candidatos SET status=$1, asaas_customer_id=$2, asaas_payment_id=$3, invoice_url=$4 WHERE id=$5',
-      ['aguardando_pagamento', pay.customerId, pay.paymentId, pay.invoiceUrl, c.id]);
+    const pay = await criarCobranca({ id: c.id, nome: c.nome, cpf: c.cpf, email: c.email, telefone: c.telefone, cargo: c.cargo, protocolo: c.protocolo }, concurso);
+    await pool.query("UPDATE candidatos SET status='aguardando_pagamento' WHERE id=$1", [c.id]);
+    await persistirPagamento(c.id, pay);
     res.json({ ok: true, invoiceUrl: pay.invoiceUrl });
   } catch (e) { console.error('cobranca:', e.message); res.status(500).json({ erro: e.message }); }
 });
@@ -1972,6 +2082,52 @@ app.post('/api/prova/finalizar', async (req, res) => {
   if (a.status !== 'finalizado') nota = await finalizarProva(a);
   let respostas = {}; try { respostas = JSON.parse(a.respostas || '{}'); } catch {}
   res.json({ status: 'finalizado', nota, total: qids.length, respostas });
+});
+
+app.get('/boleto/:protocolo', async (req, res) => {
+  if (!pool) return res.status(503).send('Indisponível.');
+  const { rows } = await pool.query('SELECT * FROM candidatos WHERE protocolo=$1', [req.params.protocolo]);
+  if (!rows.length) return res.status(404).send('Boleto não encontrado.');
+  const c = rows[0];
+  const concurso = await lerConcursoPorChave(String(c.concurso_id));
+  const e = escapeHtml;
+  const cfg = await lerConfigBB(c.concurso_id).catch(() => null);
+  const valor = (Number(concurso && concurso.taxa_valor || 0)).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  let qrSvg = '';
+  if (c.bb_qrcode_pix) { try { qrSvg = await QRCode.toString(String(c.bb_qrcode_pix), { type: 'svg', margin: 1, width: 190 }); } catch {} }
+  const pago = c.status === 'pago';
+  const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Boleto — ${e(c.protocolo)}</title>
+<style>
+ *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,Helvetica,sans-serif}
+ body{background:#eef2f6;color:#16242f;padding:20px}
+ .b{max-width:640px;margin:0 auto;background:#fff;border:1px solid #dbe4ec;border-radius:14px;padding:22px}
+ h1{font-size:1.15rem;color:#0b3a5e;margin-bottom:2px}
+ .sub{color:#5b7183;font-size:.9rem;margin-bottom:14px}
+ .pago{background:#e7f6ee;color:#0f6b41;padding:10px 12px;border-radius:8px;font-weight:700;margin-bottom:14px}
+ .row{display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid #eef2f6;padding:8px 0;font-size:.92rem}
+ .row b{color:#0b3a5e}
+ .ld{margin:16px 0;padding:12px;border:1.5px dashed #0b3a5e;border-radius:10px;text-align:center}
+ .ld .num{font-size:1.05rem;font-weight:800;letter-spacing:1px;word-break:break-all}
+ button{background:#0b3a5e;color:#fff;border:none;border-radius:9px;padding:11px 16px;font-weight:700;cursor:pointer;margin-top:8px}
+ .pix{text-align:center;margin-top:16px;border-top:1px solid #eef2f6;padding-top:16px}
+ .pix svg{width:190px;height:190px}
+ .hint{font-size:.82rem;color:#5b7183;margin-top:6px}
+</style></head><body>
+<div class="b">
+  <h1>${e((cfg && cfg.bb_beneficiario_nome) || (concurso && concurso.orgao) || 'Boleto de inscrição')}</h1>
+  <div class="sub">${e(concurso && concurso.titulo || '')}</div>
+  ${pago ? '<div class="pago">✓ Pagamento confirmado. Não é necessário pagar novamente.</div>' : ''}
+  <div class="row"><span>Pagador</span><b>${e(c.nome)}</b></div>
+  <div class="row"><span>CPF</span><b>${e(mascaraCpf(c.cpf))}</b></div>
+  <div class="row"><span>Inscrição</span><b>${e(c.protocolo)}</b></div>
+  <div class="row"><span>Valor</span><b>${e(valor)}</b></div>
+  <div class="row"><span>Banco</span><b>Banco do Brasil (001)</b></div>
+  ${c.bb_linha_digitavel ? `<div class="ld"><div class="hint">Linha digitável (copie para pagar no seu banco)</div><div class="num" id="ld">${e(c.bb_linha_digitavel)}</div><button onclick="copiar()">Copiar linha digitável</button></div>` : '<div class="ld">Boleto em processamento. Recarregue em instantes.</div>'}
+  ${qrSvg ? `<div class="pix"><div class="hint" style="margin-bottom:8px">Ou pague com Pix (aponte a câmera):</div>${qrSvg}</div>` : ''}
+</div>
+<script>function copiar(){var t=document.getElementById('ld').textContent.replace(/\\D/g,'');navigator.clipboard.writeText(t).then(function(){alert('Linha digitável copiada!');});}</script>
+</body></html>`;
+  res.send(html);
 });
 
 app.get('/admin', exigirSenha, (req, res) => res.send(PAINEL_HTML));
