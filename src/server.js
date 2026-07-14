@@ -182,8 +182,14 @@ async function asaas(p, method, body) {
 }
 async function criarCobranca(cand, concurso) {
   const cliente = await asaas('/customers', 'POST', { name: cand.nome, cpfCnpj: cand.cpf, email: cand.email || undefined, mobilePhone: cand.telefone || undefined });
-  const dias = parseInt(concurso.dias_vencimento) || 5;
-  const due = new Date(Date.now() + dias * 86400000).toISOString().slice(0, 10);
+  // Vencimento = 1 dia após o término das inscrições (data_fim).
+  // Sem data_fim: usa dias_vencimento (comportamento antigo). Nunca no passado: mínimo amanhã.
+  const maisUmDia = (ymd) => { const d = new Date(ymd + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); };
+  let due;
+  if (concurso.data_fim) due = maisUmDia(String(concurso.data_fim).slice(0, 10));
+  else due = new Date(Date.now() + (parseInt(concurso.dias_vencimento) || 5) * 86400000).toISOString().slice(0, 10);
+  const amanha = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  if (due < amanha) due = amanha;
   const base = (process.env.PUBLIC_URL || '').trim();
   const cobranca = await asaas('/payments', 'POST', {
     customer: cliente.id, billingType: 'UNDEFINED', value: Number(concurso.taxa_valor),
@@ -236,7 +242,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'recursos-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'vencimento-boleto-v1' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
