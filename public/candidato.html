@@ -44,6 +44,19 @@
   .tit-item span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .tit-del{background:none;border:none;color:#a12626;cursor:pointer;font-weight:600;font-size:.82rem}
   .tit-vazio{font-size:.86rem;color:var(--suave);margin-bottom:8px}
+  textarea{width:100%;padding:10px 12px;border:1.5px solid var(--linha);border-radius:9px;font-family:inherit;font-size:.92rem;resize:vertical}
+  .rec-fase{margin:8px 0;padding:10px;border:1px solid var(--linha);border-radius:8px}
+  .rec-fase.rec-fechada{color:#6b7c8a;font-size:.9rem;background:#f7f9fb}
+  .rec-fnome{font-weight:600;margin-bottom:6px}
+  .rec-open{color:#1f9d5b;font-weight:600;font-size:.85rem}
+  .rec-fase textarea{margin-bottom:6px}
+  .rec-fase input[type=file]{display:block;margin-bottom:8px;font-size:.85rem}
+  .rec-meus{margin-top:12px}
+  .rec-meus h5{font-size:.9rem;color:var(--tinta);margin-bottom:8px}
+  .rec-item{border:1px solid var(--linha);border-radius:8px;padding:10px;margin-bottom:8px}
+  .rec-ihead{display:flex;justify-content:space-between;gap:8px;font-size:.9rem;font-weight:600}
+  .rec-texto{white-space:pre-wrap;font-size:.9rem;margin-top:6px;color:#33454f}
+  .rec-resp{margin-top:8px;background:#eef7f0;border-radius:6px;padding:8px;font-size:.9rem}
   .tit-add{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
   .tit-add select{padding:9px;border:1.5px solid var(--linha);border-radius:8px;min-width:150px}
   .tit-btn{background:var(--verde);color:#fff;border:none;border-radius:8px;padding:10px 15px;font-weight:700;cursor:pointer;font-size:.88rem}
@@ -120,6 +133,39 @@
     }
     return '<div class="titulos-box"><h4>Envio de títulos</h4>'+per+enviados+acao+'</div>';
   }
+  function recursosBlock(r){
+    var fases=r.recurso_fases||[];
+    if(!fases.length && !(r.meus_recursos||[]).length) return '';
+    var abertas = fases.map(function(f){
+      if(f.status==='aberto'){
+        return '<div class="rec-fase"><div class="rec-fnome">'+esc(f.nome)+' <span class="rec-open">🟢 aberto até '+fmt(f.fechamento)+'</span></div>'
+          +'<textarea id="rec_txt_'+f.id+'" rows="3" placeholder="Escreva seu recurso..."></textarea>'
+          +'<input type="file" id="rec_file_'+f.id+'" accept=".pdf,.jpg,.jpeg,.png">'
+          +'<button class="tit-btn" onclick="enviarRecurso('+r.id+','+f.id+')">Enviar recurso</button>'
+          +'<p class="tit-hint">Texto do recurso + anexo opcional (PDF, JPG, PNG · até 5 MB).</p></div>';
+      }
+      var av = f.status==='antes'?('⏳ '+esc(f.nome)+' — prazo abre em '+fmt(f.abertura)) : (f.status==='depois'?('🔒 '+esc(f.nome)+' — prazo encerrado') : (esc(f.nome)+' — sem prazo definido'));
+      return '<div class="rec-fase rec-fechada">'+av+'</div>';
+    }).join('');
+    var rot={pendente:'⏳ Em análise',deferido:'✅ Deferido',indeferido:'❌ Indeferido'};
+    var meus=(r.meus_recursos||[]).map(function(x){
+      var anexo=x.tem_anexo?' · <a href="/api/candidato/recurso/'+x.id+'/anexo?cpf='+encodeURIComponent(SESSAO.cpf)+'&senha='+encodeURIComponent(SESSAO.senha)+'" target="_blank">📎 anexo</a>':'';
+      var resp=x.resposta?('<div class="rec-resp"><b>Resposta da banca:</b> '+esc(x.resposta)+'</div>'):'';
+      return '<div class="rec-item"><div class="rec-ihead"><span>'+esc(x.fase_nome||'Recurso')+anexo+'</span><span>'+rot[x.status]+'</span></div>'
+        +'<div class="rec-texto">'+esc(x.texto)+'</div>'+resp+'</div>';
+    }).join('') || '<p class="tit-vazio">Você ainda não interpôs recursos.</p>';
+    return '<div class="titulos-box"><h4>Recursos</h4>'+abertas+'<div class="rec-meus"><h5>Meus recursos</h5>'+meus+'</div></div>';
+  }
+  async function enviarRecurso(inscId, faseId){
+    var txt=$('rec_txt_'+faseId), inp=$('rec_file_'+faseId);
+    var texto=txt?txt.value.trim():'';
+    if(texto.length<5){alert('Escreva o texto do recurso.');return;}
+    var b64=null, fname=null;
+    if(inp && inp.files[0]){ if(inp.files[0].size>5*1024*1024){alert('Anexo máximo 5 MB.');return;} b64=await toB64(inp.files[0]); fname=inp.files[0].name; }
+    var r=await fetch('/api/candidato/recurso',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf:SESSAO.cpf,senha:SESSAO.senha,inscricao_id:inscId,fase_id:faseId,texto:texto,dataBase64:b64,filename:fname})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao enviar');return;}
+    alert('Recurso enviado com sucesso!'); recarregar();
+  }
   function cardInsc(r){
     var s=statusInfo(r);
     var acoes = '';
@@ -130,6 +176,7 @@
       + s.badge
       + '<div class="acoes">'+acoes+'</div>'
       + titulosBlock(r)
+      + recursosBlock(r)
       + '</div>';
   }
   function render(j){
