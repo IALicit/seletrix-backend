@@ -32,7 +32,7 @@
   .insc .meta{color:var(--suave);font-size:.88rem;margin:2px 0 10px}
   .badge{display:inline-block;padding:4px 12px;border-radius:999px;font-size:.8rem;font-weight:700}
   .b-pago{background:#e7f6ee;color:#0f6b41}.b-aguard{background:#fff4e0;color:#8a5a00}.b-insc{background:#eef1f4;color:#456}
-  .pagar{display:inline-block;margin-top:12px;background:var(--verde);color:#fff;text-decoration:none;font-weight:700;padding:11px 16px;border-radius:9px;font-size:.9rem}
+  .pagar{display:inline-block;margin-top:12px;background:var(--verde);color:#fff;text-decoration:none;font-weight:700;padding:11px 16px;border-radius:9px;font-size:.9rem;border:none;cursor:pointer;font-family:inherit}
   .insc .acoes{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
   .insc .acoes a{margin-top:0}
   .verconc{display:inline-block;background:#eef3f5;color:var(--tinta);text-decoration:none;font-weight:700;padding:11px 16px;border-radius:9px;font-size:.9rem;border:1px solid var(--linha)}
@@ -104,8 +104,8 @@
   function statusInfo(r){
     if(r.status==='pago') return {badge:'<span class="badge b-pago">Pago ✓</span>', pagar:false};
     if(r.gratuito) return {badge:'<span class="badge b-insc">Inscrição gratuita</span>', pagar:false};
-    if(r.status==='aguardando_pagamento') return {badge:'<span class="badge b-aguard">Aguardando pagamento</span>', pagar:!!r.invoice_url};
-    return {badge:'<span class="badge b-insc">Inscrito</span>', pagar:!!r.invoice_url};
+    if(r.status==='aguardando_pagamento') return {badge:'<span class="badge b-aguard">Aguardando pagamento</span>', pagar:true};
+    return {badge:'<span class="badge b-insc">Inscrito</span>', pagar:true};
   }
   var SESSAO={cpf:'',senha:''};
   function toB64(file){ return new Promise(function(res,rej){var rd=new FileReader();rd.onload=function(){res(rd.result);};rd.onerror=rej;rd.readAsDataURL(file);}); }
@@ -156,6 +156,11 @@
     }).join('') || '<p class="tit-vazio">Você ainda não interpôs recursos.</p>';
     return '<div class="titulos-box"><h4>Recursos</h4>'+abertas+'<div class="rec-meus"><h5>Meus recursos</h5>'+meus+'</div></div>';
   }
+  async function segundaVia(id){
+    var r=await fetch('/api/candidato/boleto',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf:SESSAO.cpf,senha:SESSAO.senha,inscricao_id:id})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Não foi possível abrir o boleto.');return;}
+    if(j.invoice_url) window.open(j.invoice_url,'_blank'); else alert('Boleto indisponível.');
+  }
   async function enviarRecurso(inscId, faseId){
     var txt=$('rec_txt_'+faseId), inp=$('rec_file_'+faseId);
     var texto=txt?txt.value.trim():'';
@@ -169,7 +174,7 @@
   function cardInsc(r){
     var s=statusInfo(r);
     var acoes = '';
-    if(s.pagar) acoes += '<a class="pagar" href="'+esc(r.invoice_url)+'" target="_blank">💳 Pagar / 2ª via</a>';
+    if(s.pagar) acoes += '<button class="pagar" onclick="segundaVia('+r.id+')">💳 Pagar / 2ª via do boleto</button>';
     if(r.slug) acoes += '<a class="verconc" href="/concurso.html?c='+encodeURIComponent(r.slug)+'&ver=etapas">📄 Ver etapas e documentos →</a>';
     return '<div class="insc"><h3>'+esc(r.concurso||'Concurso')+'</h3>'
       +'<div class="meta">Protocolo <b>'+esc(r.protocolo)+'</b> &middot; '+esc(r.cargo)+(r.prova?(' &middot; Prova: '+esc(r.prova)):'')+'</div>'
