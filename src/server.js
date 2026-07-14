@@ -242,7 +242,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'vencimento-boleto-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'boleto-2via-v1' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -481,6 +481,28 @@ app.post('/api/candidato/titulo/excluir', async (req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/api/candidato/boleto', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const b = req.body || {};
+  const cpf = await autenticaCandidato(b);
+  if (!cpf) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
+  const cand = await pool.query('SELECT * FROM candidatos WHERE id=$1 AND cpf=$2', [parseInt(b.inscricao_id), cpf]);
+  if (!cand.rows.length) return res.status(404).json({ erro: 'Inscrição não encontrada.' });
+  const c = cand.rows[0];
+  if (c.status === 'pago') return res.status(400).json({ erro: 'Esta inscrição já está paga.' });
+  const concurso = await lerConcursoPorChave(String(c.concurso_id));
+  if (!concurso) return res.status(404).json({ erro: 'Concurso não encontrado.' });
+  if (concurso.gratuito || !(Number(concurso.taxa_valor) > 0)) return res.status(400).json({ erro: 'Esta inscrição é gratuita, não há boleto.' });
+  if (c.invoice_url) return res.json({ ok: true, invoice_url: c.invoice_url });
+  if (!temAsaas) return res.status(400).json({ erro: 'Pagamento indisponível no momento. Tente mais tarde.' });
+  try {
+    const pay = await criarCobranca({ nome: c.nome, cpf: c.cpf, email: c.email, telefone: c.telefone, cargo: c.cargo, protocolo: c.protocolo }, concurso);
+    await pool.query('UPDATE candidatos SET asaas_customer_id=$1, asaas_payment_id=$2, invoice_url=$3 WHERE id=$4', [pay.customerId, pay.paymentId, pay.invoiceUrl, c.id]);
+    res.json({ ok: true, invoice_url: pay.invoiceUrl });
+  } catch (e) {
+    res.status(500).json({ erro: 'Não foi possível gerar o boleto agora: ' + e.message });
+  }
+});
 app.post('/api/candidato/recurso', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
   const b = req.body || {};
