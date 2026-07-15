@@ -72,7 +72,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   <div class="brand"><img src="/logo.png" alt="" class="logo" id="hdr_logo"><div><div class="hnome" id="hdr_nome">Seletrix</div><div class="hsub">Painel de Gestão</div></div></div>
   <div style="display:flex;align-items:center;gap:12px">
     <select id="empresa_sel" onchange="trocarEmpresa()" style="width:auto;min-width:190px;padding:8px 10px"></select>
-    <a class="link-topo" href="/" target="_blank">Ver site público ↗</a>
+    <a class="link-topo" id="hdr_site" href="/" target="_blank">Ver site público ↗</a>
   </div>
 </header>
 <div class="tabs">
@@ -1327,9 +1327,15 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   function trocarEmpresa(){
     EMPRESA_ID = parseInt($('empresa_sel').value) || 0;
     try{ localStorage.setItem('seletrix_empresa', EMPRESA_ID); }catch(e){}
-    var e = EMPRESAS.find(function(x){return x.id===EMPRESA_ID;});
-    if(e){ $('hdr_nome').textContent = e.nome; $('hdr_logo').src = e.tem_logo ? ('/empresa/'+e.id+'/logo?t='+Date.now()) : '/logo.png'; }
+    aplicarIdentidade();
     carregarConcursos();
+  }
+  function aplicarIdentidade(){
+    var e = EMPRESAS.find(function(x){return x.id===EMPRESA_ID;});
+    if(!e) return;
+    $('hdr_nome').textContent = e.nome;
+    $('hdr_logo').src = e.tem_logo ? ('/empresa/'+e.id+'/logo?t='+Date.now()) : '/logo.png';
+    if($('hdr_site')) $('hdr_site').href = '/e/' + e.slug;
   }
   async function initEmpresas(){
     var d = await (await fetch('/admin/empresas.json')).json();
@@ -1338,8 +1344,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     if(!EMPRESAS.some(function(x){return x.id===salvo;})) salvo = EMPRESAS.length ? EMPRESAS[0].id : 0;
     $('empresa_sel').innerHTML = EMPRESAS.map(function(e){return '<option value="'+e.id+'">'+esc(e.nome)+'</option>';}).join('');
     $('empresa_sel').value = salvo; EMPRESA_ID = salvo;
-    var e = EMPRESAS.find(function(x){return x.id===EMPRESA_ID;});
-    if(e){ $('hdr_nome').textContent = e.nome; $('hdr_logo').src = e.tem_logo ? ('/empresa/'+e.id+'/logo?t='+Date.now()) : '/logo.png'; }
+    aplicarIdentidade();
     carregarConcursos();
   }
   function novaEmpresa(){ $('em_id').value=''; $('em_nome').value=''; $('em_subtitulo').value=''; if($('em_logo_file'))$('em_logo_file').value=''; $('em_logo_atual').innerHTML='<i>Salve a empresa primeiro para enviar a logo.</i>'; }
