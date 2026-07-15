@@ -169,7 +169,25 @@
   }
   (async function(){
     try{
-      var data = await (await fetch('/api/concursos')).json();
+      var mEmp = location.pathname.match(/^\/e\/([^\/?#]+)/);
+      var EMP = mEmp ? decodeURIComponent(mEmp[1]) : '';
+      if(EMP){
+        try{
+          var de = await (await fetch('/api/empresa/'+encodeURIComponent(EMP))).json();
+          if(de.empresa){
+            var e = de.empresa;
+            document.title = e.nome + ' — Concursos e Processos Seletivos';
+            var nEl=document.querySelector('.brand .nome'), sEl=document.querySelector('.brand .sub'), iEl=document.querySelector('.brand .emblema');
+            if(nEl) nEl.textContent = e.nome;
+            if(sEl) sEl.textContent = e.subtitulo || '';
+            if(iEl && e.tem_logo){ iEl.src = '/empresa/'+e.id+'/logo'; iEl.alt = e.nome; }
+            var fn=document.querySelector('footer .nome'); if(fn) fn.textContent = e.nome;
+            var fm=document.querySelector('footer .fmeta'); if(fm && e.subtitulo) fm.textContent = '· ' + e.subtitulo;
+            var al=document.querySelector('.area-link'); if(al) al.href = '/candidato.html?e='+encodeURIComponent(e.slug);
+          }
+        }catch(err){}
+      }
+      var data = await (await fetch('/api/concursos' + (EMP?('?e='+encodeURIComponent(EMP)):''))).json();
       var todos = data.concursos || [];
       var conteudo = document.getElementById('conteudo');
       var vazio = document.getElementById('vazio');

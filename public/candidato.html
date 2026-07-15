@@ -108,6 +108,19 @@
     return {badge:'<span class="badge b-insc">Inscrito</span>', pagar:true};
   }
   var SESSAO={cpf:'',senha:''};
+  var EMPRESA_SLUG = (new URLSearchParams(location.search)).get('e') || '';
+  (async function(){
+    if(!EMPRESA_SLUG) return;
+    try{
+      var d = await (await fetch('/api/empresa/'+encodeURIComponent(EMPRESA_SLUG))).json();
+      if(d.empresa){
+        var e=d.empresa;
+        document.title = 'Área do Candidato — ' + e.nome;
+        var h=document.querySelector('h1'); if(h) h.textContent = e.nome;
+        var im=document.querySelector('img'); if(im && e.tem_logo){ im.src='/empresa/'+e.id+'/logo'; im.alt=e.nome; }
+      }
+    }catch(err){}
+  })();
   function toB64(file){ return new Promise(function(res,rej){var rd=new FileReader();rd.onload=function(){res(rd.result);};rd.onerror=rej;rd.readAsDataURL(file);}); }
   function fmt(iso){ if(!iso) return '—'; var s=String(iso); var d=s.slice(0,10).split('-'); var h=s.slice(11,16); var data=d.length===3?(d[2]+'/'+d[1]+'/'+d[0]):s; return h?(data+' às '+h):data; }
 
@@ -216,7 +229,7 @@
   }
   async function recarregar(){
     try{
-      var r=await fetch('/api/candidato/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(SESSAO)});
+      var r=await fetch('/api/candidato/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({},SESSAO,{empresa:EMPRESA_SLUG}))});
       var j=await r.json(); if(r.ok) render(j);
     }catch(e){}
   }
@@ -241,7 +254,7 @@
     e.preventDefault(); $('erro').style.display='none';
     const btn=$('btn-entrar'); btn.disabled=true; btn.textContent='Entrando...';
     try{
-      const r=await fetch('/api/candidato/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf:cpf.value,senha:$('senha').value})});
+      const r=await fetch('/api/candidato/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf:cpf.value,senha:$('senha').value,empresa:EMPRESA_SLUG})});
       const j=await r.json();
       if(!r.ok) throw new Error(j.erro||'Não foi possível entrar.');
       SESSAO={cpf:cpf.value, senha:$('senha').value};
