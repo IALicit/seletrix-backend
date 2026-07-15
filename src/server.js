@@ -113,6 +113,16 @@ async function inicializarBanco() {
   await pool.query(`CREATE TABLE IF NOT EXISTS recurso_fases (id SERIAL PRIMARY KEY, concurso_id INT, nome TEXT, abertura TEXT, fechamento TEXT, criado_em TIMESTAMPTZ DEFAULT now());`);
   await pool.query(`CREATE TABLE IF NOT EXISTS recursos (id SERIAL PRIMARY KEY, concurso_id INT, fase_id INT, candidato_id INT, texto TEXT,
     anexo_mime TEXT, anexo_dados BYTEA, anexo_nome TEXT, status TEXT DEFAULT 'pendente', resposta TEXT, respondido_em TIMESTAMPTZ, criado_em TIMESTAMPTZ DEFAULT now());`);
+  // Multiempresa: empresas + vínculo do concurso
+  await pool.query(`CREATE TABLE IF NOT EXISTS empresas (id SERIAL PRIMARY KEY, slug TEXT UNIQUE, nome TEXT, subtitulo TEXT,
+    logo_mime TEXT, logo_dados BYTEA, ativa BOOLEAN DEFAULT TRUE, criado_em TIMESTAMPTZ DEFAULT now());`);
+  await pool.query(`ALTER TABLE concursos ADD COLUMN IF NOT EXISTS empresa_id INT`);
+  {
+    const e = await pool.query('SELECT COUNT(*)::int n FROM empresas');
+    if (!e.rows[0].n) await pool.query(`INSERT INTO empresas (slug,nome,subtitulo) VALUES ('seletrix','Seletrix','Organização de Concursos Públicos')`);
+    const pri = await pool.query('SELECT id FROM empresas ORDER BY id LIMIT 1');
+    if (pri.rows.length) await pool.query('UPDATE concursos SET empresa_id=$1 WHERE empresa_id IS NULL', [pri.rows[0].id]);
+  }
   const { rows: qc } = await pool.query('SELECT COUNT(*)::int n FROM concursos');
   if (qc[0].n === 0) {
     let cfg = { titulo: 'Edital nº 01/2026', orgao: '', periodo: '', taxa: '', prova: '', vagas: '', pdf_url: '', taxa_valor: 0, dias_vencimento: 5, cargos: ['Especialista', 'Mestre'] };
@@ -164,7 +174,7 @@ function parseConcurso(r) {
     gratuito: !!r.gratuito, pede_titulos: !!r.pede_titulos, pede_laudo: !!r.pede_laudo, tipos_titulos: tipos,
     data_inicio: di, data_fim: df, data_encerramento: de,
     titulos_inicio: ti, titulos_fim: tf, titulos_status: tc.status, pode_titulos: tc.pode,
-    laudo_inicio: r.laudo_inicio_dt || null, laudo_fim: r.laudo_fim_dt || null,
+    laudo_inicio: r.laudo_inicio_dt || null, laudo_fim: r.laudo_fim_dt || null, empresa_id: r.empresa_id || null,
     brasao_url: r.brasao_url || null,
     situacao: calcSituacao(di, df, de, hoje), pode_inscrever: calcPode(di, df, hoje),
   };
@@ -359,7 +369,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'laudo-prazo-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'multiempresa-v1' }));
 
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
@@ -548,7 +558,7 @@ app.post('/api/candidato/login', async (req, res) => {
       titulos_status: tc.status, pode_titulos: tc.pode, titulos: porCand[r.id] || [],
       recurso_fases: fasesPorConc[r.concurso_id] || [], meus_recursos: recursosPorCand[r.id] || [],
       pede_laudo: !!r.pede_laudo, condicao_especial: r.condicao_especial || '', tem_laudo: !!r.tem_laudo, laudo_nome: r.laudo_nome || '',
-      laudo_inicio: r.laudo_inicio_dt || null, laudo_fim: r.laudo_fim_dt || null,
+      laudo_inicio: r.laudo_inicio_dt || null, laudo_fim: r.laudo_fim_dt || null, empresa_id: r.empresa_id || null,
       laudo_status: calcJanelaLaudo(!!r.pede_laudo, r.laudo_inicio_dt, r.laudo_fim_dt, agora).status,
       pode_laudo: calcJanelaLaudo(!!r.pede_laudo, r.laudo_inicio_dt, r.laudo_fim_dt, agora).pode,
     };
@@ -791,13 +801,63 @@ function exigirSenha(req, res, next) {
   return res.status(401).send('Acesso restrito.');
 }
 
+// ---- Empresas (multiempresa) -------------------------------
+app.get('/admin/empresas.json', exigirSenha, async (req, res) => {
+  if (!pool) return res.json({ empresas: [] });
+  const { rows } = await pool.query(`SELECT e.id, e.slug, e.nome, e.subtitulo, e.ativa, (e.logo_dados IS NOT NULL) AS tem_logo,
+    (SELECT COUNT(*)::int FROM concursos c WHERE c.empresa_id=e.id) AS concursos FROM empresas e ORDER BY e.id`);
+  res.json({ empresas: rows });
+});
+app.post('/admin/empresa', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const b = req.body || {};
+  const nome = String(b.nome || '').trim().slice(0, 120);
+  const sub = String(b.subtitulo || '').trim().slice(0, 160);
+  if (!nome) return res.status(400).json({ erro: 'Informe o nome da empresa.' });
+  let base = slugify(nome), slug = base, n = 2;
+  while (true) { const q = await pool.query('SELECT id FROM empresas WHERE slug=$1 AND id<>$2', [slug, b.id || 0]); if (!q.rows.length) break; slug = base + '-' + (n++); }
+  if (b.id) { await pool.query('UPDATE empresas SET nome=$1, subtitulo=$2, slug=$3, ativa=$4 WHERE id=$5', [nome, sub, slug, b.ativa !== false, b.id]); return res.json({ ok: true, id: b.id, slug }); }
+  const r = await pool.query('INSERT INTO empresas (slug,nome,subtitulo) VALUES ($1,$2,$3) RETURNING id', [slug, nome, sub]);
+  res.json({ ok: true, id: r.rows[0].id, slug });
+});
+app.post('/admin/empresa/:id/logo', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const buf = decodeB64((req.body || {}).dataBase64);
+  if (!buf) return res.status(400).json({ erro: 'Selecione uma imagem.' });
+  const mime = mimeDe(buf);
+  if (mime !== 'image/png' && mime !== 'image/jpeg') return res.status(400).json({ erro: 'Envie PNG ou JPG.' });
+  if (buf.length > 2 * 1024 * 1024) return res.status(400).json({ erro: 'Imagem muito grande (máx. 2 MB).' });
+  await pool.query('UPDATE empresas SET logo_mime=$1, logo_dados=$2 WHERE id=$3', [mime, buf, req.params.id]);
+  res.json({ ok: true });
+});
+app.get('/empresa/:id/logo', async (req, res) => {
+  if (!pool) return res.status(503).send('Indisponível.');
+  const { rows } = await pool.query('SELECT logo_mime, logo_dados FROM empresas WHERE id=$1 OR slug=$2', [parseInt(req.params.id) || 0, req.params.id]);
+  if (!rows.length || !rows[0].logo_dados) return res.redirect('/logo.png');
+  res.setHeader('Content-Type', rows[0].logo_mime || 'image/png');
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  res.send(rows[0].logo_dados);
+});
+app.delete('/admin/empresa/:id', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const q = await pool.query('SELECT COUNT(*)::int n FROM concursos WHERE empresa_id=$1', [req.params.id]);
+  if (q.rows[0].n) return res.status(400).json({ erro: 'Esta empresa tem ' + q.rows[0].n + ' concurso(s). Exclua ou mova os concursos antes.' });
+  const t = await pool.query('SELECT COUNT(*)::int n FROM empresas');
+  if (t.rows[0].n <= 1) return res.status(400).json({ erro: 'É preciso manter ao menos uma empresa.' });
+  await pool.query('DELETE FROM empresas WHERE id=$1', [req.params.id]);
+  res.json({ ok: true });
+});
+
 app.get('/admin/concursos.json', exigirSenha, async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
+  const emp = parseInt(req.query.empresa) || 0;
+  const filtro = emp ? 'WHERE c.empresa_id=$1' : '';
+  const params = emp ? [emp] : [];
   const { rows } = await pool.query(`
     SELECT c.*, 
       (SELECT COUNT(*)::int FROM candidatos k WHERE k.concurso_id=c.id) AS inscritos,
       (SELECT COUNT(*)::int FROM candidatos k WHERE k.concurso_id=c.id AND k.status='pago') AS pagos
-    FROM concursos c ORDER BY c.criado_em DESC`);
+    FROM concursos c ${filtro} ORDER BY c.criado_em DESC`, params);
   res.json({ concursos: rows.map((r) => ({ ...parseConcurso(r), inscritos: r.inscritos, pagos: r.pagos,
     pagamento_gateway: r.pagamento_gateway || 'asaas', bb_client_id: r.bb_client_id || '', bb_app_key: r.bb_app_key || '',
     bb_convenio: r.bb_convenio || '', bb_carteira: r.bb_carteira || '', bb_variacao: r.bb_variacao || '',
@@ -843,6 +903,7 @@ app.post('/admin/concurso', exigirSenha, async (req, res) => {
       dias_vencimento: Math.max(1, parseInt(b.dias_vencimento) || 5),
       aberto: bool(b.aberto), gratuito: bool(b.gratuito), pede_titulos: bool(b.pede_titulos), pede_laudo: bool(b.pede_laudo),
       laudo_inicio_dt: dtnull(b.laudo_inicio), laudo_fim_dt: dtnull(b.laudo_fim),
+      empresa_id: parseInt(b.empresa_id) || null,
       data_inicio: dnull(b.data_inicio), data_fim: dnull(b.data_fim), data_encerramento: dnull(b.data_encerramento),
       titulos_inicio_dt: dtnull(b.titulos_inicio), titulos_fim_dt: dtnull(b.titulos_fim),
       cargos,
@@ -854,12 +915,12 @@ app.post('/admin/concurso', exigirSenha, async (req, res) => {
       if (!q.rows.length) break; slug = base + '-' + (n++);
     }
     if (b.id) {
-      await pool.query(`UPDATE concursos SET slug=$1,titulo=$2,orgao=$3,periodo=$4,taxa=$5,prova=$6,vagas=$7,pdf_url=$8,taxa_valor=$9,dias_vencimento=$10,cargos=$11,aberto=$12,gratuito=$13,pede_titulos=$14,tipos_titulos=$15,data_inicio=$16,data_fim=$17,data_encerramento=$18,titulos_inicio_dt=$19,titulos_fim_dt=$20,pede_laudo=$21,laudo_inicio_dt=$22,laudo_fim_dt=$23 WHERE id=$24`,
-        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), dados.data_inicio, dados.data_fim, dados.data_encerramento, dados.titulos_inicio_dt, dados.titulos_fim_dt, dados.pede_laudo, dados.laudo_inicio_dt, dados.laudo_fim_dt, b.id]);
+      await pool.query(`UPDATE concursos SET slug=$1,titulo=$2,orgao=$3,periodo=$4,taxa=$5,prova=$6,vagas=$7,pdf_url=$8,taxa_valor=$9,dias_vencimento=$10,cargos=$11,aberto=$12,gratuito=$13,pede_titulos=$14,tipos_titulos=$15,data_inicio=$16,data_fim=$17,data_encerramento=$18,titulos_inicio_dt=$19,titulos_fim_dt=$20,pede_laudo=$21,laudo_inicio_dt=$22,laudo_fim_dt=$23,empresa_id=COALESCE($24,empresa_id) WHERE id=$25`,
+        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), dados.data_inicio, dados.data_fim, dados.data_encerramento, dados.titulos_inicio_dt, dados.titulos_fim_dt, dados.pede_laudo, dados.laudo_inicio_dt, dados.laudo_fim_dt, dados.empresa_id, b.id]);
       return res.json({ ok: true, id: b.id, slug });
     } else {
-      const ins = await pool.query(`INSERT INTO concursos (slug,titulo,orgao,periodo,taxa,prova,vagas,pdf_url,taxa_valor,dias_vencimento,cargos,aberto,gratuito,pede_titulos,tipos_titulos,data_inicio,data_fim,data_encerramento,titulos_inicio_dt,titulos_fim_dt,pede_laudo,laudo_inicio_dt,laudo_fim_dt) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23) RETURNING id`,
-        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), dados.data_inicio, dados.data_fim, dados.data_encerramento, dados.titulos_inicio_dt, dados.titulos_fim_dt, dados.pede_laudo, dados.laudo_inicio_dt, dados.laudo_fim_dt]);
+      const ins = await pool.query(`INSERT INTO concursos (slug,titulo,orgao,periodo,taxa,prova,vagas,pdf_url,taxa_valor,dias_vencimento,cargos,aberto,gratuito,pede_titulos,tipos_titulos,data_inicio,data_fim,data_encerramento,titulos_inicio_dt,titulos_fim_dt,pede_laudo,laudo_inicio_dt,laudo_fim_dt,empresa_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,COALESCE($24,(SELECT id FROM empresas ORDER BY id LIMIT 1))) RETURNING id`,
+        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), dados.data_inicio, dados.data_fim, dados.data_encerramento, dados.titulos_inicio_dt, dados.titulos_fim_dt, dados.pede_laudo, dados.laudo_inicio_dt, dados.laudo_fim_dt, dados.empresa_id]);
       return res.json({ ok: true, id: ins.rows[0].id, slug });
     }
   } catch (e) { console.error('concurso:', e.message); res.status(500).json({ erro: 'Não foi possível salvar.' }); }

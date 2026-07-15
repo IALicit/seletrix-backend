@@ -69,11 +69,15 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
 </style></head><body>
 <div class="faixa"></div>
 <header>
-  <div class="brand"><img src="/logo.png" alt="Seletrix" class="logo"><div><div class="hnome">Seletrix</div><div class="hsub">Painel de Gestão</div></div></div>
-  <a class="link-topo" href="/" target="_blank">Ver site público ↗</a>
+  <div class="brand"><img src="/logo.png" alt="" class="logo" id="hdr_logo"><div><div class="hnome" id="hdr_nome">Seletrix</div><div class="hsub">Painel de Gestão</div></div></div>
+  <div style="display:flex;align-items:center;gap:12px">
+    <select id="empresa_sel" onchange="trocarEmpresa()" style="width:auto;min-width:190px;padding:8px 10px"></select>
+    <a class="link-topo" href="/" target="_blank">Ver site público ↗</a>
+  </div>
 </header>
 <div class="tabs">
   <div class="tab on" data-t="concursos">Concursos</div>
+  <div class="tab" data-t="empresas">Empresas</div>
   <div class="tab" data-t="inscritos">Inscritos</div>
   <div class="tab" data-t="relatorios">Relatórios</div>
   <div class="tab" data-t="locacao">Locação</div>
@@ -437,6 +441,23 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       <div id="rec_lista" style="margin-top:12px"></div>
     </div>
   </section>
+
+  <section id="empresas" style="display:none">
+    <div class="card">
+      <h2 style="font-size:1.15rem;color:var(--navy);margin-bottom:10px">Empresas</h2>
+      <p class="hint" style="margin-bottom:12px">Cada empresa tem seus próprios concursos e logo. Use o seletor no topo do painel para trocar de empresa.</p>
+      <input type="hidden" id="em_id">
+      <div class="grid2">
+        <div><label>Nome da empresa</label><input id="em_nome" placeholder="Ex.: Recrutamento Brasil"></div>
+        <div><label>Subtítulo (aparece no site)</label><input id="em_subtitulo" placeholder="Ex.: Recrutamento e Seleção"></div>
+      </div>
+      <label style="margin-top:12px">Logo (PNG ou JPG · até 2 MB)</label>
+      <div id="em_logo_atual" class="hint" style="margin-bottom:8px"></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><input type="file" id="em_logo_file" accept="image/png,image/jpeg" style="border:none;padding:0"><button class="sec" type="button" onclick="enviarLogoEmpresa()">Enviar logo</button></div>
+      <div style="margin-top:16px;display:flex;gap:10px"><button onclick="salvarEmpresa()">Salvar empresa</button><button class="sec" onclick="novaEmpresa()">Limpar / Nova</button></div>
+    </div>
+    <div class="card"><div id="em_lista"></div></div>
+  </section>
 </div>
 <div id="modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
   <div style="background:#fff;border-radius:12px;max-width:520px;width:92%;padding:20px;max-height:80vh;overflow:auto">
@@ -554,7 +575,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   let CONCURSOS = [], cargosEdit = [], tiposEdit = [], INSCRITOS = [];
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
     document.querySelectorAll('.tab').forEach(x => x.classList.remove('on')); t.classList.add('on');
-    ['concursos','inscritos','relatorios','locacao','alocacao','questoes','prova_online','recursos'].forEach(s => $(s).style.display = s === t.dataset.t ? 'block' : 'none');
+    ['concursos','inscritos','relatorios','locacao','alocacao','questoes','prova_online','recursos','empresas'].forEach(s => $(s).style.display = s === t.dataset.t ? 'block' : 'none');
     if (t.dataset.t === 'inscritos') carregarInscritos();
     if (t.dataset.t === 'relatorios') popularRelConcursos();
     if (t.dataset.t === 'locacao') popularLocConcursos();
@@ -562,6 +583,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     if (t.dataset.t === 'questoes') { if(!QALTS.length) novaQuestao(); popularProvaConcursos(); carregarQuestoes(); }
     if (t.dataset.t === 'prova_online') { popularProvaOnline(); }
     if (t.dataset.t === 'recursos') { popularRecursos(); }
+    if (t.dataset.t === 'empresas') { carregarEmpresas(); }
   });
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
   function combinaDT(data, hora, horaPadrao){ if(!data) return ''; return data+'T'+((hora||horaPadrao)).slice(0,5); }
@@ -574,7 +596,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   }
 
   async function carregarConcursos(){
-    const { concursos } = await (await fetch('/admin/concursos.json')).json();
+    const { concursos } = await (await fetch('/admin/concursos.json' + (EMPRESA_ID?('?empresa='+EMPRESA_ID):''))).json();
     CONCURSOS = concursos;
     $('lista_concursos').innerHTML = concursos.map(c => \`
       <div class="conc">
@@ -632,7 +654,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       prova:$('c_prova').value, vagas:$('c_vagas').value, taxa:$('c_taxa').value, taxa_valor:$('c_valor').value,
       dias_vencimento:$('c_dias').value, pdf_url:$('c_pdf').value, aberto:$('c_aberto').checked,
       data_inicio:$('c_data_inicio').value, data_fim:$('c_data_fim').value, data_encerramento:$('c_data_encerramento').value,
-      gratuito:$('c_gratuito').checked, pede_titulos:$('c_pede_titulos').checked, pede_laudo:$('c_pede_laudo').checked, laudo_inicio:$('c_laudo_inicio').value, laudo_fim:$('c_laudo_fim').value, tipos_titulos:tiposEdit, cargos:cargosEdit,
+      gratuito:$('c_gratuito').checked, pede_titulos:$('c_pede_titulos').checked, pede_laudo:$('c_pede_laudo').checked, laudo_inicio:$('c_laudo_inicio').value, laudo_fim:$('c_laudo_fim').value, tipos_titulos:tiposEdit, cargos:cargosEdit, empresa_id:EMPRESA_ID,
       titulos_inicio: combinaDT($('c_tit_ini_data').value, $('c_tit_ini_hora').value, '00:00'),
       titulos_fim: combinaDT($('c_tit_fim_data').value, $('c_tit_fim_hora').value, '23:59') };
     const r=await fetch('/admin/concurso',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
@@ -1299,5 +1321,67 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     alert('Configuração de pagamento salva!'); $('modal_pagamento').style.display='none'; carregarConcursos();
   }
 
-  carregarConcursos();
+  var EMPRESA_ID = 0, EMPRESAS = [];
+  function trocarEmpresa(){
+    EMPRESA_ID = parseInt($('empresa_sel').value) || 0;
+    try{ localStorage.setItem('seletrix_empresa', EMPRESA_ID); }catch(e){}
+    var e = EMPRESAS.find(function(x){return x.id===EMPRESA_ID;});
+    if(e){ $('hdr_nome').textContent = e.nome; $('hdr_logo').src = e.tem_logo ? ('/empresa/'+e.id+'/logo?t='+Date.now()) : '/logo.png'; }
+    carregarConcursos();
+  }
+  async function initEmpresas(){
+    var d = await (await fetch('/admin/empresas.json')).json();
+    EMPRESAS = d.empresas;
+    var salvo = 0; try{ salvo = parseInt(localStorage.getItem('seletrix_empresa')) || 0; }catch(e){}
+    if(!EMPRESAS.some(function(x){return x.id===salvo;})) salvo = EMPRESAS.length ? EMPRESAS[0].id : 0;
+    $('empresa_sel').innerHTML = EMPRESAS.map(function(e){return '<option value="'+e.id+'">'+esc(e.nome)+'</option>';}).join('');
+    $('empresa_sel').value = salvo; EMPRESA_ID = salvo;
+    var e = EMPRESAS.find(function(x){return x.id===EMPRESA_ID;});
+    if(e){ $('hdr_nome').textContent = e.nome; $('hdr_logo').src = e.tem_logo ? ('/empresa/'+e.id+'/logo?t='+Date.now()) : '/logo.png'; }
+    carregarConcursos();
+  }
+  function novaEmpresa(){ $('em_id').value=''; $('em_nome').value=''; $('em_subtitulo').value=''; if($('em_logo_file'))$('em_logo_file').value=''; $('em_logo_atual').innerHTML='<i>Salve a empresa primeiro para enviar a logo.</i>'; }
+  async function carregarEmpresas(){
+    var d = await (await fetch('/admin/empresas.json')).json();
+    EMPRESAS = d.empresas;
+    $('em_lista').innerHTML = d.empresas.map(function(e){
+      var logo = e.tem_logo ? ('<img src="/empresa/'+e.id+'/logo?t='+Date.now()+'" style="height:34px;vertical-align:middle;margin-right:8px">') : '';
+      return '<div class="conc"><div>'+logo+'<b>'+esc(e.nome)+'</b><div class="meta">'+esc(e.subtitulo||'')+' &middot; '+e.concursos+' concurso(s) &middot; site: <a href="/e/'+esc(e.slug)+'" target="_blank">/e/'+esc(e.slug)+'</a></div></div>'
+        +'<div class="row-actions"><button class="mini" onclick="editarEmpresa('+e.id+')">Editar</button><button class="del" onclick="delEmpresa('+e.id+')">Excluir</button></div></div>';
+    }).join('') || '<p class="hint">Nenhuma empresa.</p>';
+  }
+  function editarEmpresa(id){
+    var e = EMPRESAS.find(function(x){return x.id===id;}); if(!e)return;
+    $('em_id').value=e.id; $('em_nome').value=e.nome||''; $('em_subtitulo').value=e.subtitulo||'';
+    $('em_logo_atual').innerHTML = e.tem_logo ? ('Logo atual: <img src="/empresa/'+e.id+'/logo?t='+Date.now()+'" style="height:40px;vertical-align:middle">') : '<i>Nenhuma logo enviada.</i>';
+    if($('em_logo_file'))$('em_logo_file').value='';
+    window.scrollTo({top:0,behavior:'smooth'});
+  }
+  async function salvarEmpresa(){
+    if(!$('em_nome').value.trim()){alert('Informe o nome da empresa.');return;}
+    var body={id:$('em_id').value||undefined, nome:$('em_nome').value, subtitulo:$('em_subtitulo').value};
+    var r=await fetch('/admin/empresa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    $('em_id').value=j.id;
+    if($('em_logo_file') && $('em_logo_file').files[0]) await enviarLogoEmpresa();
+    alert('Empresa salva!'); carregarEmpresas(); initEmpresas();
+  }
+  async function enviarLogoEmpresa(){
+    var id=$('em_id').value; if(!id){alert('Salve a empresa primeiro.');return;}
+    var f=$('em_logo_file').files[0]; if(!f){alert('Escolha uma imagem.');return;}
+    if(f.size>2*1024*1024){alert('Máximo 2 MB.');return;}
+    var b64=await toB64(f);
+    var r=await fetch('/admin/empresa/'+id+'/logo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dataBase64:b64})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    $('em_logo_atual').innerHTML='Logo enviada ✓ <img src="/empresa/'+id+'/logo?t='+Date.now()+'" style="height:40px;vertical-align:middle">';
+    carregarEmpresas(); initEmpresas();
+  }
+  async function delEmpresa(id){
+    if(!confirm('Excluir esta empresa?'))return;
+    var r=await fetch('/admin/empresa/'+id,{method:'DELETE'}); var j=await r.json();
+    if(!r.ok){alert(j.erro||'Erro');return;}
+    carregarEmpresas(); initEmpresas();
+  }
+
+  initEmpresas();
 </script></body></html>`;
