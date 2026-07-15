@@ -137,7 +137,14 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       </div>
       <div style="margin-top:18px">
         <div class="checkline"><input type="checkbox" id="c_pede_titulos" onchange="toggleTitulos()"><label for="c_pede_titulos" style="margin:0">Pedir envio de títulos (anexos) neste concurso</label></div>
-        <div class="checkline"><input type="checkbox" id="c_pede_laudo"><label for="c_pede_laudo" style="margin:0">Permitir envio de laudo / condição especial (PcD)</label></div>
+        <div class="checkline"><input type="checkbox" id="c_pede_laudo" onchange="toggleLaudo()"><label for="c_pede_laudo" style="margin:0">Permitir envio de laudo / condição especial (PcD)</label></div>
+        <div id="bloco_laudo" style="display:none;margin:6px 0 4px;padding:10px;border:1px solid var(--linha);border-radius:8px">
+          <p class="hint" style="margin-bottom:8px">Prazo para envio do laudo (opcional — em branco = liberado enquanto ativado).</p>
+          <div class="grid2">
+            <div><label>Abertura</label><input id="c_laudo_inicio" type="datetime-local"></div>
+            <div><label>Fechamento</label><input id="c_laudo_fim" type="datetime-local"></div>
+          </div>
+        </div>
         <div id="bloco_titulos" style="display:none;margin-top:10px">
           <label>Tipos de título aceitos</label>
           <div id="lista_tipos"></div>
@@ -585,7 +592,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('form_titulo').textContent='Novo concurso'; $('c_id').value='';
     ['c_titulo','c_orgao','c_periodo','c_prova','c_vagas','c_taxa','c_valor','c_dias','c_pdf','c_data_inicio','c_data_fim','c_data_encerramento'].forEach(id=>$(id).value='');
     $('c_dias').value='5'; $('c_aberto').checked=true; cargosEdit=[]; renderCargos();
-    $('c_gratuito').checked=false; $('c_pede_titulos').checked=false; $('c_pede_laudo').checked=false; tiposEdit=[]; renderTipos(); toggleTitulos();
+    $('c_gratuito').checked=false; $('c_pede_titulos').checked=false; $('c_pede_laudo').checked=false; $('c_laudo_inicio').value=''; $('c_laudo_fim').value=''; toggleLaudo(); tiposEdit=[]; renderTipos(); toggleTitulos();
     $('c_tit_ini_data').value=''; $('c_tit_ini_hora').value=''; $('c_tit_fim_data').value=''; $('c_tit_fim_hora').value='';
     if($('c_brasao_file')) $('c_brasao_file').value='';
     $('brasao_atual').innerHTML='<i>Salve o concurso primeiro para enviar o brasão.</i>';
@@ -601,7 +608,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('c_valor').value=c.taxa_valor||0; $('c_dias').value=c.dias_vencimento||5; $('c_pdf').value=c.pdf_url||'';
     $('c_data_inicio').value=c.data_inicio||''; $('c_data_fim').value=c.data_fim||''; $('c_data_encerramento').value=c.data_encerramento||'';
     $('c_aberto').checked=!!c.aberto; cargosEdit=(c.cargos||[]).slice(); renderCargos();
-    $('c_gratuito').checked=!!c.gratuito; $('c_pede_titulos').checked=!!c.pede_titulos; $('c_pede_laudo').checked=!!c.pede_laudo; tiposEdit=(c.tipos_titulos||[]).slice(); renderTipos(); toggleTitulos();
+    $('c_gratuito').checked=!!c.gratuito; $('c_pede_titulos').checked=!!c.pede_titulos; $('c_pede_laudo').checked=!!c.pede_laudo; $('c_laudo_inicio').value=c.laudo_inicio||''; $('c_laudo_fim').value=c.laudo_fim||''; toggleLaudo(); tiposEdit=(c.tipos_titulos||[]).slice(); renderTipos(); toggleTitulos();
     var _ti=(c.titulos_inicio||'').split('T'), _tf=(c.titulos_fim||'').split('T');
     $('c_tit_ini_data').value=_ti[0]||''; $('c_tit_ini_hora').value=(_ti[1]||'').slice(0,5);
     $('c_tit_fim_data').value=_tf[0]||''; $('c_tit_fim_hora').value=(_tf[1]||'').slice(0,5);
@@ -615,6 +622,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   function renderCargos(){ $('lista_cargos').innerHTML = cargosEdit.map((c,i)=>'<div class="cargo-item"><span>'+esc(c)+'</span><button class="del" onclick="removeCargo('+i+')">Remover</button></div>').join('')||'<p class="hint">Nenhum cargo.</p>'; }
   function addCargo(){ const v=$('novo_cargo').value.trim(); if(!v)return; cargosEdit.push(v); $('novo_cargo').value=''; renderCargos(); }
   function removeCargo(i){ cargosEdit.splice(i,1); renderCargos(); }
+  function toggleLaudo(){ $('bloco_laudo').style.display = $('c_pede_laudo').checked ? 'block' : 'none'; }
   function toggleTitulos(){ $('bloco_titulos').style.display = $('c_pede_titulos').checked ? 'block' : 'none'; }
   function renderTipos(){ $('lista_tipos').innerHTML = tiposEdit.map((t,i)=>'<div class="cargo-item"><span>'+esc(t)+'</span><button class="del" onclick="removeTipo('+i+')">Remover</button></div>').join('')||'<p class="hint">Nenhum tipo cadastrado.</p>'; }
   function addTipo(){ const v=$('novo_tipo').value.trim(); if(!v)return; tiposEdit.push(v); $('novo_tipo').value=''; renderTipos(); }
@@ -624,7 +632,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       prova:$('c_prova').value, vagas:$('c_vagas').value, taxa:$('c_taxa').value, taxa_valor:$('c_valor').value,
       dias_vencimento:$('c_dias').value, pdf_url:$('c_pdf').value, aberto:$('c_aberto').checked,
       data_inicio:$('c_data_inicio').value, data_fim:$('c_data_fim').value, data_encerramento:$('c_data_encerramento').value,
-      gratuito:$('c_gratuito').checked, pede_titulos:$('c_pede_titulos').checked, pede_laudo:$('c_pede_laudo').checked, tipos_titulos:tiposEdit, cargos:cargosEdit,
+      gratuito:$('c_gratuito').checked, pede_titulos:$('c_pede_titulos').checked, pede_laudo:$('c_pede_laudo').checked, laudo_inicio:$('c_laudo_inicio').value, laudo_fim:$('c_laudo_fim').value, tipos_titulos:tiposEdit, cargos:cargosEdit,
       titulos_inicio: combinaDT($('c_tit_ini_data').value, $('c_tit_ini_hora').value, '00:00'),
       titulos_fim: combinaDT($('c_tit_fim_data').value, $('c_tit_fim_hora').value, '23:59') };
     const r=await fetch('/admin/concurso',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
