@@ -68,8 +68,8 @@
 </head>
 <body>
 <header class="topo">
-  <div class="marca">Seletrix</div>
-  <div class="sub"><a href="/">← Voltar aos concursos</a></div>
+  <div class="marca" id="topo_marca">Seletrix</div>
+  <div class="sub"><a href="/" id="topo_voltar">← Voltar aos concursos</a></div>
 </header>
 <div class="container">
   <!-- Login -->
@@ -116,8 +116,8 @@
       if(d.empresa){
         var e=d.empresa;
         document.title = 'Área do Candidato — ' + e.nome;
-        var h=document.querySelector('h1'); if(h) h.textContent = e.nome;
-        var im=document.querySelector('img'); if(im && e.tem_logo){ im.src='/empresa/'+e.id+'/logo'; im.alt=e.nome; }
+        if($('topo_marca')) $('topo_marca').textContent = e.nome;
+        if($('topo_voltar')) $('topo_voltar').href = '/e/' + e.slug;
       }
     }catch(err){}
   })();
