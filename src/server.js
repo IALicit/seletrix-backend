@@ -369,11 +369,25 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'multiempresa-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'multiempresa-v2' }));
 
+app.get('/api/empresa/:slug', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const { rows } = await pool.query('SELECT id,slug,nome,subtitulo,(logo_dados IS NOT NULL) AS tem_logo FROM empresas WHERE slug=$1 AND ativa=TRUE', [req.params.slug]);
+  if (!rows.length) return res.status(404).json({ erro: 'Empresa não encontrada.' });
+  res.json({ empresa: rows[0] });
+});
 app.get('/api/concursos', async (req, res) => {
   if (!pool) return res.json({ concursos: [] });
-  const { rows } = await pool.query('SELECT * FROM concursos WHERE aberto=TRUE ORDER BY criado_em DESC');
+  const slug = String(req.query.e || '').trim();
+  let rows;
+  if (slug) {
+    const r = await pool.query('SELECT c.* FROM concursos c JOIN empresas e ON e.id=c.empresa_id WHERE c.aberto=TRUE AND e.slug=$1 ORDER BY c.criado_em DESC', [slug]);
+    rows = r.rows;
+  } else {
+    const r = await pool.query('SELECT * FROM concursos WHERE aberto=TRUE ORDER BY criado_em DESC');
+    rows = r.rows;
+  }
   res.json({ concursos: rows.map(parseConcurso).map((c) => ({ slug: c.slug, titulo: c.titulo, orgao: c.orgao, periodo: c.periodo, taxa: c.taxa, vagas: c.vagas, gratuito: c.gratuito, prova: c.prova, situacao: c.situacao, pode_inscrever: c.pode_inscrever, data_inicio: c.data_inicio, brasao_url: c.brasao_url })) });
 });
 
@@ -521,13 +535,17 @@ app.post('/api/candidato/login', async (req, res) => {
   const lg = await pool.query('SELECT senha_hash, nome FROM candidato_login WHERE cpf=$1', [cpf]);
   if (!lg.rows.length || !verificaSenha(senha, lg.rows[0].senha_hash))
     return res.status(401).json({ erro: 'CPF ou senha inválidos, ou você ainda não fez nenhuma inscrição.' });
+  const empSlug = String((req.body || {}).empresa || '').trim();
+  const paramsL = [cpf];
+  let filtroEmp = '';
+  if (empSlug) { paramsL.push(empSlug); filtroEmp = ' AND e.slug=$' + paramsL.length; }
   const { rows } = await pool.query(
     `SELECT k.id, k.protocolo, k.cargo, k.status, k.invoice_url, k.criado_em, k.concurso_id,
             k.condicao_especial, (k.laudo_dados IS NOT NULL) AS tem_laudo, k.laudo_nome,
             c.titulo AS concurso, c.slug, c.gratuito, c.prova, c.pede_laudo, c.laudo_inicio_dt, c.laudo_fim_dt,
             c.pede_titulos, c.tipos_titulos, c.titulos_inicio_dt, c.titulos_fim_dt
-     FROM candidatos k LEFT JOIN concursos c ON c.id=k.concurso_id
-     WHERE k.cpf=$1 ORDER BY k.id DESC`, [cpf]);
+     FROM candidatos k LEFT JOIN concursos c ON c.id=k.concurso_id LEFT JOIN empresas e ON e.id=c.empresa_id
+     WHERE k.cpf=$1${filtroEmp} ORDER BY k.id DESC`, paramsL);
   const ids = rows.map((r) => r.id);
   const concIds = Array.from(new Set(rows.map((r) => r.concurso_id).filter(Boolean)));
   const porCand = {};
@@ -2247,6 +2265,8 @@ app.get('/boleto/:protocolo', async (req, res) => {
 </body></html>`;
   res.send(html);
 });
+
+app.get('/e/:slug', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'index.html')));
 
 app.get('/admin', exigirSenha, (req, res) => res.send(PAINEL_HTML));
 
