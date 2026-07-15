@@ -174,12 +174,17 @@
   function laudoBlock(r){
     if(!r.pede_laudo) return '';
     var atual = r.tem_laudo ? ('<div class="rec-resp">Laudo enviado ✓ <a href="/api/candidato/laudo/'+r.id+'?cpf='+encodeURIComponent(SESSAO.cpf)+'&senha='+encodeURIComponent(SESSAO.senha)+'" target="_blank">📎 '+esc(r.laudo_nome||'ver laudo')+'</a></div>') : '';
-    return '<div class="titulos-box"><h4>Condição especial / Laudo (PcD)</h4>'
-      +'<p class="tit-hint">Se você é PcD ou precisa de atendimento especial, descreva a condição e anexe o laudo (PDF, JPG ou PNG · até 5 MB).</p>'
-      +'<textarea id="cond_'+r.id+'" rows="2" placeholder="Descreva sua condição especial">'+esc(r.condicao_especial||'')+'</textarea>'
-      +'<input type="file" id="laudo_'+r.id+'" accept=".pdf,.jpg,.jpeg,.png" style="display:block;margin:8px 0">'
-      +atual
-      +'<button class="tit-btn" onclick="enviarLaudo('+r.id+')">Salvar condição / laudo</button></div>';
+    var per = (r.laudo_inicio||r.laudo_fim) ? ('<p class="tit-hint">Prazo: '+(r.laudo_inicio?fmt(r.laudo_inicio):'—')+' até '+(r.laudo_fim?fmt(r.laudo_fim):'—')+'</p>') : '';
+    var corpo;
+    if(r.pode_laudo){
+      corpo = '<p class="tit-hint">Se você é PcD ou precisa de atendimento especial, descreva a condição e anexe o laudo (PDF, JPG ou PNG · até 5 MB).</p>'
+        +'<textarea id="cond_'+r.id+'" rows="2" placeholder="Descreva sua condição especial">'+esc(r.condicao_especial||'')+'</textarea>'
+        +'<input type="file" id="laudo_'+r.id+'" accept=".pdf,.jpg,.jpeg,.png" style="display:block;margin:8px 0">'
+        +'<button class="tit-btn" onclick="enviarLaudo('+r.id+')">Salvar condição / laudo</button>';
+    } else {
+      corpo = '<p class="tit-hint">'+(r.laudo_status==='antes'?'⏳ O prazo para envio do laudo ainda não abriu.':'🔒 O prazo para envio do laudo está encerrado.')+'</p>';
+    }
+    return '<div class="titulos-box"><h4>Condição especial / Laudo (PcD)</h4>'+per+atual+corpo+'</div>';
   }
   async function enviarLaudo(id){
     var cond=$('cond_'+id)?$('cond_'+id).value.trim():'';
