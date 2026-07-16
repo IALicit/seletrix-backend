@@ -39,9 +39,9 @@
 
   /* herói institucional */
   .hero{position:relative;background:linear-gradient(135deg,var(--navy),var(--navy2));color:#fff;overflow:hidden}
-  .hero::after{content:"";position:absolute;inset:0;opacity:.5;
+  .hero::after{content:"";position:absolute;inset:0;opacity:.5;pointer-events:none;z-index:0;
     background-image:radial-gradient(circle at 1px 1px, rgba(255,255,255,.10) 1px, transparent 0);background-size:22px 22px}
-  .hero-in{position:relative;max-width:1080px;margin:0 auto;padding:56px 20px 60px;text-align:center}
+  .hero-in{position:relative;z-index:1;max-width:1080px;margin:0 auto;padding:56px 20px 60px;text-align:center}
   .hero .pill{display:inline-flex;align-items:center;gap:8px;background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.18);
     padding:7px 16px;border-radius:999px;font-size:.82rem;font-weight:600;letter-spacing:.02em;margin-bottom:22px}
   .hero .pill .dot{width:8px;height:8px;border-radius:50%;background:var(--ouro)}
