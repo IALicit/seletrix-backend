@@ -69,8 +69,8 @@
 </head>
 <body>
 <header class="topo">
-  <div class="marca">Seletrix</div>
-  <div class="sub"><a href="/">← Voltar aos concursos</a> &nbsp;·&nbsp; <a href="/candidato.html">Área do Candidato</a></div>
+  <div class="marca" id="topo_marca">Seletrix</div>
+  <div class="sub"><a href="/" id="topo_voltar">← Voltar aos concursos</a> &nbsp;·&nbsp; <a href="/candidato.html" id="topo_area">Área do Candidato</a></div>
 </header>
 <div class="container">
   <aside class="edital">
@@ -148,6 +148,13 @@
       const r = await fetch('/api/concurso/'+encodeURIComponent(slug));
       if(!r.ok) throw new Error('nao encontrado');
       const c = await r.json();
+      if(c.empresa){
+        var e=c.empresa;
+        document.title = 'Inscrição — ' + e.nome;
+        var mk=document.getElementById('topo_marca'); if(mk) mk.textContent = e.nome;
+        var vt=document.getElementById('topo_voltar'); if(vt) vt.href = '/e/' + e.slug;
+        var ar=document.getElementById('topo_area'); if(ar) ar.href = '/candidato.html?e=' + encodeURIComponent(e.slug);
+      }
       document.getElementById('ed-titulo').textContent = c.titulo || 'Processo Seletivo';
       document.getElementById('ed-orgao').textContent = c.orgao || '';
       document.getElementById('ed-periodo').textContent = c.periodo || '—';
