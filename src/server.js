@@ -379,7 +379,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'professores-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'concurso-marca-v1' }));
 
 app.get('/api/empresa/:slug', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
@@ -404,7 +404,12 @@ app.get('/api/concursos', async (req, res) => {
 app.get('/api/concurso/:chave', async (req, res) => {
   const c = await lerConcursoPorChave(req.params.chave);
   if (!c) return res.status(404).json({ erro: 'Concurso não encontrado.' });
-  res.json(c);
+  let empresa = null;
+  if (pool && c.empresa_id) {
+    const e = await pool.query('SELECT id, slug, nome, subtitulo, (logo_dados IS NOT NULL) AS tem_logo FROM empresas WHERE id=$1', [c.empresa_id]);
+    empresa = e.rows[0] || null;
+  }
+  res.json({ ...c, empresa });
 });
 
 // Serve o PDF do edital (guardado no banco)
