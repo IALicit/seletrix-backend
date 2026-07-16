@@ -83,6 +83,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   <div class="tab" data-t="locacao">Locação</div>
   <div class="tab" data-t="alocacao">Alocação</div>
   <div class="tab" data-t="questoes">Questões</div>
+  <div class="tab" data-t="professores">Professores</div>
   <div class="tab" data-t="prova_online">Prova Online</div>
   <div class="tab" data-t="recursos">Recursos</div>
 </div>
@@ -459,6 +460,23 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     </div>
     <div class="card"><div id="em_lista"></div></div>
   </section>
+
+  <section id="professores" style="display:none">
+    <div class="card">
+      <h2 style="font-size:1.15rem;color:var(--navy);margin-bottom:6px">Professores</h2>
+      <p class="hint" style="margin-bottom:12px">Cadastre os professores da empresa selecionada. Eles acessam em <b id="pf_link">/professor.html</b> com e-mail e senha, e cadastram questões que aparecem no seu Banco de Questões.</p>
+      <input type="hidden" id="pf_id">
+      <div class="grid2">
+        <div><label>Nome</label><input id="pf_nome" placeholder="Ex.: Maria Silva"></div>
+        <div><label>E-mail (login)</label><input id="pf_email" type="email" placeholder="maria@email.com"></div>
+        <div><label>Disciplina</label><input id="pf_disciplina" placeholder="Ex.: Português"></div>
+        <div><label>Senha</label><input id="pf_senha" type="password" placeholder="mín. 6 caracteres"></div>
+      </div>
+      <div class="checkline" style="margin-top:10px"><input type="checkbox" id="pf_ativo" checked><label for="pf_ativo" style="margin:0">Ativo (pode acessar)</label></div>
+      <div style="margin-top:16px;display:flex;gap:10px"><button onclick="salvarProfessor()">Salvar professor</button><button class="sec" onclick="novoProfessor()">Limpar / Novo</button></div>
+    </div>
+    <div class="card"><div id="pf_lista"></div></div>
+  </section>
 </div>
 <div id="modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
   <div style="background:#fff;border-radius:12px;max-width:520px;width:92%;padding:20px;max-height:80vh;overflow:auto">
@@ -576,7 +594,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   let CONCURSOS = [], cargosEdit = [], tiposEdit = [], INSCRITOS = [];
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
     document.querySelectorAll('.tab').forEach(x => x.classList.remove('on')); t.classList.add('on');
-    ['concursos','inscritos','relatorios','locacao','alocacao','questoes','prova_online','recursos','empresas'].forEach(s => $(s).style.display = s === t.dataset.t ? 'block' : 'none');
+    ['concursos','inscritos','relatorios','locacao','alocacao','questoes','prova_online','recursos','empresas','professores'].forEach(s => $(s).style.display = s === t.dataset.t ? 'block' : 'none');
     if (t.dataset.t === 'inscritos') carregarInscritos();
     if (t.dataset.t === 'relatorios') popularRelConcursos();
     if (t.dataset.t === 'locacao') popularLocConcursos();
@@ -585,6 +603,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     if (t.dataset.t === 'prova_online') { popularProvaOnline(); }
     if (t.dataset.t === 'recursos') { popularRecursos(); }
     if (t.dataset.t === 'empresas') { carregarEmpresas(); }
+    if (t.dataset.t === 'professores') { carregarProfessores(); }
   });
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
   function combinaDT(data, hora, horaPadrao){ if(!data) return ''; return data+'T'+((hora||horaPadrao)).slice(0,5); }
@@ -1005,7 +1024,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var alts=QALTS.map(function(a){return (a||'').trim();}).filter(function(a){return a!=='';});
     if(!$('q_enunciado').value.trim()){alert('Informe o enunciado.');return;}
     if(alts.length<2){alert('Informe pelo menos 2 alternativas.');return;}
-    var body={id:$('q_id').value||undefined, enunciado:$('q_enunciado').value, alternativas:QALTS, correta:QCORRETA, disciplina:$('q_disciplina').value, nivel:$('q_nivel').value, cargo:$('q_cargo').value};
+    var body={id:$('q_id').value||undefined, enunciado:$('q_enunciado').value, alternativas:QALTS, correta:QCORRETA, disciplina:$('q_disciplina').value, nivel:$('q_nivel').value, cargo:$('q_cargo').value, empresa_id:EMPRESA_ID};
     var r=await fetch('/admin/questao',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
     $('q_id').value=j.id; if(!QTEMIMG) $('q_img_atual').innerHTML='<i>Nenhuma imagem. Você já pode anexar.</i>';
@@ -1031,12 +1050,12 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   }
   async function removerImgQuestao(){ var id=$('q_id').value; if(!id)return; if(!confirm('Remover a imagem?'))return; var r=await fetch('/admin/questao/'+id+'/imagem/remover',{method:'POST'}); await r.json(); QTEMIMG=false; $('q_img_atual').innerHTML='<i>Nenhuma imagem anexada.</i>'; carregarQuestoes(); }
   async function carregarQuestoes(){
-    var p='disciplina='+encodeURIComponent($('qf_disciplina').value)+'&nivel='+encodeURIComponent($('qf_nivel').value)+'&cargo='+encodeURIComponent($('qf_cargo').value)+'&busca='+encodeURIComponent($('qf_busca').value);
+    var p='empresa='+EMPRESA_ID+'&disciplina='+encodeURIComponent($('qf_disciplina').value)+'&nivel='+encodeURIComponent($('qf_nivel').value)+'&cargo='+encodeURIComponent($('qf_cargo').value)+'&busca='+encodeURIComponent($('qf_busca').value);
     var d=await (await fetch('/admin/questoes.json?'+p)).json();
     QUESTOES=d.questoes; $('q_total').innerHTML='<b>'+d.questoes.length+'</b> questão(ões) no banco (com os filtros atuais).';
     $('q_lista').innerHTML = d.questoes.length ? d.questoes.map(function(q){
       var alts=(q.alternativas||[]).map(function(a,i){return '<div style="font-size:.85rem'+(i===q.correta?';color:#0f6b41;font-weight:700':'')+'">'+String.fromCharCode(65+i)+') '+esc(a)+(i===q.correta?' ✓':'')+'</div>';}).join('');
-      var tags=[q.disciplina,q.nivel,q.cargo].filter(Boolean).map(function(t){return '<span class="tag on">'+esc(t)+'</span>';}).join(' ');
+      var tags=[q.disciplina,q.nivel,q.cargo].filter(Boolean).map(function(t){return '<span class="tag on">'+esc(t)+'</span>';}).join(' ') + (q.autor?(' <span class="hint">por '+esc(q.autor)+'</span>'):'');
       return '<div class="card" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:10px"><div style="flex:1;display:flex;gap:10px"><input type="checkbox" class="qsel" value="'+q.id+'" onchange="contarSel()" style="width:auto;margin-top:3px"><div><div style="font-weight:600">'+esc(q.enunciado)+(q.tem_imagem?' 🖼️':'')+'</div><div style="margin:4px 0">'+tags+'</div>'+alts+'</div></div><div class="row-actions"><button class="mini" onclick="editarQuestao('+q.id+')">Editar</button><button class="del" onclick="delQuestao('+q.id+')">Excluir</button></div></div></div>';
     }).join('') : '<p class="hint">Nenhuma questão cadastrada ainda.</p>';
     contarSel();
@@ -1388,6 +1407,36 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var r=await fetch('/admin/empresa/'+id,{method:'DELETE'}); var j=await r.json();
     if(!r.ok){alert(j.erro||'Erro');return;}
     carregarEmpresas(); initEmpresas();
+  }
+
+  var PROFESSORES=[];
+  function novoProfessor(){ $('pf_id').value=''; $('pf_nome').value=''; $('pf_email').value=''; $('pf_disciplina').value=''; $('pf_senha').value=''; $('pf_senha').placeholder='mín. 6 caracteres'; $('pf_ativo').checked=true; }
+  async function carregarProfessores(){
+    if($('pf_link')) $('pf_link').textContent = location.origin + '/professor.html';
+    var d=await (await fetch('/admin/professores.json?empresa='+EMPRESA_ID)).json();
+    PROFESSORES=d.professores;
+    $('pf_lista').innerHTML = d.professores.length ? d.professores.map(function(p){
+      return '<div class="conc"><div><b>'+esc(p.nome)+'</b>'+(p.ativo?'':' <span class="tag">inativo</span>')+'<div class="meta">'+esc(p.email)+(p.disciplina?(' &middot; '+esc(p.disciplina)):'')+' &middot; '+p.questoes+' questão(ões)</div></div>'
+        +'<div class="row-actions"><button class="mini" onclick="editarProfessor('+p.id+')">Editar</button><button class="del" onclick="delProfessor('+p.id+')">Excluir</button></div></div>';
+    }).join('') : '<p class="hint">Nenhum professor cadastrado nesta empresa.</p>';
+  }
+  function editarProfessor(id){
+    var p=PROFESSORES.find(function(x){return x.id===id;}); if(!p)return;
+    $('pf_id').value=p.id; $('pf_nome').value=p.nome||''; $('pf_email').value=p.email||''; $('pf_disciplina').value=p.disciplina||'';
+    $('pf_senha').value=''; $('pf_senha').placeholder='deixe em branco p/ manter a senha atual'; $('pf_ativo').checked=!!p.ativo;
+    window.scrollTo({top:0,behavior:'smooth'});
+  }
+  async function salvarProfessor(){
+    var body={id:$('pf_id').value||undefined, nome:$('pf_nome').value, email:$('pf_email').value, disciplina:$('pf_disciplina').value, senha:$('pf_senha').value, ativo:$('pf_ativo').checked, empresa_id:EMPRESA_ID};
+    var r=await fetch('/admin/professor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    alert('Professor salvo!'); novoProfessor(); carregarProfessores();
+  }
+  async function delProfessor(id){
+    if(!confirm('Excluir este professor? As questões dele permanecem no banco.'))return;
+    var r=await fetch('/admin/professor/'+id,{method:'DELETE'}); var j=await r.json();
+    if(!r.ok){alert(j.erro||'Erro');return;}
+    carregarProfessores();
   }
 
   initEmpresas();

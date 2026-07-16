@@ -123,6 +123,16 @@ async function inicializarBanco() {
     const pri = await pool.query('SELECT id FROM empresas ORDER BY id LIMIT 1');
     if (pri.rows.length) await pool.query('UPDATE concursos SET empresa_id=$1 WHERE empresa_id IS NULL', [pri.rows[0].id]);
   }
+  // Professores (cadastram questões) — por empresa
+  await pool.query(`CREATE TABLE IF NOT EXISTS professores (id SERIAL PRIMARY KEY, empresa_id INT, nome TEXT, email TEXT UNIQUE,
+    senha_hash TEXT, disciplina TEXT, ativo BOOLEAN DEFAULT TRUE, criado_em TIMESTAMPTZ DEFAULT now());`);
+  for (const col of ['professor_id INT', 'empresa_id INT']) {
+    await pool.query(`ALTER TABLE questoes ADD COLUMN IF NOT EXISTS ${col}`);
+  }
+  {
+    const pri = await pool.query('SELECT id FROM empresas ORDER BY id LIMIT 1');
+    if (pri.rows.length) await pool.query('UPDATE questoes SET empresa_id=$1 WHERE empresa_id IS NULL', [pri.rows[0].id]);
+  }
   const { rows: qc } = await pool.query('SELECT COUNT(*)::int n FROM concursos');
   if (qc[0].n === 0) {
     let cfg = { titulo: 'Edital nº 01/2026', orgao: '', periodo: '', taxa: '', prova: '', vagas: '', pdf_url: '', taxa_valor: 0, dias_vencimento: 5, cargos: ['Especialista', 'Mestre'] };
@@ -369,7 +379,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'multiempresa-v4' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'professores-v1' }));
 
 app.get('/api/empresa/:slug', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
@@ -1827,13 +1837,17 @@ ${corpo}
 app.get('/admin/questoes.json', exigirSenha, async (req, res) => {
   if (!pool) return res.json({ questoes: [] });
   const q = req.query; const where = []; const params = [];
-  if (q.disciplina) { params.push('%' + q.disciplina + '%'); where.push('disciplina ILIKE $' + params.length); }
-  if (q.nivel) { params.push(q.nivel); where.push('nivel=$' + params.length); }
-  if (q.cargo) { params.push('%' + q.cargo + '%'); where.push('cargo ILIKE $' + params.length); }
-  if (q.busca) { params.push('%' + q.busca + '%'); where.push('enunciado ILIKE $' + params.length); }
+  if (q.empresa) { params.push(parseInt(q.empresa)); where.push('(qa.empresa_id=$' + params.length + ' OR qa.empresa_id IS NULL)'); }
+  if (q.disciplina) { params.push('%' + q.disciplina + '%'); where.push('qa.disciplina ILIKE $' + params.length); }
+  if (q.nivel) { params.push(q.nivel); where.push('qa.nivel=$' + params.length); }
+  if (q.cargo) { params.push('%' + q.cargo + '%'); where.push('qa.cargo ILIKE $' + params.length); }
+  if (q.busca) { params.push('%' + q.busca + '%'); where.push('qa.enunciado ILIKE $' + params.length); }
+  if (q.professor) { params.push(parseInt(q.professor)); where.push('qa.professor_id=$' + params.length); }
   const w = where.length ? ('WHERE ' + where.join(' AND ')) : '';
-  const { rows } = await pool.query(`SELECT id,enunciado,alternativas,correta,disciplina,nivel,cargo,(imagem_dados IS NOT NULL) AS tem_imagem FROM questoes ${w} ORDER BY id DESC LIMIT 500`, params);
-  res.json({ questoes: rows.map((r) => { let a = []; try { a = JSON.parse(r.alternativas || '[]'); } catch {} return { id: r.id, enunciado: r.enunciado, alternativas: a, correta: r.correta, disciplina: r.disciplina, nivel: r.nivel, cargo: r.cargo, tem_imagem: r.tem_imagem }; }) });
+  const { rows } = await pool.query(`SELECT qa.id,qa.enunciado,qa.alternativas,qa.correta,qa.disciplina,qa.nivel,qa.cargo,
+    (qa.imagem_dados IS NOT NULL) AS tem_imagem, p.nome AS autor
+    FROM questoes qa LEFT JOIN professores p ON p.id=qa.professor_id ${w} ORDER BY qa.id DESC LIMIT 500`, params);
+  res.json({ questoes: rows.map((r) => { let a = []; try { a = JSON.parse(r.alternativas || '[]'); } catch {} return { id: r.id, enunciado: r.enunciado, alternativas: a, correta: r.correta, disciplina: r.disciplina, nivel: r.nivel, cargo: r.cargo, tem_imagem: r.tem_imagem, autor: r.autor || '' }; }) });
 });
 app.post('/admin/questao', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
@@ -1850,7 +1864,8 @@ app.post('/admin/questao', exigirSenha, async (req, res) => {
     await pool.query('UPDATE questoes SET enunciado=$1,alternativas=$2,correta=$3,disciplina=$4,nivel=$5,cargo=$6 WHERE id=$7', [enunciado, JSON.stringify(alts), correta, disc, nivel, cargo, b.id]);
     return res.json({ ok: true, id: b.id });
   }
-  const r = await pool.query('INSERT INTO questoes (enunciado,alternativas,correta,disciplina,nivel,cargo) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id', [enunciado, JSON.stringify(alts), correta, disc, nivel, cargo]);
+  const empQ = parseInt(b.empresa_id) || null;
+  const r = await pool.query('INSERT INTO questoes (enunciado,alternativas,correta,disciplina,nivel,cargo,empresa_id) VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,(SELECT id FROM empresas ORDER BY id LIMIT 1))) RETURNING id', [enunciado, JSON.stringify(alts), correta, disc, nivel, cargo, empQ]);
   res.json({ ok: true, id: r.rows[0].id });
 });
 app.delete('/admin/questao/:id', exigirSenha, async (req, res) => {
@@ -2267,6 +2282,127 @@ app.get('/boleto/:protocolo', async (req, res) => {
 });
 
 app.get('/e/:slug', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'index.html')));
+
+// ---- Professores: admin ------------------------------------
+app.get('/admin/professores.json', exigirSenha, async (req, res) => {
+  if (!pool) return res.json({ professores: [] });
+  const emp = parseInt(req.query.empresa) || 0;
+  const w = emp ? 'WHERE p.empresa_id=$1' : ''; const p = emp ? [emp] : [];
+  const { rows } = await pool.query(`SELECT p.id,p.nome,p.email,p.disciplina,p.ativo,p.empresa_id,
+    (SELECT COUNT(*)::int FROM questoes q WHERE q.professor_id=p.id) AS questoes FROM professores p ${w} ORDER BY p.nome`, p);
+  res.json({ professores: rows });
+});
+app.post('/admin/professor', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const b = req.body || {};
+  const nome = String(b.nome || '').trim().slice(0, 120);
+  const email = String(b.email || '').trim().toLowerCase().slice(0, 160);
+  const disc = String(b.disciplina || '').trim().slice(0, 120);
+  const emp = parseInt(b.empresa_id) || null;
+  const senha = String(b.senha || '');
+  if (!nome) return res.status(400).json({ erro: 'Informe o nome.' });
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ erro: 'Informe um e-mail válido (é o login).' });
+  const dup = await pool.query('SELECT id FROM professores WHERE email=$1 AND id<>$2', [email, b.id || 0]);
+  if (dup.rows.length) return res.status(400).json({ erro: 'Já existe um professor com este e-mail.' });
+  if (b.id) {
+    if (senha) {
+      if (senha.length < 6) return res.status(400).json({ erro: 'A senha deve ter ao menos 6 caracteres.' });
+      await pool.query('UPDATE professores SET nome=$1,email=$2,disciplina=$3,ativo=$4,empresa_id=$5,senha_hash=$6 WHERE id=$7', [nome, email, disc, b.ativo !== false, emp, hashSenha(senha), b.id]);
+    } else {
+      await pool.query('UPDATE professores SET nome=$1,email=$2,disciplina=$3,ativo=$4,empresa_id=$5 WHERE id=$6', [nome, email, disc, b.ativo !== false, emp, b.id]);
+    }
+    return res.json({ ok: true, id: b.id });
+  }
+  if (senha.length < 6) return res.status(400).json({ erro: 'Defina uma senha com ao menos 6 caracteres.' });
+  const r = await pool.query('INSERT INTO professores (empresa_id,nome,email,senha_hash,disciplina) VALUES ($1,$2,$3,$4,$5) RETURNING id', [emp, nome, email, hashSenha(senha), disc]);
+  res.json({ ok: true, id: r.rows[0].id });
+});
+app.delete('/admin/professor/:id', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  await pool.query('UPDATE questoes SET professor_id=NULL WHERE professor_id=$1', [req.params.id]);
+  await pool.query('DELETE FROM professores WHERE id=$1', [req.params.id]);
+  res.json({ ok: true });
+});
+
+// ---- Área do Professor -------------------------------------
+async function autenticaProfessor(b) {
+  const email = String((b || {}).email || '').trim().toLowerCase();
+  const senha = String((b || {}).senha || '');
+  if (!email || !senha) return null;
+  const { rows } = await pool.query('SELECT * FROM professores WHERE email=$1 AND ativo=TRUE', [email]);
+  if (!rows.length || !verificaSenha(senha, rows[0].senha_hash)) return null;
+  return rows[0];
+}
+app.post('/api/professor/login', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const p = await autenticaProfessor(req.body);
+  if (!p) return res.status(401).json({ erro: 'E-mail ou senha inválidos.' });
+  const emp = await pool.query('SELECT nome, slug, (logo_dados IS NOT NULL) AS tem_logo, id FROM empresas WHERE id=$1', [p.empresa_id]);
+  res.json({ ok: true, nome: p.nome, disciplina: p.disciplina || '', empresa: emp.rows[0] || null });
+});
+app.post('/api/professor/questoes', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const p = await autenticaProfessor(req.body);
+  if (!p) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
+  const { rows } = await pool.query('SELECT id,enunciado,alternativas,correta,disciplina,nivel,cargo,(imagem_dados IS NOT NULL) AS tem_imagem FROM questoes WHERE professor_id=$1 ORDER BY id DESC LIMIT 500', [p.id]);
+  res.json({ questoes: rows.map((r) => { let a = []; try { a = JSON.parse(r.alternativas || '[]'); } catch {} return { ...r, alternativas: a }; }) });
+});
+app.post('/api/professor/questao', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const b = req.body || {};
+  const p = await autenticaProfessor(b);
+  if (!p) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
+  const enunciado = String(b.enunciado || '').trim();
+  const alts = Array.isArray(b.alternativas) ? b.alternativas.map((x) => String(x || '').trim()).filter((x) => x !== '') : [];
+  const correta = Math.max(0, Math.min(alts.length - 1, parseInt(b.correta) || 0));
+  if (!enunciado) return res.status(400).json({ erro: 'Informe o enunciado.' });
+  if (alts.length < 2) return res.status(400).json({ erro: 'Informe pelo menos 2 alternativas.' });
+  const disc = String(b.disciplina || p.disciplina || '').trim().slice(0, 120);
+  const nivel = String(b.nivel || '').trim().slice(0, 40);
+  const cargo = String(b.cargo || '').trim().slice(0, 120);
+  if (b.id) {
+    const own = await pool.query('SELECT id FROM questoes WHERE id=$1 AND professor_id=$2', [b.id, p.id]);
+    if (!own.rows.length) return res.status(403).json({ erro: 'Você só pode editar as suas questões.' });
+    await pool.query('UPDATE questoes SET enunciado=$1,alternativas=$2,correta=$3,disciplina=$4,nivel=$5,cargo=$6 WHERE id=$7', [enunciado, JSON.stringify(alts), correta, disc, nivel, cargo, b.id]);
+    return res.json({ ok: true, id: b.id });
+  }
+  const r = await pool.query('INSERT INTO questoes (enunciado,alternativas,correta,disciplina,nivel,cargo,professor_id,empresa_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id',
+    [enunciado, JSON.stringify(alts), correta, disc, nivel, cargo, p.id, p.empresa_id]);
+  res.json({ ok: true, id: r.rows[0].id });
+});
+app.post('/api/professor/questao/excluir', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const b = req.body || {};
+  const p = await autenticaProfessor(b);
+  if (!p) return res.status(401).json({ erro: 'Sessão inválida.' });
+  const r = await pool.query('DELETE FROM questoes WHERE id=$1 AND professor_id=$2', [parseInt(b.id), p.id]);
+  if (!r.rowCount) return res.status(403).json({ erro: 'Você só pode excluir as suas questões.' });
+  res.json({ ok: true });
+});
+app.post('/api/professor/questao/imagem', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const b = req.body || {};
+  const p = await autenticaProfessor(b);
+  if (!p) return res.status(401).json({ erro: 'Sessão inválida.' });
+  const own = await pool.query('SELECT id FROM questoes WHERE id=$1 AND professor_id=$2', [parseInt(b.id), p.id]);
+  if (!own.rows.length) return res.status(403).json({ erro: 'Questão não encontrada.' });
+  const buf = decodeB64(b.dataBase64);
+  if (!buf) return res.status(400).json({ erro: 'Selecione uma imagem.' });
+  const mime = mimeDe(buf);
+  if (mime !== 'image/jpeg' && mime !== 'image/png') return res.status(400).json({ erro: 'Envie JPG ou PNG.' });
+  if (buf.length > 3 * 1024 * 1024) return res.status(400).json({ erro: 'Imagem muito grande (máx. 3 MB).' });
+  await pool.query('UPDATE questoes SET imagem_mime=$1,imagem_dados=$2 WHERE id=$3', [mime, buf, parseInt(b.id)]);
+  res.json({ ok: true });
+});
+app.get('/api/professor/questao/:id/imagem', async (req, res) => {
+  if (!pool) return res.status(503).send('Indisponível.');
+  const p = await autenticaProfessor({ email: req.query.email, senha: req.query.senha });
+  if (!p) return res.status(401).send('Sessão inválida.');
+  const { rows } = await pool.query('SELECT imagem_mime,imagem_dados FROM questoes WHERE id=$1 AND professor_id=$2', [parseInt(req.params.id), p.id]);
+  if (!rows.length || !rows[0].imagem_dados) return res.status(404).send('Sem imagem.');
+  res.setHeader('Content-Type', rows[0].imagem_mime || 'image/png');
+  res.send(rows[0].imagem_dados);
+});
 
 app.get('/admin', exigirSenha, (req, res) => res.send(PAINEL_HTML));
 
