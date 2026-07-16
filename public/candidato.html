@@ -110,6 +110,9 @@
   var SESSAO={cpf:'',senha:''};
   var EMPRESA_SLUG = (new URLSearchParams(location.search)).get('e') || '';
   (async function(){
+    if(!EMPRESA_SLUG){
+      try{ var da = await (await fetch('/api/empresa-atual')).json(); if(da.empresa) EMPRESA_SLUG = da.empresa.slug; }catch(err){}
+    }
     if(!EMPRESA_SLUG) return;
     try{
       var d = await (await fetch('/api/empresa/'+encodeURIComponent(EMPRESA_SLUG))).json();

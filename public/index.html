@@ -176,6 +176,9 @@
     try{
       var mEmp = location.pathname.match(/^\/e\/([^\/?#]+)/);
       var EMP = mEmp ? decodeURIComponent(mEmp[1]) : '';
+      if(!EMP){
+        try{ var da = await (await fetch('/api/empresa-atual')).json(); if(da.empresa) EMP = da.empresa.slug; }catch(err){}
+      }
       if(EMP){
         try{
           var de = await (await fetch('/api/empresa/'+encodeURIComponent(EMP))).json();
