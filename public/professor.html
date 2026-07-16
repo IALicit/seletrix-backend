@@ -1,0 +1,171 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Área do Professor</title>
+<link rel="icon" href="/logo.png" type="image/png">
+<style>
+ :root{--navy:#0b3a5e;--azul:#12558a;--verde:#1f9d5b;--linha:#dbe4ec;--suave:#5b7183;--papel:#eef2f6;--txt:#16242f}
+ *{box-sizing:border-box;margin:0;padding:0;font-family:Inter,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+ body{background:var(--papel);color:var(--txt);min-height:100vh}
+ .topo{background:var(--navy);color:#fff;padding:14px 20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+ .topo .marca{font-weight:800;font-size:1.05rem}
+ .topo .sub{font-size:.85rem;opacity:.9}
+ .topo a{color:#fff;text-decoration:none;font-size:.85rem;opacity:.9}
+ .container{max-width:900px;margin:0 auto;padding:20px 16px 60px}
+ .card{background:#fff;border:1px solid var(--linha);border-radius:14px;padding:20px;margin-bottom:16px}
+ h2{color:var(--navy);font-size:1.15rem;margin-bottom:8px}
+ h3{color:var(--navy);font-size:1rem;margin-bottom:8px}
+ p.leg{color:var(--suave);font-size:.9rem;margin-bottom:14px}
+ label{display:block;font-weight:600;font-size:.88rem;margin:12px 0 5px}
+ input,select,textarea{width:100%;padding:11px 13px;border:1.5px solid var(--linha);border-radius:9px;font-size:.95rem;font-family:inherit;background:#fff}
+ textarea{resize:vertical}
+ button{background:var(--navy);color:#fff;border:none;border-radius:9px;padding:11px 18px;font-weight:700;font-size:.95rem;cursor:pointer}
+ button.sec{background:#eef3f5;color:var(--navy)}
+ button.del{background:none;color:#a12626;font-weight:600;padding:6px 8px}
+ button.mini{background:#eef3f5;color:var(--navy);padding:7px 12px;font-size:.85rem}
+ .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+ @media(max-width:640px){.grid2{grid-template-columns:1fr}}
+ .erro{background:#fde8e8;color:#a12626;padding:10px 12px;border-radius:8px;margin-top:12px;font-size:.9rem;display:none}
+ .center{min-height:80vh;display:flex;align-items:center;justify-content:center;padding:20px}
+ .qitem{border:1px solid var(--linha);border-radius:10px;padding:12px;margin-bottom:10px}
+ .qhead{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+ .tag{display:inline-block;background:#eaf3fb;color:var(--navy);border-radius:20px;padding:2px 10px;font-size:.75rem;font-weight:700;margin-right:4px}
+ .alt-line{font-size:.85rem;margin-top:2px}
+ .ok{color:#0f6b41;font-weight:700}
+ .hint{color:var(--suave);font-size:.85rem}
+</style></head><body>
+
+<div class="center" id="tela_login">
+  <div class="card" style="max-width:420px;width:100%">
+    <h2>Área do Professor</h2>
+    <p class="leg">Entre com seu e-mail e senha para cadastrar questões.</p>
+    <label>E-mail</label><input id="in_email" type="email" placeholder="seu@email.com">
+    <label>Senha</label><input id="in_senha" type="password" placeholder="Sua senha">
+    <div style="margin-top:16px"><button id="btn_entrar" onclick="entrar()" style="width:100%">Entrar</button></div>
+    <div class="erro" id="login_erro"></div>
+  </div>
+</div>
+
+<div id="tela_area" style="display:none">
+  <header class="topo">
+    <div><div class="marca" id="topo_marca">Área do Professor</div><div class="sub" id="topo_sub"></div></div>
+    <a href="#" onclick="sair();return false">Sair ↩</a>
+  </header>
+  <div class="container">
+    <div class="card">
+      <h3 id="form_titulo">Nova questão</h3>
+      <input type="hidden" id="q_id">
+      <label>Enunciado</label>
+      <textarea id="q_enunciado" rows="3" placeholder="Digite o enunciado da questão"></textarea>
+      <label>Alternativas (marque a correta no círculo à esquerda)</label>
+      <div id="q_alts"></div>
+      <button class="sec" type="button" onclick="addAlt()">+ Alternativa</button>
+      <div class="grid2" style="margin-top:12px">
+        <div><label>Disciplina</label><input id="q_disciplina" placeholder="Ex.: Português"></div>
+        <div><label>Nível</label><select id="q_nivel"><option value="">—</option><option>Fácil</option><option>Médio</option><option>Difícil</option></select></div>
+        <div><label>Cargo (opcional)</label><input id="q_cargo" placeholder="Em branco = todos"></div>
+      </div>
+      <label>Imagem do enunciado (opcional)</label>
+      <div id="q_img_atual" class="hint" style="margin-bottom:6px"></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="file" id="q_img_file" accept="image/png,image/jpeg" style="border:none;padding:0">
+        <button class="sec" type="button" onclick="enviarImg()">Enviar imagem</button>
+      </div>
+      <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap"><button onclick="salvar()">Salvar questão</button><button class="sec" onclick="nova()">Limpar / Nova</button></div>
+    </div>
+    <div class="card">
+      <h3>Minhas questões (<span id="q_total">0</span>)</h3>
+      <div id="q_lista"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  var $=function(id){return document.getElementById(id);};
+  var SES={email:'',senha:''}, QALTS=[], QCOR=0, MINHAS=[];
+  function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  function toB64(f){return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res(String(r.result).split(',')[1]);};r.onerror=rej;r.readAsDataURL(f);});}
+
+  async function entrar(){
+    var email=$('in_email').value.trim(), senha=$('in_senha').value;
+    if(!email||!senha){ erroLogin('Informe e-mail e senha.'); return; }
+    $('btn_entrar').disabled=true;
+    var r=await fetch('/api/professor/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email,senha:senha})});
+    var j=await r.json(); $('btn_entrar').disabled=false;
+    if(!r.ok){ erroLogin(j.erro||'Não foi possível entrar.'); return; }
+    SES={email:email,senha:senha};
+    try{ sessionStorage.setItem('prof_ses', JSON.stringify(SES)); }catch(e){}
+    $('topo_marca').textContent = (j.empresa&&j.empresa.nome) ? j.empresa.nome : 'Área do Professor';
+    $('topo_sub').textContent = 'Prof. ' + j.nome + (j.disciplina?(' · '+j.disciplina):'');
+    if(j.disciplina && !$('q_disciplina').value) $('q_disciplina').value=j.disciplina;
+    $('tela_login').style.display='none'; $('tela_area').style.display='block';
+    nova(); carregar();
+  }
+  function erroLogin(m){ $('login_erro').textContent=m; $('login_erro').style.display='block'; }
+  function sair(){ try{ sessionStorage.removeItem('prof_ses'); }catch(e){} location.reload(); }
+
+  function nova(){ $('q_id').value=''; $('q_enunciado').value=''; $('q_cargo').value=''; $('q_nivel').value='';
+    QALTS=['','','','']; QCOR=0; renderAlts(); if($('q_img_file'))$('q_img_file').value='';
+    $('q_img_atual').innerHTML='<i>Salve a questão para anexar imagem.</i>'; $('form_titulo').textContent='Nova questão'; }
+  function renderAlts(){
+    $('q_alts').innerHTML = QALTS.map(function(a,i){
+      return '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">'
+        +'<input type="radio" name="qcor" '+(QCOR===i?'checked':'')+' onclick="QCOR='+i+'" style="width:auto" title="Correta">'
+        +'<input value="'+esc(a).replace(/"/g,'&quot;')+'" oninput="QALTS['+i+']=this.value" placeholder="Alternativa '+String.fromCharCode(65+i)+'" style="flex:1">'
+        +'<button class="del" type="button" onclick="rmAlt('+i+')">×</button></div>';
+    }).join('');
+  }
+  function addAlt(){ if(QALTS.length>=6){alert('Máximo 6 alternativas.');return;} QALTS.push(''); renderAlts(); }
+  function rmAlt(i){ if(QALTS.length<=2){alert('Mínimo 2 alternativas.');return;} QALTS.splice(i,1); if(QCOR>=QALTS.length)QCOR=0; renderAlts(); }
+
+  async function salvar(){
+    var alts=QALTS.map(function(a){return (a||'').trim();}).filter(function(a){return a!=='';});
+    if(!$('q_enunciado').value.trim()){alert('Informe o enunciado.');return;}
+    if(alts.length<2){alert('Informe pelo menos 2 alternativas.');return;}
+    var body={email:SES.email,senha:SES.senha,id:$('q_id').value||undefined,enunciado:$('q_enunciado').value,alternativas:QALTS,correta:QCOR,disciplina:$('q_disciplina').value,nivel:$('q_nivel').value,cargo:$('q_cargo').value};
+    var r=await fetch('/api/professor/questao',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    $('q_id').value=j.id;
+    if($('q_img_file') && $('q_img_file').files[0]) await enviarImg();
+    alert('Questão salva!'); carregar();
+  }
+  async function enviarImg(){
+    var id=$('q_id').value; if(!id){alert('Salve a questão primeiro.');return;}
+    var f=$('q_img_file').files[0]; if(!f){alert('Escolha uma imagem.');return;}
+    if(f.size>3*1024*1024){alert('Máximo 3 MB.');return;}
+    var b64=await toB64(f);
+    var r=await fetch('/api/professor/questao/imagem',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:SES.email,senha:SES.senha,id:id,dataBase64:b64})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    $('q_img_atual').innerHTML='Imagem anexada ✓'; carregar();
+  }
+  async function carregar(){
+    var r=await fetch('/api/professor/questoes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(SES)});
+    var j=await r.json(); if(!r.ok){ return; }
+    MINHAS=j.questoes; $('q_total').textContent=j.questoes.length;
+    $('q_lista').innerHTML = j.questoes.length ? j.questoes.map(function(q){
+      var tags=[q.disciplina,q.nivel,q.cargo].filter(Boolean).map(function(t){return '<span class="tag">'+esc(t)+'</span>';}).join('');
+      var alts=(q.alternativas||[]).map(function(a,i){ return '<div class="alt-line'+(i===q.correta?' ok':'')+'">'+String.fromCharCode(65+i)+') '+esc(a)+(i===q.correta?' ✓':'')+'</div>'; }).join('');
+      return '<div class="qitem"><div class="qhead"><div style="flex:1"><b>'+esc(q.enunciado)+'</b>'+(q.tem_imagem?' 🖼️':'')+'<div style="margin:4px 0">'+tags+'</div>'+alts+'</div>'
+        +'<div><button class="mini" onclick="editar('+q.id+')">Editar</button> <button class="del" onclick="excluir('+q.id+')">Excluir</button></div></div></div>';
+    }).join('') : '<p class="hint">Você ainda não cadastrou questões.</p>';
+  }
+  function editar(id){
+    var q=MINHAS.find(function(x){return x.id===id;}); if(!q)return;
+    $('q_id').value=q.id; $('q_enunciado').value=q.enunciado||''; $('q_disciplina').value=q.disciplina||''; $('q_nivel').value=q.nivel||''; $('q_cargo').value=q.cargo||'';
+    QALTS=(q.alternativas&&q.alternativas.length)?q.alternativas.slice():['','']; QCOR=q.correta||0; renderAlts();
+    $('form_titulo').textContent='Editando questão';
+    $('q_img_atual').innerHTML = q.tem_imagem ? ('Imagem atual: <img src="/api/professor/questao/'+q.id+'/imagem?email='+encodeURIComponent(SES.email)+'&senha='+encodeURIComponent(SES.senha)+'&t='+Date.now()+'" style="height:60px;vertical-align:middle;border-radius:4px">') : '<i>Nenhuma imagem.</i>';
+    if($('q_img_file'))$('q_img_file').value='';
+    window.scrollTo({top:0,behavior:'smooth'});
+  }
+  async function excluir(id){
+    if(!confirm('Excluir esta questão?'))return;
+    var r=await fetch('/api/professor/questao/excluir',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:SES.email,senha:SES.senha,id:id})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    if(String($('q_id').value)===String(id)) nova();
+    carregar();
+  }
+  (function(){
+    try{ var s=sessionStorage.getItem('prof_ses'); if(s){ var o=JSON.parse(s); $('in_email').value=o.email; $('in_senha').value=o.senha; entrar(); } }catch(e){}
+  })();
+</script>
+</body></html>
