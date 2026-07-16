@@ -379,7 +379,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'concurso-marca-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'marca-area-v1' }));
 
 app.get('/api/empresa/:slug', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
