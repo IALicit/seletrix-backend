@@ -117,6 +117,7 @@ async function inicializarBanco() {
   await pool.query(`CREATE TABLE IF NOT EXISTS empresas (id SERIAL PRIMARY KEY, slug TEXT UNIQUE, nome TEXT, subtitulo TEXT,
     logo_mime TEXT, logo_dados BYTEA, ativa BOOLEAN DEFAULT TRUE, criado_em TIMESTAMPTZ DEFAULT now());`);
   await pool.query(`ALTER TABLE concursos ADD COLUMN IF NOT EXISTS empresa_id INT`);
+  await pool.query(`ALTER TABLE empresas ADD COLUMN IF NOT EXISTS dominio TEXT`);
   {
     const e = await pool.query('SELECT COUNT(*)::int n FROM empresas');
     if (!e.rows[0].n) await pool.query(`INSERT INTO empresas (slug,nome,subtitulo) VALUES ('seletrix','Seletrix','Organização de Concursos Públicos')`);
@@ -384,8 +385,19 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'hero-botao-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'dominio-empresa-v1' }));
 
+function hostLimpo(req) {
+  return String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim().toLowerCase().replace(/:\d+$/, '').replace(/^www\./, '');
+}
+app.get('/api/empresa-atual', async (req, res) => {
+  if (!pool) return res.json({ empresa: null });
+  const h = hostLimpo(req);
+  if (!h) return res.json({ empresa: null });
+  const { rows } = await pool.query(`SELECT id, slug, nome, subtitulo, (logo_dados IS NOT NULL) AS tem_logo FROM empresas
+    WHERE ativa=TRUE AND dominio IS NOT NULL AND dominio<>'' AND (LOWER(REPLACE(REPLACE(dominio,'https://',''),'http://','')) = $1 OR LOWER(REPLACE(REPLACE(REPLACE(dominio,'https://',''),'http://',''),'www.','')) = $1) LIMIT 1`, [h]);
+  res.json({ empresa: rows[0] || null });
+});
 app.get('/api/empresa/:slug', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
   const { rows } = await pool.query('SELECT id,slug,nome,subtitulo,(logo_dados IS NOT NULL) AS tem_logo FROM empresas WHERE slug=$1 AND ativa=TRUE', [req.params.slug]);
@@ -845,7 +857,7 @@ function exigirSenha(req, res, next) {
 // ---- Empresas (multiempresa) -------------------------------
 app.get('/admin/empresas.json', exigirSenha, async (req, res) => {
   if (!pool) return res.json({ empresas: [] });
-  const { rows } = await pool.query(`SELECT e.id, e.slug, e.nome, e.subtitulo, e.ativa, (e.logo_dados IS NOT NULL) AS tem_logo,
+  const { rows } = await pool.query(`SELECT e.id, e.slug, e.nome, e.subtitulo, e.ativa, e.dominio, (e.logo_dados IS NOT NULL) AS tem_logo,
     (SELECT COUNT(*)::int FROM concursos c WHERE c.empresa_id=e.id) AS concursos FROM empresas e ORDER BY e.id`);
   res.json({ empresas: rows });
 });
@@ -854,11 +866,12 @@ app.post('/admin/empresa', exigirSenha, async (req, res) => {
   const b = req.body || {};
   const nome = String(b.nome || '').trim().slice(0, 120);
   const sub = String(b.subtitulo || '').trim().slice(0, 160);
+  const dom = String(b.dominio || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').slice(0, 160);
   if (!nome) return res.status(400).json({ erro: 'Informe o nome da empresa.' });
   let base = slugify(nome), slug = base, n = 2;
   while (true) { const q = await pool.query('SELECT id FROM empresas WHERE slug=$1 AND id<>$2', [slug, b.id || 0]); if (!q.rows.length) break; slug = base + '-' + (n++); }
-  if (b.id) { await pool.query('UPDATE empresas SET nome=$1, subtitulo=$2, slug=$3, ativa=$4 WHERE id=$5', [nome, sub, slug, b.ativa !== false, b.id]); return res.json({ ok: true, id: b.id, slug }); }
-  const r = await pool.query('INSERT INTO empresas (slug,nome,subtitulo) VALUES ($1,$2,$3) RETURNING id', [slug, nome, sub]);
+  if (b.id) { await pool.query('UPDATE empresas SET nome=$1, subtitulo=$2, slug=$3, ativa=$4, dominio=$5 WHERE id=$6', [nome, sub, slug, b.ativa !== false, dom || null, b.id]); return res.json({ ok: true, id: b.id, slug }); }
+  const r = await pool.query('INSERT INTO empresas (slug,nome,subtitulo,dominio) VALUES ($1,$2,$3,$4) RETURNING id', [slug, nome, sub, dom || null]);
   res.json({ ok: true, id: r.rows[0].id, slug });
 });
 app.post('/admin/empresa/:id/logo', exigirSenha, async (req, res) => {

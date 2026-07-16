@@ -452,6 +452,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       <div class="grid2">
         <div><label>Nome da empresa</label><input id="em_nome" placeholder="Ex.: Recrutamento Brasil"></div>
         <div><label>Subtítulo (aparece no site)</label><input id="em_subtitulo" placeholder="Ex.: Recrutamento e Seleção"></div>
+        <div><label>Domínio próprio (opcional)</label><input id="em_dominio" placeholder="Ex.: recrutamentobrasil.com.br"></div>
       </div>
       <label style="margin-top:12px">Logo (PNG ou JPG · até 2 MB)</label>
       <div id="em_logo_atual" class="hint" style="margin-bottom:8px"></div>
@@ -1367,26 +1368,26 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     aplicarIdentidade();
     carregarConcursos();
   }
-  function novaEmpresa(){ $('em_id').value=''; $('em_nome').value=''; $('em_subtitulo').value=''; if($('em_logo_file'))$('em_logo_file').value=''; $('em_logo_atual').innerHTML='<i>Salve a empresa primeiro para enviar a logo.</i>'; }
+  function novaEmpresa(){ $('em_id').value=''; $('em_nome').value=''; $('em_subtitulo').value=''; $('em_dominio').value=''; if($('em_logo_file'))$('em_logo_file').value=''; $('em_logo_atual').innerHTML='<i>Salve a empresa primeiro para enviar a logo.</i>'; }
   async function carregarEmpresas(){
     var d = await (await fetch('/admin/empresas.json')).json();
     EMPRESAS = d.empresas;
     $('em_lista').innerHTML = d.empresas.map(function(e){
       var logo = e.tem_logo ? ('<img src="/empresa/'+e.id+'/logo?t='+Date.now()+'" style="height:34px;vertical-align:middle;margin-right:8px">') : '';
-      return '<div class="conc"><div>'+logo+'<b>'+esc(e.nome)+'</b><div class="meta">'+esc(e.subtitulo||'')+' &middot; '+e.concursos+' concurso(s) &middot; site: <a href="/e/'+esc(e.slug)+'" target="_blank">/e/'+esc(e.slug)+'</a></div></div>'
+      return '<div class="conc"><div>'+logo+'<b>'+esc(e.nome)+'</b><div class="meta">'+esc(e.subtitulo||'')+' &middot; '+e.concursos+' concurso(s) &middot; site: <a href="/e/'+esc(e.slug)+'" target="_blank">/e/'+esc(e.slug)+'</a>'+(e.dominio?(' &middot; 🌐 <a href="https://'+esc(e.dominio)+'" target="_blank">'+esc(e.dominio)+'</a>'):'')+'</div></div>'
         +'<div class="row-actions"><button class="mini" onclick="editarEmpresa('+e.id+')">Editar</button><button class="del" onclick="delEmpresa('+e.id+')">Excluir</button></div></div>';
     }).join('') || '<p class="hint">Nenhuma empresa.</p>';
   }
   function editarEmpresa(id){
     var e = EMPRESAS.find(function(x){return x.id===id;}); if(!e)return;
-    $('em_id').value=e.id; $('em_nome').value=e.nome||''; $('em_subtitulo').value=e.subtitulo||'';
+    $('em_id').value=e.id; $('em_nome').value=e.nome||''; $('em_subtitulo').value=e.subtitulo||''; $('em_dominio').value=e.dominio||'';
     $('em_logo_atual').innerHTML = e.tem_logo ? ('Logo atual: <img src="/empresa/'+e.id+'/logo?t='+Date.now()+'" style="height:40px;vertical-align:middle">') : '<i>Nenhuma logo enviada.</i>';
     if($('em_logo_file'))$('em_logo_file').value='';
     window.scrollTo({top:0,behavior:'smooth'});
   }
   async function salvarEmpresa(){
     if(!$('em_nome').value.trim()){alert('Informe o nome da empresa.');return;}
-    var body={id:$('em_id').value||undefined, nome:$('em_nome').value, subtitulo:$('em_subtitulo').value};
+    var body={id:$('em_id').value||undefined, nome:$('em_nome').value, subtitulo:$('em_subtitulo').value, dominio:$('em_dominio').value};
     var r=await fetch('/admin/empresa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
     $('em_id').value=j.id;
