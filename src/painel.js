@@ -564,6 +564,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       <p style="font-weight:600;margin-bottom:6px">Relacione as colunas da sua planilha aos campos do sistema (Nome e CPF são obrigatórios):</p>
       <div id="imp_campos" class="grid2"></div>
       <div class="checkline" style="margin-top:10px"><input type="checkbox" id="imp_pago" checked><label for="imp_pago" style="margin:0">Marcar como pagos/confirmados (inscrição presencial já quitada)</label></div>
+      <p class="hint" style="margin-top:8px">🔑 O acesso à Área do Candidato é criado automaticamente: <b>login = CPF</b> e <b>senha = data de nascimento</b> (ex.: 05/01/1990). Para isso, mapeie a coluna <b>Nascimento</b>.</p>
       <div style="margin-top:14px;display:flex;gap:10px"><button onclick="executarImport()">Importar candidatos</button></div>
     </div>
     <div id="imp_result" style="display:none;margin-top:14px;padding:12px;border-radius:8px;background:var(--verde-bg);color:#0f6b41;font-weight:600"></div>
@@ -625,7 +626,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
           <div class="meta">\${esc(c.orgao||'')} &middot; \${c.inscritos} inscritos (\${c.pagos} pagos) &middot; taxa \${esc(c.taxa||'-')}</div>
           <div class="meta">Link: <a href="/concurso.html?c=\${esc(c.slug)}" target="_blank">/concurso.html?c=\${esc(c.slug)}</a></div>
         </div>
-        <div class="row-actions"><button class="mini" onclick='abrirPagamento(\${JSON.stringify(c.id)})'>Pagamento</button><button class="mini" onclick='abrirImport(\${JSON.stringify(c.id)})'>Importar Excel</button><button class="mini" onclick='abrirEtapas(\${JSON.stringify(c.id)})'>Etapas / Docs</button><button class="mini" onclick='editarConcurso(\${JSON.stringify(c.id)})'>Editar</button><button class="del" onclick='excluirConcurso(\${JSON.stringify(c.id)})'>Excluir</button></div>
+        <div class="row-actions"><button class="mini" onclick='abrirPagamento(\${JSON.stringify(c.id)})'>Pagamento</button><button class="mini" onclick='abrirImport(\${JSON.stringify(c.id)})'>Importar Excel</button><button class="mini" onclick='gerarLogins(\${JSON.stringify(c.id)})'>Gerar acessos</button><button class="mini" onclick='abrirEtapas(\${JSON.stringify(c.id)})'>Etapas / Docs</button><button class="mini" onclick='editarConcurso(\${JSON.stringify(c.id)})'>Editar</button><button class="del" onclick='excluirConcurso(\${JSON.stringify(c.id)})'>Excluir</button></div>
       </div>\`).join('') || '<p class="hint">Nenhum concurso ainda. Clique em "Novo concurso".</p>';
     // popular filtro de inscritos
     $('filtro_concurso').innerHTML = '<option value="">Todos os concursos</option>' + concursos.map(c=>'<option value="'+c.id+'">'+esc(c.titulo)+'</option>').join('');
@@ -1115,7 +1116,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var j=await r.json();
     if(!r.ok){ $('imp_result').style.background='#fde8e8'; $('imp_result').style.color='#a12626'; $('imp_result').textContent=j.erro||'Erro na importação'; return; }
     $('imp_result').style.background='var(--verde-bg)'; $('imp_result').style.color='#0f6b41';
-    $('imp_result').innerHTML='✓ Importados: <b>'+j.importados+'</b>. Ignorados (duplicados ou sem Nome/CPF válido): <b>'+j.pulados+'</b>.';
+    $('imp_result').innerHTML='✓ Importados: <b>'+j.importados+'</b>. Ignorados (duplicados ou sem Nome/CPF válido): <b>'+j.pulados+'</b>.<br>Acessos criados (senha = data de nascimento): <b>'+(j.logins||0)+'</b>'+((j.semData||0)?(' · <b>'+j.semData+'</b> sem data de nascimento na planilha (ficaram sem acesso)'):'')+'.';
   }
 
   var PO_SEL={}, PO_ACESSOS=[];
@@ -1409,6 +1410,12 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     carregarEmpresas(); initEmpresas();
   }
 
+  async function gerarLogins(id){
+    if(!confirm('Criar acesso à Área do Candidato para os candidatos deste concurso que ainda não têm?\\n\\nA senha será a DATA DE NASCIMENTO de cada um (ex.: 05011990). Quem já tem acesso não é alterado.'))return;
+    var r=await fetch('/admin/concurso/'+id+'/gerar-logins',{method:'POST'});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    alert('Acessos criados: '+j.criados+' de '+j.semAcesso+' sem acesso.'+(j.semData?('\\n\\n'+j.semData+' candidato(s) sem data de nascimento cadastrada ficaram sem acesso.'):''));
+  }
   var PROFESSORES=[];
   function novoProfessor(){ $('pf_id').value=''; $('pf_nome').value=''; $('pf_email').value=''; $('pf_disciplina').value=''; $('pf_senha').value=''; $('pf_senha').placeholder='mín. 6 caracteres'; $('pf_ativo').checked=true; }
   async function carregarProfessores(){

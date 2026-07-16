@@ -345,6 +345,11 @@ function cpfValido(cpf) {
   return calc(9) === parseInt(cpf[9]) && calc(10) === parseInt(cpf[10]);
 }
 const emailValido = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e || '');
+function senhaDeNascimento(ymd) {
+  // 'YYYY-MM-DD' -> 'DDMMYYYY' (senha inicial dos candidatos importados)
+  const m = String(ymd || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? (m[3] + m[2] + m[1]) : '';
+}
 function hashSenha(senha) {
   const salt = crypto.randomBytes(16).toString('hex');
   const dk = crypto.scryptSync(String(senha), salt, 32).toString('hex');
@@ -379,7 +384,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'marca-area-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'login-nascimento-v1' }));
 
 app.get('/api/empresa/:slug', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
@@ -548,7 +553,10 @@ app.post('/api/candidato/login', async (req, res) => {
   const senha = String((req.body || {}).senha || '');
   if (!cpfValido(cpf) || !senha) return res.status(400).json({ erro: 'Informe CPF e senha.' });
   const lg = await pool.query('SELECT senha_hash, nome FROM candidato_login WHERE cpf=$1', [cpf]);
-  if (!lg.rows.length || !verificaSenha(senha, lg.rows[0].senha_hash))
+  const okSenha = lg.rows.length && (verificaSenha(senha, lg.rows[0].senha_hash) ||
+    // aceita a data de nascimento digitada com barras/pontos (ex.: 01/01/1990 == 01011990)
+    (/^[\d\/.\-\s]+$/.test(senha) && soDigitos(senha).length === 8 && verificaSenha(soDigitos(senha), lg.rows[0].senha_hash)));
+  if (!okSenha)
     return res.status(401).json({ erro: 'CPF ou senha inválidos, ou você ainda não fez nenhuma inscrição.' });
   const empSlug = String((req.body || {}).empresa || '').trim();
   const paramsL = [cpf];
@@ -1972,7 +1980,7 @@ app.post('/admin/concurso/:id/importar', exigirSenha, async (req, res) => {
     m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/); if (m) return m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0');
     return null;
   };
-  let importados = 0, pulados = 0;
+  let importados = 0, pulados = 0, semData = 0, logins = 0;
   for (const row of lista) {
     const nome = String(row.nome || '').trim();
     const cpf = soDigitos(row.cpf);
@@ -1981,16 +1989,39 @@ app.post('/admin/concurso/:id/importar', exigirSenha, async (req, res) => {
     vistos.add(cpf);
     const cargo = String(row.cargo || '').trim() || 'Não informado';
     const pcd = /^(sim|s|true|1|x|pcd)$/i.test(String(row.pcd || '').trim());
+    const nasc = parseNasc(row.nascimento);
     await pool.query(
       `INSERT INTO candidatos (nome,cpf,nascimento,email,telefone,sexo,cargo,pcd,nome_social,cidade,uf,concurso_id,status)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-      [nome, cpf, parseNasc(row.nascimento), String(row.email || '').trim() || null, String(row.telefone || '').trim() || null,
+      [nome, cpf, nasc, String(row.email || '').trim() || null, String(row.telefone || '').trim() || null,
        String(row.sexo || '').trim() || null, cargo, pcd, String(row.nome_social || '').trim() || null,
        String(row.cidade || '').trim() || null, String(row.uf || '').trim().toUpperCase().slice(0, 2) || null, cid, status]);
     importados++;
+    // Login da área do candidato: CPF + senha = data de nascimento (só dígitos, DDMMAAAA)
+    if (nasc) {
+      const senhaNasc = senhaDeNascimento(nasc);
+      const r = await pool.query('INSERT INTO candidato_login (cpf,senha_hash,nome) VALUES ($1,$2,$3) ON CONFLICT (cpf) DO NOTHING', [cpf, hashSenha(senhaNasc), nome]);
+      if (r.rowCount) logins++;
+    } else semData++;
   }
   await pool.query("UPDATE candidatos SET protocolo='SLX2026'||LPAD(id::text,5,'0') WHERE concurso_id=$1 AND (protocolo IS NULL OR protocolo='')", [cid]);
-  res.json({ ok: true, importados, pulados });
+  res.json({ ok: true, importados, pulados, logins, semData });
+});
+
+// Gera logins (senha = data de nascimento) para candidatos já importados que ainda não têm acesso
+app.post('/admin/concurso/:id/gerar-logins', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const cid = parseInt(req.params.id);
+  const { rows } = await pool.query(`SELECT k.cpf, k.nome, k.nascimento FROM candidatos k
+    LEFT JOIN candidato_login l ON l.cpf=k.cpf WHERE k.concurso_id=$1 AND l.cpf IS NULL`, [cid]);
+  let criados = 0, semData = 0;
+  for (const c of rows) {
+    if (!c.nascimento) { semData++; continue; }
+    const senhaNasc = senhaDeNascimento(String(c.nascimento).slice(0, 10));
+    const r = await pool.query('INSERT INTO candidato_login (cpf,senha_hash,nome) VALUES ($1,$2,$3) ON CONFLICT (cpf) DO NOTHING', [soDigitos(c.cpf), hashSenha(senhaNasc), c.nome]);
+    if (r.rowCount) criados++;
+  }
+  res.json({ ok: true, criados, semData, semAcesso: rows.length });
 });
 
 // ---- Prova Online ------------------------------------------
