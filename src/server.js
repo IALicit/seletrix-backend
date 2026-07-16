@@ -384,7 +384,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'login-nascimento-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'hero-botao-v1' }));
 
 app.get('/api/empresa/:slug', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
