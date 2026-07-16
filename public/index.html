@@ -31,8 +31,11 @@
   .brand .emblema{height:42px;width:auto;flex:none;object-fit:contain}
   .brand .nome{font-family:'Sora';font-weight:800;font-size:1.25rem;color:var(--navy);letter-spacing:-.02em}
   .brand .sub{font-size:.7rem;color:var(--suave);letter-spacing:.06em;text-transform:uppercase;margin-top:-2px}
-  .area-link{display:inline-flex;align-items:center;gap:7px;background:var(--papel);border:1px solid var(--linha);color:var(--navy);text-decoration:none;font-weight:600;font-size:.9rem;padding:9px 16px;border-radius:9px;transition:.15s}
-  .area-link:hover{background:#e3ebf2}
+  .area-link{display:inline-flex;align-items:center;gap:7px;background:var(--navy,#0b3a5e);border:1px solid var(--navy,#0b3a5e);color:#fff;text-decoration:none;font-weight:700;font-size:.9rem;padding:10px 18px;border-radius:9px;transition:.15s}
+  .area-link:hover{opacity:.9}
+  .hero-area{display:inline-flex;align-items:center;gap:8px;margin-top:18px;background:#fff;color:#0b3a5e;text-decoration:none;font-weight:800;font-size:1rem;padding:13px 22px;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.15)}
+  .hero-area:hover{transform:translateY(-1px)}
+  .hero-hint{font-size:.82rem;opacity:.85;margin-top:8px}
 
   /* herói institucional */
   .hero{position:relative;background:linear-gradient(135deg,var(--navy),var(--navy2));color:#fff;overflow:hidden}
@@ -113,6 +116,8 @@
     <div class="pill"><span class="dot"></span> Inscrições online, seguras e transparentes</div>
     <h1>Concursos Públicos e Processos Seletivos</h1>
     <p>Realize sua inscrição de forma simples e acompanhe todas as etapas em um só lugar.</p>
+    <a class="hero-area" href="/candidato.html" id="hero_area">👤 Já sou inscrito — acessar Área do Candidato →</a>
+    <p class="hero-hint">Acompanhe sua inscrição, 2ª via do boleto, documentos e resultados.</p>
   </div>
 </section>
 
@@ -126,10 +131,10 @@
 <footer>
   <div class="foot-in">
     <div class="fb">
-      <span class="nome">Seletrix</span>
-      <span class="fmeta">· Organização de Processos Seletivos</span>
+      <span class="nome" id="ft_nome">Seletrix</span>
+      <span class="fmeta" id="ft_sub">· Organização de Processos Seletivos</span>
     </div>
-    <div class="fmeta">© <span id="ano"></span> Seletrix · <a href="/candidato.html">Área do Candidato</a></div>
+    <div class="fmeta">© <span id="ano"></span> <span id="ft_nome2">Seletrix</span> · <a href="/candidato.html" id="ft_area">Área do Candidato</a></div>
   </div>
 </footer>
 
@@ -181,9 +186,13 @@
             if(nEl) nEl.textContent = e.nome;
             if(sEl) sEl.textContent = e.subtitulo || '';
             if(iEl && e.tem_logo){ iEl.src = '/empresa/'+e.id+'/logo'; iEl.alt = e.nome; }
-            var fn=document.querySelector('footer .nome'); if(fn) fn.textContent = e.nome;
-            var fm=document.querySelector('footer .fmeta'); if(fm && e.subtitulo) fm.textContent = '· ' + e.subtitulo;
-            var al=document.querySelector('.area-link'); if(al) al.href = '/candidato.html?e='+encodeURIComponent(e.slug);
+            var ftn=document.getElementById('ft_nome'); if(ftn) ftn.textContent = e.nome;
+            var ftn2=document.getElementById('ft_nome2'); if(ftn2) ftn2.textContent = e.nome;
+            var fts=document.getElementById('ft_sub'); if(fts) fts.textContent = e.subtitulo ? ('· ' + e.subtitulo) : '';
+            var areaUrl = '/candidato.html?e='+encodeURIComponent(e.slug);
+            var al=document.querySelector('.area-link'); if(al) al.href = areaUrl;
+            var ha=document.getElementById('hero_area'); if(ha) ha.href = areaUrl;
+            var fa=document.getElementById('ft_area'); if(fa) fa.href = areaUrl;
           }
         }catch(err){}
       }

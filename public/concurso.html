@@ -27,6 +27,9 @@
   .edital dd{font-weight:600;text-align:right}
   .edital .doc{display:block;margin-top:16px;text-align:center;background:#eef3f5;border-radius:9px;padding:11px;font-weight:600;text-decoration:none;color:var(--tinta);font-size:.9rem}
   .form{background:var(--branco);border:1px solid var(--linha);border-radius:14px;padding:24px}
+  .ja-inscrito{background:#eaf3fb;border:1px solid #bcd8f0;border-radius:12px;padding:14px 18px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:.92rem;color:#0b3a5e}
+  .ja-inscrito a{background:#0b3a5e;color:#fff;text-decoration:none;font-weight:700;padding:10px 16px;border-radius:9px;font-size:.88rem;white-space:nowrap}
+  .ja-inscrito a:hover{opacity:.9}
   .form h1{font-size:1.3rem;margin-bottom:4px}
   .form .intro{color:var(--suave);font-size:.92rem;margin-bottom:18px}
   .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
@@ -86,6 +89,10 @@
     <a class="doc" id="ed-pdf" href="#" target="_blank" style="display:none">📄 Ler o edital completo (PDF)</a>
   </aside>
   <main>
+    <div class="ja-inscrito">
+      <span>Já fez sua inscrição neste concurso?</span>
+      <a href="/candidato.html" id="ja_area">👤 Acessar Área do Candidato →</a>
+    </div>
     <form class="form" id="form" novalidate>
       <h1>Ficha de inscrição</h1>
       <p class="intro">Preencha seus dados com atenção. Após enviar, você receberá um número de protocolo.</p>
@@ -154,6 +161,7 @@
         var mk=document.getElementById('topo_marca'); if(mk) mk.textContent = e.nome;
         var vt=document.getElementById('topo_voltar'); if(vt) vt.href = '/e/' + e.slug;
         var ar=document.getElementById('topo_area'); if(ar) ar.href = '/candidato.html?e=' + encodeURIComponent(e.slug);
+        var ja=document.getElementById('ja_area'); if(ja) ja.href = '/candidato.html?e=' + encodeURIComponent(e.slug);
       }
       document.getElementById('ed-titulo').textContent = c.titulo || 'Processo Seletivo';
       document.getElementById('ed-orgao').textContent = c.orgao || '';
