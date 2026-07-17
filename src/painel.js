@@ -1263,9 +1263,20 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   }
   function fmtDTcurto(s){ var m=String(s||'').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/); return m?(m[3]+'/'+m[2]+' '+m[4]+':'+m[5]):s; }
   async function gerarAcessos(id){
-    if(!confirm('Gerar códigos de acesso para todos os candidatos deste concurso?'))return;
+    var p=PROVAS_PO.find(function(x){return x.id===id;});
+    var cg=(p&&p.cargos&&p.cargos.length)?p.cargos.join(', '):null;
+    if(!confirm('Liberar esta prova para '+(cg?('os candidatos dos cargos: '+cg):'TODOS os candidatos do concurso')+'?'))return;
     var r=await fetch('/admin/prova/'+id+'/acessos',{method:'POST'}); var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
-    alert('Acessos gerados: '+j.criados+' novo(s) de '+j.total+' candidato(s). (Quem já tinha código foi mantido.)');
+    if(j.diagnostico){
+      var d=j.diagnostico;
+      alert('NENHUM candidato foi encontrado com os cargos desta prova.\\n\\n'
+        +'Cargos marcados na prova:\\n  • '+d.cargos_da_prova.join('\\n  • ')
+        +'\\n\\nCargos que existem nos candidatos importados:\\n  • '
+        +d.cargos_dos_candidatos.map(function(x){return x.cargo+'  ('+x.qtd+' candidato(s))';}).join('\\n  • ')
+        +'\\n\\nOs nomes precisam ser o mesmo cargo. Corrija a lista de cargos do concurso (aba Concursos > Editar) para bater com a planilha.');
+      return;
+    }
+    alert('Prova liberada para '+j.criados+' novo(s) candidato(s), de '+j.total+' no total.'+(j.criados<j.total?'\\n(Quem já estava liberado foi mantido.)':''));
   }
   async function verAcessos(id){
     var p=PROVAS_PO.find(function(x){return x.id===id;});

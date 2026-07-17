@@ -462,7 +462,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'prova-por-cargo-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'cargo-normalizado-v1' }));
 
 function hostLimpo(req) {
   return String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim().toLowerCase().replace(/:\d+$/, '').replace(/^www\./, '');
@@ -2164,6 +2164,19 @@ const SQL_PROVA_SEL = `SELECT pr.*, p.titulo,p.duracao_min,p.max_saidas,p.questa
 
 // Cria a linha de acesso de quem ainda não tem, para provas ativas do concurso do candidato.
 // Evita o candidato ficar barrado no dia da prova porque alguém esqueceu de clicar em "Gerar acessos".
+// Comparação de cargo entre a planilha importada e o cadastro do concurso.
+// A planilha quase nunca vem igual ("ANALISTA JUDICIÁRIO" x "Analista Judiciario"),
+// então normalizamos: sem acento, minúsculo, sem espaço sobrando.
+function normCargoSQL(expr) {
+  return `lower(btrim(regexp_replace(translate(COALESCE(${expr},''),
+    'ÁÀÂÃÄáàâãäÉÈÊËéèêëÍÌÎÏíìîïÓÒÔÕÖóòôõöÚÙÛÜúùûüÇçÑñ',
+    'AAAAAaaaaaEEEEeeeeIIIIiiiiOOOOOoooooUUUUuuuuCcNn'), '\\s+', ' ', 'g')))`;
+}
+function normCargoJS(s) {
+  return String(s == null ? '' : s).normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
 async function garantirAcessos(cpf, nasc) {
   // Prova com cargos definidos só libera para quem tem um desses cargos.
   // Prova com a lista vazia continua valendo para todos (provas antigas).
@@ -2176,7 +2189,7 @@ async function garantirAcessos(cpf, nasc) {
        WHERE k.cpf=$1 AND k.nascimento IS NOT NULL AND to_char(k.nascimento,'DDMMYYYY')=$2 AND p.ativa=TRUE
          AND (jsonb_array_length(COALESCE(NULLIF(p.cargos,''),'[]')::jsonb) = 0
               OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(NULLIF(p.cargos,''),'[]')::jsonb) AS x(c)
-                          WHERE x.c = k.cargo))
+                          WHERE ${normCargoSQL('x.c')} = ${normCargoSQL('k.cargo')}))
       ON CONFLICT (prova_id, candidato_id) DO NOTHING`, [cpf, nasc]);
   } catch (e) { console.error('garantirAcessos:', e.message); }
 }
@@ -2253,14 +2266,22 @@ app.post('/admin/prova/:id/acessos', exigirSenha, async (req, res) => {
   let cargos = []; try { cargos = JSON.parse(pr.rows[0].cargos || '[]'); } catch {}
   // Sem cargos marcados = prova para todos os candidatos do concurso.
   const cands = cargos.length
-    ? await pool.query('SELECT id FROM candidatos WHERE concurso_id=$1 AND cargo = ANY($2::text[])', [pr.rows[0].concurso_id, cargos])
+    ? await pool.query(`SELECT id FROM candidatos WHERE concurso_id=$1
+        AND ${normCargoSQL('cargo')} = ANY($2::text[])`, [pr.rows[0].concurso_id, cargos.map(normCargoJS)])
     : await pool.query('SELECT id FROM candidatos WHERE concurso_id=$1', [pr.rows[0].concurso_id]);
   let criados = 0;
   for (const c of cands.rows) {
     const r = await pool.query('INSERT INTO prova_respostas (prova_id,candidato_id,codigo) VALUES ($1,$2,$3) ON CONFLICT (prova_id,candidato_id) DO NOTHING', [pid, c.id, '']);
     if (r.rowCount) criados++;
   }
-  res.json({ ok: true, criados, total: cands.rows.length, cargos });
+  // Não achou ninguém? Devolve o que existe na planilha para você comparar.
+  let diagnostico = null;
+  if (!cands.rows.length && cargos.length) {
+    const d = await pool.query(`SELECT COALESCE(cargo,'(em branco)') AS cargo, COUNT(*)::int AS qtd
+      FROM candidatos WHERE concurso_id=$1 GROUP BY 1 ORDER BY 2 DESC LIMIT 40`, [pr.rows[0].concurso_id]);
+    diagnostico = { cargos_da_prova: cargos, cargos_dos_candidatos: d.rows };
+  }
+  res.json({ ok: true, criados, total: cands.rows.length, cargos, diagnostico });
 });
 app.get('/admin/prova/:id/acessos.json', exigirSenha, async (req, res) => {
   if (!pool) return res.json({ acessos: [] });
