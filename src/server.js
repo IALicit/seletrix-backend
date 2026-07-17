@@ -462,7 +462,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'questao-empresa-concurso-cargos-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'prova-cpf-nascimento-v1' }));
 
 function hostLimpo(req) {
   return String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim().toLowerCase().replace(/:\d+$/, '').replace(/^www\./, '');
@@ -2154,14 +2154,41 @@ function janelaEntrada(a) {
   if (a.tolerancia_min > 0) { const fim = ini + a.tolerancia_min * 60000; if (now > fim) return { pode: false, motivo: 'encerrado' }; }
   return { pode: true };
 }
-async function autenticaProva(cpf, codigo) {
-  cpf = soDigitos(cpf); codigo = String(codigo || '').trim().toUpperCase();
-  if (cpf.length !== 11 || !codigo) return null;
-  const { rows } = await pool.query(`SELECT pr.*, p.titulo,p.duracao_min,p.max_saidas,p.questao_ids,p.ativa,p.inicio_em,p.tolerancia_min,
-      p.tipo,p.num_questoes,p.num_alternativas,p.gabarito,(p.pdf_dados IS NOT NULL) AS tem_pdf, k.nome
+// Acesso à prova: CPF + data de nascimento (DDMMAAAA), igual à Área do Candidato.
+// O código aleatório antigo continua gravado na coluna 'codigo', mas não é mais exigido.
+const SQL_PROVA_SEL = `SELECT pr.*, p.titulo,p.duracao_min,p.max_saidas,p.questao_ids,p.ativa,p.inicio_em,p.tolerancia_min,
+      p.tipo,p.num_questoes,p.num_alternativas,p.gabarito,(p.pdf_dados IS NOT NULL) AS tem_pdf, k.nome,
+      c.titulo AS concurso_titulo, e.nome AS empresa_nome
     FROM prova_respostas pr JOIN provas_online p ON p.id=pr.prova_id JOIN candidatos k ON k.id=pr.candidato_id
-    WHERE k.cpf=$1 AND pr.codigo=$2 LIMIT 1`, [cpf, codigo]);
-  return rows[0] || null;
+    LEFT JOIN concursos c ON c.id=p.concurso_id LEFT JOIN empresas e ON e.id=c.empresa_id`;
+
+// Cria a linha de acesso de quem ainda não tem, para provas ativas do concurso do candidato.
+// Evita o candidato ficar barrado no dia da prova porque alguém esqueceu de clicar em "Gerar acessos".
+async function garantirAcessos(cpf, nasc) {
+  await pool.query(`INSERT INTO prova_respostas (prova_id, candidato_id, codigo)
+    SELECT p.id, k.id, ''
+      FROM candidatos k JOIN provas_online p ON p.concurso_id = k.concurso_id
+     WHERE k.cpf=$1 AND k.nascimento IS NOT NULL AND to_char(k.nascimento,'DDMMYYYY')=$2 AND p.ativa=TRUE
+    ON CONFLICT (prova_id, candidato_id) DO NOTHING`, [cpf, nasc]).catch(() => {});
+}
+
+async function provasDoCandidato(cpf, senha) {
+  cpf = soDigitos(cpf);
+  const nasc = soDigitos(senha || ''); // aceita 01/01/1990 ou 01011990
+  if (cpf.length !== 11 || nasc.length !== 8) return [];
+  await garantirAcessos(cpf, nasc);
+  const { rows } = await pool.query(`${SQL_PROVA_SEL}
+    WHERE k.cpf=$1 AND k.nascimento IS NOT NULL AND to_char(k.nascimento,'DDMMYYYY')=$2
+    ORDER BY p.ativa DESC, pr.prova_id DESC`, [cpf, nasc]);
+  return rows;
+}
+
+async function autenticaProva(cpf, senha, provaId) {
+  const rows = await provasDoCandidato(cpf, senha);
+  if (!rows.length) return null;
+  const pid = parseInt(provaId) || 0;
+  if (pid) return rows.find((r) => r.prova_id === pid) || null;
+  return rows.length === 1 ? rows[0] : null; // ambíguo: o front precisa escolher
 }
 async function refreshTempo(a) { if (a.status === 'em_andamento' && a.iniciado_em && restanteSeg(a) <= 0) await finalizarProva(a); return a; }
 
@@ -2216,7 +2243,8 @@ app.post('/admin/prova/:id/acessos', exigirSenha, async (req, res) => {
 });
 app.get('/admin/prova/:id/acessos.json', exigirSenha, async (req, res) => {
   if (!pool) return res.json({ acessos: [] });
-  const { rows } = await pool.query(`SELECT k.nome,k.cpf,pr.codigo,pr.status,pr.saidas,pr.nota FROM prova_respostas pr JOIN candidatos k ON k.id=pr.candidato_id WHERE pr.prova_id=$1 ORDER BY k.nome`, [req.params.id]);
+  const { rows } = await pool.query(`SELECT k.nome,k.cpf,to_char(k.nascimento,'DD/MM/YYYY') AS nascimento,pr.status,pr.saidas,pr.nota
+    FROM prova_respostas pr JOIN candidatos k ON k.id=pr.candidato_id WHERE pr.prova_id=$1 ORDER BY k.nome`, [req.params.id]);
   res.json({ acessos: rows });
 });
 app.post('/admin/prova/:id/pdf', exigirSenha, async (req, res) => {
@@ -2231,7 +2259,7 @@ app.post('/admin/prova/:id/pdf', exigirSenha, async (req, res) => {
 });
 app.get('/api/prova/pdf', async (req, res) => {
   if (!pool) return res.status(503).send('Indisponível.');
-  const a = await autenticaProva(req.query.cpf, req.query.codigo);
+  const a = await autenticaProva(req.query.cpf, req.query.senha, req.query.prova_id);
   if (!a) return res.status(401).send('Acesso inválido.');
   const { rows } = await pool.query('SELECT pdf_mime,pdf_dados FROM provas_online WHERE id=$1', [a.prova_id]);
   if (!rows.length || !rows[0].pdf_dados) return res.status(404).send('Sem PDF.');
@@ -2306,8 +2334,18 @@ app.get('/admin/prova/:id/resultados.html', exigirSenha, async (req, res) => {
 // Candidato: ambiente de prova
 app.post('/api/prova/login', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
-  const a = await autenticaProva((req.body || {}).cpf, (req.body || {}).codigo);
-  if (!a) return res.status(401).json({ erro: 'CPF ou código de acesso inválido.' });
+  const b = req.body || {};
+  const lista = await provasDoCandidato(b.cpf, b.senha);
+  if (!lista.length) return res.status(401).json({ erro: 'CPF ou data de nascimento inválidos, ou você não tem prova liberada.' });
+  const pid = parseInt(b.prova_id) || 0;
+  // Mais de uma prova e nenhuma escolhida: o candidato precisa dizer qual.
+  if (!pid && lista.length > 1) {
+    return res.json({ ok: true, escolher: true, provas: lista.map((r) => ({
+      prova_id: r.prova_id, titulo: r.titulo, concurso: r.concurso_titulo || '', empresa: r.empresa_nome || '',
+      ativa: r.ativa, status: r.status })) });
+  }
+  const a = pid ? lista.find((r) => r.prova_id === pid) : lista[0];
+  if (!a) return res.status(401).json({ erro: 'Prova não encontrada para este CPF.' });
   if (!a.ativa) return res.status(403).json({ erro: 'Esta prova não está disponível no momento.' });
   await refreshTempo(a);
   let qids = []; try { qids = JSON.parse(a.questao_ids || '[]'); } catch {}
@@ -2315,11 +2353,11 @@ app.post('/api/prova/login', async (req, res) => {
   const questoes = (a.tipo === 'pdf') ? [] : await questoesParaProva(qids);
   const jan = janelaEntrada(a);
   const podeIniciar = !!a.iniciado_em || jan.pode;
-  res.json({ ok: true, nome: a.nome, titulo: a.titulo, duracao_min: a.duracao_min, max_saidas: a.max_saidas, status: a.status, saidas: a.saidas, nota: a.nota, restante_seg: restanteSeg(a), respostas, questoes, tipo: a.tipo || 'banco', num_questoes: a.num_questoes || 0, num_alternativas: a.num_alternativas || 4, tem_pdf: a.tem_pdf || false, inicio_em: a.inicio_em || '', inicio_fmt: a.inicio_em ? fmtDTBR(a.inicio_em) : '', tolerancia_min: a.tolerancia_min || 0, pode_iniciar: podeIniciar, janela_motivo: jan.motivo || '' });
+  res.json({ ok: true, prova_id: a.prova_id, nome: a.nome, titulo: a.titulo, duracao_min: a.duracao_min, max_saidas: a.max_saidas, status: a.status, saidas: a.saidas, nota: a.nota, restante_seg: restanteSeg(a), respostas, questoes, tipo: a.tipo || 'banco', num_questoes: a.num_questoes || 0, num_alternativas: a.num_alternativas || 4, tem_pdf: a.tem_pdf || false, inicio_em: a.inicio_em || '', inicio_fmt: a.inicio_em ? fmtDTBR(a.inicio_em) : '', tolerancia_min: a.tolerancia_min || 0, pode_iniciar: podeIniciar, janela_motivo: jan.motivo || '' });
 });
 app.post('/api/prova/iniciar', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
-  const a = await autenticaProva((req.body || {}).cpf, (req.body || {}).codigo);
+  const a = await autenticaProva((req.body || {}).cpf, (req.body || {}).senha, (req.body || {}).prova_id);
   if (!a) return res.status(401).json({ erro: 'Acesso inválido.' });
   if (!a.ativa) return res.status(403).json({ erro: 'Prova indisponível.' });
   await refreshTempo(a);
@@ -2338,7 +2376,7 @@ app.post('/api/prova/iniciar', async (req, res) => {
 app.post('/api/prova/responder', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
   const b = req.body || {};
-  const a = await autenticaProva(b.cpf, b.codigo);
+  const a = await autenticaProva(b.cpf, b.senha, b.prova_id);
   if (!a) return res.status(401).json({ erro: 'Acesso inválido.' });
   await refreshTempo(a);
   if (a.status !== 'em_andamento') return res.status(403).json({ erro: 'Prova não está em andamento.', status: a.status });
@@ -2349,7 +2387,7 @@ app.post('/api/prova/responder', async (req, res) => {
 });
 app.post('/api/prova/saida', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
-  const a = await autenticaProva((req.body || {}).cpf, (req.body || {}).codigo);
+  const a = await autenticaProva((req.body || {}).cpf, (req.body || {}).senha, (req.body || {}).prova_id);
   if (!a) return res.status(401).json({ erro: 'Acesso inválido.' });
   await refreshTempo(a);
   if (a.status !== 'em_andamento') return res.json({ status: a.status, saidas: a.saidas });
@@ -2360,7 +2398,7 @@ app.post('/api/prova/saida', async (req, res) => {
 });
 app.post('/api/prova/finalizar', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
-  const a = await autenticaProva((req.body || {}).cpf, (req.body || {}).codigo);
+  const a = await autenticaProva((req.body || {}).cpf, (req.body || {}).senha, (req.body || {}).prova_id);
   if (!a) return res.status(401).json({ erro: 'Acesso inválido.' });
   let qids = []; try { qids = JSON.parse(a.questao_ids || '[]'); } catch {}
   if (a.status === 'eliminado') return res.json({ status: 'eliminado' });

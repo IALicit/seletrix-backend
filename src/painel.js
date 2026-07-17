@@ -1248,14 +1248,14 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var p=PROVAS_PO.find(function(x){return x.id===id;});
     var d=await (await fetch('/admin/prova/'+id+'/acessos.json')).json();
     PO_ACESSOS=d.acessos; $('ac_titulo').textContent=p?p.titulo:'';
-    $('ac_lista').innerHTML='<table><thead><tr><th>Nome</th><th>CPF</th><th>Código</th><th>Status</th><th>Nota</th></tr></thead><tbody>'
-      +(d.acessos.length?d.acessos.map(function(a){return '<tr><td>'+esc(a.nome)+'</td><td>'+esc(a.cpf)+'</td><td><b>'+esc(a.codigo)+'</b></td><td>'+esc(a.status||'')+'</td><td>'+(a.nota!=null?a.nota:'')+'</td></tr>';}).join(''):'<tr><td colspan="5">Nenhum acesso gerado. Clique em "Gerar acessos".</td></tr>')
+    $('ac_lista').innerHTML='<table><thead><tr><th>Nome</th><th>CPF</th><th>Nascimento (senha)</th><th>Status</th><th>Nota</th></tr></thead><tbody>'
+      +(d.acessos.length?d.acessos.map(function(a){return '<tr><td>'+esc(a.nome)+'</td><td>'+esc(a.cpf)+'</td><td><b>'+esc(a.nascimento||'— sem data!')+'</b></td><td>'+esc(a.status||'')+'</td><td>'+(a.nota!=null?a.nota:'')+'</td></tr>';}).join(''):'<tr><td colspan="5">Nenhum candidato liberado ainda. Clique em "Gerar acessos".</td></tr>')
       +'</tbody></table>';
     $('modal_acessos').style.display='flex';
   }
   function copiarAcessos(){
-    var linhas=PO_ACESSOS.map(function(a){return a.nome+'\\tCPF: '+a.cpf+'\\tCódigo: '+a.codigo;}).join('\\n');
-    var txt='Acesso à Prova Online — '+location.origin+'/prova.html\\n\\n'+linhas;
+    var linhas=PO_ACESSOS.map(function(a){return a.nome+'\\tCPF: '+a.cpf+'\\tNascimento: '+(a.nascimento||'SEM DATA');}).join('\\n');
+    var txt='Acesso à Prova Online — '+location.origin+'/prova.html\\n(entrar com CPF e data de nascimento)\\n\\n'+linhas;
     navigator.clipboard.writeText(txt).then(function(){alert('Lista copiada!');},function(){alert('Não foi possível copiar.');});
   }
 
