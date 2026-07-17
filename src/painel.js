@@ -377,7 +377,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
 
   <section id="prova_online" style="display:none">
     <div class="card">
-      <h2 style="font-size:1.15rem;color:var(--navy);margin-bottom:10px">Nova prova online</h2>
+      <h2 id="po_form_titulo" style="font-size:1.15rem;color:var(--navy);margin-bottom:10px">Nova prova online</h2>
       <input type="hidden" id="po_id">
       <div class="grid2">
         <div><label>Concurso</label><select id="po_concurso"></select></div>
@@ -1129,8 +1129,14 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('po_concurso').onchange=function(){ carregarProvas(); renderCargosProva([]); carregarQuestoesProva(); };
     novaProva(); carregarQuestoesProva(); carregarProvas();
   }
-  function novaProva(){ $('po_id').value=''; $('po_titulo').value=''; $('po_duracao').value='60'; $('po_maxsaidas').value='2'; $('po_inicio').value=''; $('po_tolerancia').value='0'; PO_SEL={}; marcarSelProva(); atualizaSelQ(); $('po_tipo').value='banco'; PO_GAB=[]; $('po_numq').value='30'; $('po_numalt').value='4'; if($('po_pdf_file'))$('po_pdf_file').value=''; $('po_pdf_atual').innerHTML='<i>Nenhum PDF enviado.</i>'; toggleOrigem(); renderCargosProva([]); }
-  var PO_GAB=[];
+  function novaProva(){ $('po_id').value=''; $('po_titulo').value=''; $('po_duracao').value='60'; $('po_maxsaidas').value='2'; $('po_inicio').value=''; $('po_tolerancia').value='0'; PO_SEL={}; marcarSelProva(); atualizaSelQ(); PO_GAB=[]; $('po_numq').value='30'; $('po_numalt').value='4'; if($('po_pdf_file'))$('po_pdf_file').value=''; $('po_pdf_atual').innerHTML='<i>Nenhum PDF enviado.</i>'; PROVA_TEM_PDF=false; toggleOrigem(); renderCargosProva([]); marcaModoProva(); }
+  function marcaModoProva(){
+    var id=$('po_id').value;
+    $('po_form_titulo').innerHTML = id
+      ? 'Editando prova <span class="tag on">#'+id+'</span> <button class="mini" type="button" onclick="novaProva()" style="margin-left:8px">Criar outra prova</button>'
+      : 'Nova prova online';
+  }
+  var PO_GAB=[], PROVA_TEM_PDF=false;
   function toggleOrigem(){ var t=$('po_tipo').value; $('po_bloco_banco').style.display=(t==='banco')?'block':'none'; $('po_bloco_pdf').style.display=(t==='pdf')?'block':'none'; if(t==='pdf') renderGabarito(); }
   function renderGabarito(){
     var nq=Math.max(0,Math.min(200,parseInt($('po_numq').value)||0)), na=Math.max(2,Math.min(6,parseInt($('po_numalt').value)||4));
@@ -1152,6 +1158,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var b64=await toB64(f);
     var r=await fetch('/admin/prova/'+id+'/pdf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dataBase64:b64})});
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    PROVA_TEM_PDF=true;
     $('po_pdf_atual').innerHTML='PDF enviado ✓';
   }
   async function carregarQuestoesProva(){
@@ -1193,9 +1200,19 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     }
     var r=await fetch('/admin/prova',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
-    $('po_id').value=j.id;
-    if(tipo==='pdf' && $('po_pdf_file') && $('po_pdf_file').files[0]){ await enviarPdfProva(); }
-    alert('Prova salva!'); if(tipo==='banco') novaProva(); carregarProvas();
+    $('po_id').value=j.id; marcaModoProva();
+    var mandouPdf=false;
+    if(tipo==='pdf' && $('po_pdf_file') && $('po_pdf_file').files[0]){ await enviarPdfProva(); mandouPdf=PROVA_TEM_PDF; }
+    carregarProvas();
+    // Só mantemos o formulário aberto quando a prova em PDF ainda precisa do arquivo:
+    // o envio do PDF depende do id. Fora isso, limpamos — senão a próxima prova
+    // salva por cima desta.
+    var faltaPdf = (tipo==='pdf' && !mandouPdf && !PROVA_TEM_PDF);
+    if(faltaPdf){
+      alert('Prova salva!\\n\\nFalta enviar o arquivo PDF: escolha o arquivo abaixo e clique em "Enviar PDF".\\n\\nQuando terminar, clique em "Criar outra prova" para começar uma nova.');
+    } else {
+      alert('Prova salva!'); novaProva();
+    }
   }
   async function carregarProvas(){
     if(!$('po_concurso').value){ $('po_lista').innerHTML='<p class="hint">Selecione um concurso.</p>'; return; }
@@ -1227,8 +1244,9 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('po_inicio').value=p.inicio_em||''; $('po_tolerancia').value=p.tolerancia_min||0;
     PO_SEL={}; (p.questao_ids||[]).forEach(function(qid){PO_SEL[qid]=true;}); marcarSelProva(); atualizaSelQ();
     $('po_tipo').value=p.tipo||'banco';
-    renderCargosProva(p.cargos||[]);
+    renderCargosProva(p.cargos||[]); marcaModoProva();
     PO_GAB=(p.gabarito||[]).slice(); $('po_numq').value=p.num_questoes||30; $('po_numalt').value=p.num_alternativas||4;
+    PROVA_TEM_PDF=!!p.tem_pdf;
     $('po_pdf_atual').innerHTML=p.tem_pdf?'PDF enviado ✓ (envie outro para substituir)':'<i>Nenhum PDF enviado.</i>';
     if($('po_pdf_file'))$('po_pdf_file').value='';
     toggleOrigem();
