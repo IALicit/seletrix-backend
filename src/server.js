@@ -462,7 +462,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'prova-cpf-nascimento-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'limpar-candidatos-v1' }));
 
 function hostLimpo(req) {
   return String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim().toLowerCase().replace(/:\d+$/, '').replace(/^www\./, '');
@@ -2622,6 +2622,39 @@ app.get('/api/professor/questao/:id/imagem', async (req, res) => {
 });
 
 app.get('/admin', exigirSenha, (req, res) => res.send(PAINEL_HTML));
+
+// Apaga TODOS os candidatos de um concurso (desfaz uma importação errada).
+// Mantém o concurso, as provas, as questões, escolas e etapas.
+app.post('/admin/concurso/:id/limpar-candidatos', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const id = parseInt(req.params.id);
+  if (!id) return res.status(400).json({ erro: 'Concurso inválido.' });
+  if (String((req.body || {}).confirmar || '') !== 'EXCLUIR') return res.status(400).json({ erro: 'Confirmação inválida.' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const n = await client.query('SELECT COUNT(*)::int c FROM candidatos WHERE concurso_id=$1', [id]);
+    // CPFs deste concurso, para limpar depois os logins que ficarem órfãos
+    const cpfs = await client.query('SELECT DISTINCT cpf FROM candidatos WHERE concurso_id=$1', [id]);
+    await client.query('DELETE FROM titulos WHERE candidato_id IN (SELECT id FROM candidatos WHERE concurso_id=$1)', [id]);
+    await client.query('DELETE FROM prova_respostas WHERE candidato_id IN (SELECT id FROM candidatos WHERE concurso_id=$1)', [id]);
+    await client.query('DELETE FROM recursos WHERE candidato_id IN (SELECT id FROM candidatos WHERE concurso_id=$1)', [id]).catch(() => {});
+    await client.query('DELETE FROM candidatos WHERE concurso_id=$1', [id]);
+    // Só remove o login de quem não sobrou em nenhum outro concurso
+    let logins = 0;
+    const lista = cpfs.rows.map((r) => r.cpf).filter(Boolean);
+    if (lista.length) {
+      const del = await client.query(`DELETE FROM candidato_login WHERE cpf = ANY($1::text[])
+        AND cpf NOT IN (SELECT cpf FROM candidatos)`, [lista]);
+      logins = del.rowCount || 0;
+    }
+    await client.query('COMMIT');
+    res.json({ ok: true, excluidos: n.rows[0].c, logins });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ erro: 'Falha ao limpar: ' + e.message });
+  } finally { client.release(); }
+});
 
 app.delete('/admin/concurso/:id', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
