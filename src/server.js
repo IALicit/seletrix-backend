@@ -177,7 +177,7 @@ async function inicializarBanco() {
   // Prova online + respostas/sessão por candidato
   await pool.query(`CREATE TABLE IF NOT EXISTS provas_online (id SERIAL PRIMARY KEY, concurso_id INT, titulo TEXT,
     duracao_min INT DEFAULT 60, max_saidas INT DEFAULT 2, questao_ids TEXT DEFAULT '[]', ativa BOOLEAN DEFAULT TRUE, criado_em TIMESTAMPTZ DEFAULT now());`);
-  for (const col of ['inicio_em TEXT', 'tolerancia_min INT DEFAULT 0', 'tipo TEXT DEFAULT \'banco\'', 'pdf_mime TEXT', 'pdf_dados BYTEA', 'num_questoes INT DEFAULT 0', 'num_alternativas INT DEFAULT 4', 'gabarito TEXT DEFAULT \'[]\'']) {
+  for (const col of ['inicio_em TEXT', 'tolerancia_min INT DEFAULT 0', 'tipo TEXT DEFAULT \'banco\'', 'pdf_mime TEXT', 'pdf_dados BYTEA', 'num_questoes INT DEFAULT 0', 'num_alternativas INT DEFAULT 4', 'gabarito TEXT DEFAULT \'[]\'', 'cargos TEXT DEFAULT \'[]\'']) {
     await pool.query(`ALTER TABLE provas_online ADD COLUMN IF NOT EXISTS ${col}`);
   }
   await pool.query(`CREATE TABLE IF NOT EXISTS prova_respostas (id SERIAL PRIMARY KEY, prova_id INT, candidato_id INT, codigo TEXT,
@@ -462,7 +462,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'limpar-candidatos-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'prova-por-cargo-v1' }));
 
 function hostLimpo(req) {
   return String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim().toLowerCase().replace(/:\d+$/, '').replace(/^www\./, '');
@@ -2165,11 +2165,20 @@ const SQL_PROVA_SEL = `SELECT pr.*, p.titulo,p.duracao_min,p.max_saidas,p.questa
 // Cria a linha de acesso de quem ainda não tem, para provas ativas do concurso do candidato.
 // Evita o candidato ficar barrado no dia da prova porque alguém esqueceu de clicar em "Gerar acessos".
 async function garantirAcessos(cpf, nasc) {
-  await pool.query(`INSERT INTO prova_respostas (prova_id, candidato_id, codigo)
-    SELECT p.id, k.id, ''
-      FROM candidatos k JOIN provas_online p ON p.concurso_id = k.concurso_id
-     WHERE k.cpf=$1 AND k.nascimento IS NOT NULL AND to_char(k.nascimento,'DDMMYYYY')=$2 AND p.ativa=TRUE
-    ON CONFLICT (prova_id, candidato_id) DO NOTHING`, [cpf, nasc]).catch(() => {});
+  // Prova com cargos definidos só libera para quem tem um desses cargos.
+  // Prova com a lista vazia continua valendo para todos (provas antigas).
+  // NULLIF/COALESCE garantem um JSON válido antes do cast: o OR do Postgres não
+  // faz curto-circuito, e um '' na coluna quebraria a consulta inteira.
+  try {
+    await pool.query(`INSERT INTO prova_respostas (prova_id, candidato_id, codigo)
+      SELECT p.id, k.id, ''
+        FROM candidatos k JOIN provas_online p ON p.concurso_id = k.concurso_id
+       WHERE k.cpf=$1 AND k.nascimento IS NOT NULL AND to_char(k.nascimento,'DDMMYYYY')=$2 AND p.ativa=TRUE
+         AND (jsonb_array_length(COALESCE(NULLIF(p.cargos,''),'[]')::jsonb) = 0
+              OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(NULLIF(p.cargos,''),'[]')::jsonb) AS x(c)
+                          WHERE x.c = k.cargo))
+      ON CONFLICT (prova_id, candidato_id) DO NOTHING`, [cpf, nasc]);
+  } catch (e) { console.error('garantirAcessos:', e.message); }
 }
 
 async function provasDoCandidato(cpf, senha) {
@@ -2197,8 +2206,8 @@ app.get('/admin/provas.json', exigirSenha, async (req, res) => {
   if (!pool) return res.json({ provas: [] });
   const cid = parseInt(req.query.concurso) || 0;
   const w = cid ? 'WHERE concurso_id=$1' : ''; const p = cid ? [cid] : [];
-  const { rows } = await pool.query(`SELECT id,concurso_id,titulo,duracao_min,max_saidas,questao_ids,ativa,inicio_em,tolerancia_min,tipo,num_questoes,num_alternativas,gabarito,(pdf_dados IS NOT NULL) AS tem_pdf FROM provas_online ${w} ORDER BY id DESC`, p);
-  res.json({ provas: rows.map((r) => { let q = []; try { q = JSON.parse(r.questao_ids || '[]'); } catch {} let g = []; try { g = JSON.parse(r.gabarito || '[]'); } catch {} return { id: r.id, concurso_id: r.concurso_id, titulo: r.titulo, duracao_min: r.duracao_min, max_saidas: r.max_saidas, questao_ids: q, num_questoes: (r.tipo === 'pdf' ? r.num_questoes : q.length), ativa: r.ativa, inicio_em: r.inicio_em || '', tolerancia_min: r.tolerancia_min || 0, tipo: r.tipo || 'banco', num_alternativas: r.num_alternativas || 4, gabarito: g, tem_pdf: r.tem_pdf || false }; }) });
+  const { rows } = await pool.query(`SELECT id,concurso_id,titulo,duracao_min,max_saidas,questao_ids,ativa,inicio_em,tolerancia_min,tipo,num_questoes,num_alternativas,gabarito,cargos,(pdf_dados IS NOT NULL) AS tem_pdf FROM provas_online ${w} ORDER BY id DESC`, p);
+  res.json({ provas: rows.map((r) => { let q = []; try { q = JSON.parse(r.questao_ids || '[]'); } catch {} let g = []; try { g = JSON.parse(r.gabarito || '[]'); } catch {} let cg = []; try { cg = JSON.parse(r.cargos || '[]'); } catch {} return { cargos: cg, id: r.id, concurso_id: r.concurso_id, titulo: r.titulo, duracao_min: r.duracao_min, max_saidas: r.max_saidas, questao_ids: q, num_questoes: (r.tipo === 'pdf' ? r.num_questoes : q.length), ativa: r.ativa, inicio_em: r.inicio_em || '', tolerancia_min: r.tolerancia_min || 0, tipo: r.tipo || 'banco', num_alternativas: r.num_alternativas || 4, gabarito: g, tem_pdf: r.tem_pdf || false }; }) });
 });
 app.post('/admin/prova', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
@@ -2215,11 +2224,19 @@ app.post('/admin/prova', exigirSenha, async (req, res) => {
   const numA = Math.max(2, Math.min(6, parseInt(b.num_alternativas) || 4));
   const gabarito = Array.isArray(b.gabarito) ? b.gabarito.map((x) => (x === null || x === '' ? null : parseInt(x))) : [];
   if (!cid) return res.status(400).json({ erro: 'Selecione o concurso.' });
+  // Cargos da prova: só aceita os que existem no concurso. Vazio = todos.
+  let cargosProva = [];
+  {
+    const cc = await pool.query('SELECT cargos FROM concursos WHERE id=$1', [cid]);
+    let doConc = []; try { doConc = JSON.parse((cc.rows[0] || {}).cargos || '[]'); } catch {}
+    const ped = Array.isArray(b.cargos) ? b.cargos.map((x) => String(x || '').trim()).filter(Boolean) : [];
+    cargosProva = [...new Set(ped.filter((x) => doConc.includes(x)))];
+  }
   if (!titulo) return res.status(400).json({ erro: 'Informe o título da prova.' });
   if (tipo === 'banco' && !qids.length) return res.status(400).json({ erro: 'Selecione ao menos uma questão.' });
   if (tipo === 'pdf' && numQ < 1) return res.status(400).json({ erro: 'Informe o número de questões.' });
-  if (b.id) { await pool.query('UPDATE provas_online SET titulo=$1,duracao_min=$2,max_saidas=$3,questao_ids=$4,ativa=$5,inicio_em=$6,tolerancia_min=$7,tipo=$8,num_questoes=$9,num_alternativas=$10,gabarito=$11 WHERE id=$12', [titulo, dur, maxs, JSON.stringify(qids), b.ativa !== false, inicio, tol, tipo, numQ, numA, JSON.stringify(gabarito), b.id]); return res.json({ ok: true, id: b.id }); }
-  const r = await pool.query('INSERT INTO provas_online (concurso_id,titulo,duracao_min,max_saidas,questao_ids,inicio_em,tolerancia_min,tipo,num_questoes,num_alternativas,gabarito) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id', [cid, titulo, dur, maxs, JSON.stringify(qids), inicio, tol, tipo, numQ, numA, JSON.stringify(gabarito)]);
+  if (b.id) { await pool.query('UPDATE provas_online SET titulo=$1,duracao_min=$2,max_saidas=$3,questao_ids=$4,ativa=$5,inicio_em=$6,tolerancia_min=$7,tipo=$8,num_questoes=$9,num_alternativas=$10,gabarito=$11,cargos=$12 WHERE id=$13', [titulo, dur, maxs, JSON.stringify(qids), b.ativa !== false, inicio, tol, tipo, numQ, numA, JSON.stringify(gabarito), JSON.stringify(cargosProva), b.id]); return res.json({ ok: true, id: b.id }); }
+  const r = await pool.query('INSERT INTO provas_online (concurso_id,titulo,duracao_min,max_saidas,questao_ids,inicio_em,tolerancia_min,tipo,num_questoes,num_alternativas,gabarito,cargos) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id', [cid, titulo, dur, maxs, JSON.stringify(qids), inicio, tol, tipo, numQ, numA, JSON.stringify(gabarito), JSON.stringify(cargosProva)]);
   res.json({ ok: true, id: r.rows[0].id });
 });
 app.delete('/admin/prova/:id', exigirSenha, async (req, res) => {
@@ -2231,15 +2248,19 @@ app.delete('/admin/prova/:id', exigirSenha, async (req, res) => {
 app.post('/admin/prova/:id/acessos', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
   const pid = parseInt(req.params.id);
-  const pr = await pool.query('SELECT concurso_id FROM provas_online WHERE id=$1', [pid]);
+  const pr = await pool.query('SELECT concurso_id, cargos FROM provas_online WHERE id=$1', [pid]);
   if (!pr.rows.length) return res.status(404).json({ erro: 'Prova não encontrada.' });
-  const cands = await pool.query('SELECT id FROM candidatos WHERE concurso_id=$1', [pr.rows[0].concurso_id]);
+  let cargos = []; try { cargos = JSON.parse(pr.rows[0].cargos || '[]'); } catch {}
+  // Sem cargos marcados = prova para todos os candidatos do concurso.
+  const cands = cargos.length
+    ? await pool.query('SELECT id FROM candidatos WHERE concurso_id=$1 AND cargo = ANY($2::text[])', [pr.rows[0].concurso_id, cargos])
+    : await pool.query('SELECT id FROM candidatos WHERE concurso_id=$1', [pr.rows[0].concurso_id]);
   let criados = 0;
   for (const c of cands.rows) {
-    const r = await pool.query('INSERT INTO prova_respostas (prova_id,candidato_id,codigo) VALUES ($1,$2,$3) ON CONFLICT (prova_id,candidato_id) DO NOTHING', [pid, c.id, gerarCodigo()]);
+    const r = await pool.query('INSERT INTO prova_respostas (prova_id,candidato_id,codigo) VALUES ($1,$2,$3) ON CONFLICT (prova_id,candidato_id) DO NOTHING', [pid, c.id, '']);
     if (r.rowCount) criados++;
   }
-  res.json({ ok: true, criados, total: cands.rows.length });
+  res.json({ ok: true, criados, total: cands.rows.length, cargos });
 });
 app.get('/admin/prova/:id/acessos.json', exigirSenha, async (req, res) => {
   if (!pool) return res.json({ acessos: [] });

@@ -388,6 +388,8 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
         <div><label>Tolerância de entrada (min) — 0 = sem limite</label><input id="po_tolerancia" type="number" min="0" value="10"></div>
         <div><label>Origem das questões</label><select id="po_tipo" onchange="toggleOrigem()"><option value="banco">Banco de questões</option><option value="pdf">PDF + gabarito</option></select></div>
       </div>
+      <label style="margin-top:14px">Cargos que fazem esta prova</label>
+      <div id="po_cargos" style="border:1px solid var(--linha);border-radius:8px;padding:10px;max-height:150px;overflow:auto"><p class="hint">Selecione o concurso.</p></div>
       <div id="po_bloco_banco">
         <label style="margin-top:14px">Questões (marque as que entram na prova)</label>
         <input id="po_busca_q" placeholder="Filtrar por enunciado/disciplina" oninput="carregarQuestoesProva()" style="margin-bottom:8px">
@@ -1124,10 +1126,10 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   function popularProvaOnline(){
     $('po_link').textContent = location.origin + '/prova.html';
     $('po_concurso').innerHTML='<option value="">Selecione o concurso...</option>'+CONCURSOS.map(function(c){return '<option value="'+c.id+'">'+esc(c.titulo)+'</option>';}).join('');
-    $('po_concurso').onchange=function(){ carregarProvas(); carregarQuestoesProva(); };
+    $('po_concurso').onchange=function(){ carregarProvas(); renderCargosProva([]); carregarQuestoesProva(); };
     novaProva(); carregarQuestoesProva(); carregarProvas();
   }
-  function novaProva(){ $('po_id').value=''; $('po_titulo').value=''; $('po_duracao').value='60'; $('po_maxsaidas').value='2'; $('po_inicio').value=''; $('po_tolerancia').value='0'; PO_SEL={}; marcarSelProva(); atualizaSelQ(); $('po_tipo').value='banco'; PO_GAB=[]; $('po_numq').value='30'; $('po_numalt').value='4'; if($('po_pdf_file'))$('po_pdf_file').value=''; $('po_pdf_atual').innerHTML='<i>Nenhum PDF enviado.</i>'; toggleOrigem(); }
+  function novaProva(){ $('po_id').value=''; $('po_titulo').value=''; $('po_duracao').value='60'; $('po_maxsaidas').value='2'; $('po_inicio').value=''; $('po_tolerancia').value='0'; PO_SEL={}; marcarSelProva(); atualizaSelQ(); $('po_tipo').value='banco'; PO_GAB=[]; $('po_numq').value='30'; $('po_numalt').value='4'; if($('po_pdf_file'))$('po_pdf_file').value=''; $('po_pdf_atual').innerHTML='<i>Nenhum PDF enviado.</i>'; toggleOrigem(); renderCargosProva([]); }
   var PO_GAB=[];
   function toggleOrigem(){ var t=$('po_tipo').value; $('po_bloco_banco').style.display=(t==='banco')?'block':'none'; $('po_bloco_pdf').style.display=(t==='pdf')?'block':'none'; if(t==='pdf') renderGabarito(); }
   function renderGabarito(){
@@ -1157,10 +1159,18 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var cid=$('po_concurso')?$('po_concurso').value:'';
     if(!cid){ $('po_questoes').innerHTML='<p class="hint">Selecione o concurso acima para ver as questões dele.</p>'; return; }
     var d=await (await fetch('/admin/questoes.json?concurso='+encodeURIComponent(cid)+'&busca='+encodeURIComponent($('po_busca_q').value))).json();
-    $('po_questoes').innerHTML = d.questoes.length ? d.questoes.map(function(q){
+    // Se a prova tem cargos marcados, mostra só as questões daqueles cargos
+    // (questão sem cargo serve para todos, então sempre aparece).
+    var cgs=cargosProvaSel();
+    var qs=d.questoes;
+    if(cgs.length){ qs=qs.filter(function(q){
+      if(!q.cargos||!q.cargos.length) return true;
+      return q.cargos.some(function(c){return cgs.indexOf(c)>=0;});
+    }); }
+    $('po_questoes').innerHTML = qs.length ? qs.map(function(q){
       var tags=[q.disciplina,q.nivel].concat(q.cargos||[]).filter(Boolean).join(' · ');
       return '<label style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px solid var(--linha);font-weight:400"><input type="checkbox" class="poq" value="'+q.id+'" '+(PO_SEL[q.id]?'checked':'')+' onchange="togglePoQ('+q.id+',this.checked)" style="width:auto;margin-top:3px"><span><span style="font-weight:600">'+esc(q.enunciado)+'</span>'+(tags?' <span class="hint">('+esc(tags)+')</span>':'')+'</span></label>';
-    }).join('') : '<p class="hint">Nenhuma questão cadastrada para este concurso. Peça ao professor para cadastrar na Área do Professor.</p>';
+    }).join('') : '<p class="hint">Nenhuma questão para este concurso'+(cgs.length?' nos cargos marcados':'')+'. Peça ao professor para cadastrar na Área do Professor.</p>';
   }
   function togglePoQ(id,on){ if(on)PO_SEL[id]=true; else delete PO_SEL[id]; atualizaSelQ(); }
   function marcarSelProva(){ document.querySelectorAll('.poq').forEach(function(c){c.checked=!!PO_SEL[c.value];}); }
@@ -1169,7 +1179,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     if(!$('po_concurso').value){alert('Selecione o concurso.');return;}
     if(!$('po_titulo').value.trim()){alert('Informe o título.');return;}
     var tipo=$('po_tipo').value;
-    var body={id:$('po_id').value||undefined, concurso_id:$('po_concurso').value, titulo:$('po_titulo').value, duracao_min:$('po_duracao').value, max_saidas:$('po_maxsaidas').value, inicio_em:$('po_inicio').value, tolerancia_min:$('po_tolerancia').value, tipo:tipo};
+    var body={id:$('po_id').value||undefined, concurso_id:$('po_concurso').value, titulo:$('po_titulo').value, duracao_min:$('po_duracao').value, max_saidas:$('po_maxsaidas').value, inicio_em:$('po_inicio').value, tolerancia_min:$('po_tolerancia').value, tipo:tipo, cargos:cargosProvaSel()};
     if(tipo==='banco'){
       var ids=Object.keys(PO_SEL).map(function(x){return parseInt(x);});
       if(!ids.length){alert('Selecione ao menos uma questão.');return;}
@@ -1192,19 +1202,32 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var d=await (await fetch('/admin/provas.json?concurso='+$('po_concurso').value)).json();
     $('po_lista').innerHTML = d.provas.length ? d.provas.map(function(p){
       return '<div class="card" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">'
-        +'<div><b>'+esc(p.titulo)+'</b>'+(p.tipo==='pdf'?' <span class="tag on">PDF</span>':'')+'<div class="hint">'+p.num_questoes+' questões · '+p.duracao_min+' min · máx. '+p.max_saidas+' saídas'+(p.inicio_em?' · início '+fmtDTcurto(p.inicio_em)+(p.tolerancia_min?(' (+'+p.tolerancia_min+'min)'):''):'')+'</div></div>'
+        +'<div><b>'+esc(p.titulo)+'</b>'+(p.tipo==='pdf'?' <span class="tag on">PDF</span>':'')+((p.cargos&&p.cargos.length)?(' '+p.cargos.map(function(c){return '<span class="tag on">'+esc(c)+'</span>';}).join(' ')):' <span class="tag">todos os cargos</span>')+'<div class="hint">'+p.num_questoes+' questões · '+p.duracao_min+' min · máx. '+p.max_saidas+' saídas'+(p.inicio_em?' · início '+fmtDTcurto(p.inicio_em)+(p.tolerancia_min?(' (+'+p.tolerancia_min+'min)'):''):'')+'</div></div>'
         +'<div class="row-actions"><button class="mini" onclick="editarProva('+p.id+')">Editar</button><button class="mini" onclick="gerarAcessos('+p.id+')">Gerar acessos</button><button class="mini" onclick="verAcessos('+p.id+')">Ver acessos</button><button class="mini" onclick="abrirResultados('+p.id+')">Resultados PDF</button><button class="mini" onclick="excelResultados('+p.id+')">Excel</button><button class="mini" onclick="zerarProva('+p.id+')">Zerar tentativas</button><button class="del" onclick="delProva('+p.id+')">Excluir</button></div>'
         +'</div></div>';
     }).join('') : '<p class="hint">Nenhuma prova criada para este concurso.</p>';
     PROVAS_PO=d.provas;
   }
   var PROVAS_PO=[];
+  function renderCargosProva(marcados){
+    var c=CONCURSOS.find(function(x){return String(x.id)===String($('po_concurso').value);});
+    if(!c){ $('po_cargos').innerHTML='<p class="hint">Selecione o concurso.</p>'; return; }
+    var lista=c.cargos||[];
+    if(!lista.length){ $('po_cargos').innerHTML='<p class="hint">Este concurso não tem cargos cadastrados.</p>'; return; }
+    var sel=marcados||[];
+    $('po_cargos').innerHTML=lista.map(function(cg){
+      var on=sel.indexOf(cg)>=0?'checked':'';
+      return '<label style="display:flex;align-items:center;gap:8px;font-weight:400;padding:4px 0"><input type="checkbox" class="pocg" value="'+esc(cg).replace(/"/g,'&quot;')+'" '+on+' onchange="carregarQuestoesProva()" style="width:auto"> '+esc(cg)+'</label>';
+    }).join('')+'<p class="hint" style="margin-top:6px">Nenhum marcado = todos os cargos fazem esta prova.</p>';
+  }
+  function cargosProvaSel(){ return Array.from(document.querySelectorAll('.pocg:checked')).map(function(c){return c.value;}); }
   function editarProva(id){
     var p=PROVAS_PO.find(function(x){return x.id===id;}); if(!p)return;
     $('po_id').value=p.id; $('po_titulo').value=p.titulo; $('po_duracao').value=p.duracao_min; $('po_maxsaidas').value=p.max_saidas;
     $('po_inicio').value=p.inicio_em||''; $('po_tolerancia').value=p.tolerancia_min||0;
     PO_SEL={}; (p.questao_ids||[]).forEach(function(qid){PO_SEL[qid]=true;}); marcarSelProva(); atualizaSelQ();
     $('po_tipo').value=p.tipo||'banco';
+    renderCargosProva(p.cargos||[]);
     PO_GAB=(p.gabarito||[]).slice(); $('po_numq').value=p.num_questoes||30; $('po_numalt').value=p.num_alternativas||4;
     $('po_pdf_atual').innerHTML=p.tem_pdf?'PDF enviado ✓ (envie outro para substituir)':'<i>Nenhum PDF enviado.</i>';
     if($('po_pdf_file'))$('po_pdf_file').value='';
