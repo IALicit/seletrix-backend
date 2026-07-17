@@ -16,6 +16,80 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 app.use(express.json({ limit: '40mb' })); // PDFs/anexos chegam em base64
 app.use(express.urlencoded({ extended: true, limit: '40mb' }));
+
+// ---- Vitrine com marca por domínio (prévia de link: WhatsApp/Facebook) ----
+// O WhatsApp não roda JavaScript: ele lê o HTML cru. Por isso o título, a
+// descrição e a imagem precisam já sair prontos do servidor, conforme o
+// domínio que foi acessado. Precisa vir ANTES do express.static.
+const fs = require('fs');
+const CAMINHO_INDEX = path.join(__dirname, '..', 'public', 'index.html');
+
+function escaparHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function hostLimpo(req) {
+  return String(req.headers.host || '').toLowerCase().split(':')[0].replace(/^www\./, '');
+}
+
+async function empresaPorHost(req) {
+  if (!pool) return null;
+  const h = hostLimpo(req);
+  if (!h) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, slug, nome, subtitulo, (logo_dados IS NOT NULL) AS tem_logo FROM empresas
+       WHERE ativa=TRUE AND dominio IS NOT NULL AND dominio<>''
+         AND (LOWER(REPLACE(REPLACE(dominio,'https://',''),'http://','')) = $1
+           OR LOWER(REPLACE(REPLACE(REPLACE(dominio,'https://',''),'http://',''),'www.','')) = $1)
+       LIMIT 1`, [h]);
+    return rows[0] || null;
+  } catch (e) { return null; }
+}
+
+async function servirVitrine(req, res) {
+  let html;
+  try { html = fs.readFileSync(CAMINHO_INDEX, 'utf8'); }
+  catch (e) { return res.status(500).send('index.html nao encontrado'); }
+
+  const emp = await empresaPorHost(req);
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0];
+  const base = proto + '://' + String(req.headers.host || '').split(':')[0];
+
+  const nome = emp ? emp.nome : 'Seletrix';
+  const sub = (emp && emp.subtitulo) ? emp.subtitulo : 'Concursos Públicos e Processos Seletivos';
+  const titulo = nome + ' — ' + sub;
+  const descricao = 'Inscrições online para concursos públicos e processos seletivos. Seguras, transparentes e organizadas pela ' + nome + '.';
+  const imagem = (emp && emp.tem_logo) ? (base + '/empresa/' + emp.id + '/logo') : (base + '/logo.png');
+  const icone = (emp && emp.tem_logo) ? ('/empresa/' + emp.id + '/logo') : '/logo.png';
+
+  const og = [
+    '<meta property="og:type" content="website">',
+    '<meta property="og:site_name" content="' + escaparHtml(nome) + '">',
+    '<meta property="og:title" content="' + escaparHtml(titulo) + '">',
+    '<meta property="og:description" content="' + escaparHtml(descricao) + '">',
+    '<meta property="og:url" content="' + escaparHtml(base) + '/">',
+    '<meta property="og:image" content="' + escaparHtml(imagem) + '">',
+    '<meta name="twitter:card" content="summary_large_image">',
+    '<meta name="twitter:title" content="' + escaparHtml(titulo) + '">',
+    '<meta name="twitter:description" content="' + escaparHtml(descricao) + '">',
+    '<meta name="twitter:image" content="' + escaparHtml(imagem) + '">',
+  ].join('\n');
+
+  html = html
+    .replace(/<title>[\s\S]*?<\/title>/i, '<title>' + escaparHtml(titulo) + '</title>')
+    .replace(/<meta\s+name="description"[^>]*>/i, '<meta name="description" content="' + escaparHtml(descricao) + '">')
+    .replace(/<link\s+rel="icon"[^>]*>/i, '<link rel="icon" href="' + escaparHtml(icone) + '" type="image/png">\n' + og);
+
+  res.set('Cache-Control', 'no-cache');
+  res.type('html').send(html);
+}
+
+app.get('/', servirVitrine);
+app.get('/index.html', servirVitrine);
+
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 // ---- Banco --------------------------------------------------
@@ -385,7 +459,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'dominio-empresa-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'meta-dominio-v1' }));
 
 function hostLimpo(req) {
   return String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim().toLowerCase().replace(/:\d+$/, '').replace(/^www\./, '');
