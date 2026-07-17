@@ -1150,16 +1150,24 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('po_gabarito').innerHTML=html;
   }
   function setGab(q,a){ PO_GAB[q]=a; renderGabarito(); }
-  async function enviarPdfProva(){
-    var id=$('po_id').value; if(!id){alert('Salve a prova primeiro; depois envie o PDF.');return;}
-    var f=$('po_pdf_file').files[0]; if(!f){alert('Escolha um arquivo PDF.');return;}
-    if(f.type!=='application/pdf'){alert('Envie um arquivo PDF.');return;}
-    if(f.size>30*1024*1024){alert('PDF muito grande (máx. 30 MB).');return;}
+  async function enviarPdfProva(auto){
+    var id=$('po_id').value; if(!id){alert('Salve a prova primeiro; depois envie o PDF.');return false;}
+    var f=$('po_pdf_file').files[0]; if(!f){alert('Escolha um arquivo PDF.');return false;}
+    if(f.type!=='application/pdf'){alert('Envie um arquivo PDF.');return false;}
+    if(f.size>30*1024*1024){alert('PDF muito grande (máx. 30 MB).');return false;}
     var b64=await toB64(f);
     var r=await fetch('/admin/prova/'+id+'/pdf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dataBase64:b64})});
-    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return false;}
     PROVA_TEM_PDF=true;
     $('po_pdf_atual').innerHTML='PDF enviado ✓';
+    // Enviado o PDF, a prova está completa: limpamos o formulário para que a
+    // próxima prova NÃO seja salva por cima desta. (auto = veio do salvarProva,
+    // que já cuida do aviso e da limpeza.)
+    if(!auto){
+      alert('PDF enviado! Prova #'+id+' concluída.\\n\\nO formulário foi limpo para você criar a próxima prova.');
+      carregarProvas(); novaProva();
+    }
+    return true;
   }
   async function carregarQuestoesProva(){
     // Questão agora pertence a um concurso: só listamos as do concurso desta prova.
@@ -1202,14 +1210,14 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
     $('po_id').value=j.id; marcaModoProva();
     var mandouPdf=false;
-    if(tipo==='pdf' && $('po_pdf_file') && $('po_pdf_file').files[0]){ await enviarPdfProva(); mandouPdf=PROVA_TEM_PDF; }
+    if(tipo==='pdf' && $('po_pdf_file') && $('po_pdf_file').files[0]){ mandouPdf=await enviarPdfProva(true); }
     carregarProvas();
     // Só mantemos o formulário aberto quando a prova em PDF ainda precisa do arquivo:
     // o envio do PDF depende do id. Fora isso, limpamos — senão a próxima prova
     // salva por cima desta.
     var faltaPdf = (tipo==='pdf' && !mandouPdf && !PROVA_TEM_PDF);
     if(faltaPdf){
-      alert('Prova salva!\\n\\nFalta enviar o arquivo PDF: escolha o arquivo abaixo e clique em "Enviar PDF".\\n\\nQuando terminar, clique em "Criar outra prova" para começar uma nova.');
+      alert('Prova salva!\\n\\nAgora escolha o arquivo PDF abaixo e clique em "Enviar PDF".\\n\\nAssim que o PDF subir, o formulário se limpa sozinho e você já pode criar a próxima prova.');
     } else {
       alert('Prova salva!'); novaProva();
     }
