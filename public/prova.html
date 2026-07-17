@@ -57,11 +57,15 @@
 <div class="center" id="tela_login">
   <div class="card">
     <h1>Prova Online</h1>
-    <p class="sub">Entre com seu CPF e o código de acesso que você recebeu.</p>
+    <p class="sub">Entre com seu CPF e sua data de nascimento.</p>
     <label>CPF</label>
     <input id="in_cpf" inputmode="numeric" placeholder="000.000.000-00">
-    <label>Código de acesso</label>
-    <input id="in_codigo" placeholder="Ex.: K7P2QМ" style="text-transform:uppercase">
+    <label>Data de nascimento</label>
+    <input id="in_senha" inputmode="numeric" placeholder="dd/mm/aaaa">
+    <div id="box_escolha" style="display:none">
+      <label>Você tem mais de uma prova. Escolha:</label>
+      <select id="in_prova"></select>
+    </div>
     <button id="btn_entrar" onclick="entrar()">Entrar</button>
     <div class="erro" id="login_erro"></div>
   </div>
@@ -112,24 +116,38 @@
 
 <script>
   var $=function(id){return document.getElementById(id);};
-  var SES={cpf:'',codigo:''}, PROVA=null, RESP={}, RESTANTE=0, TIMER=null, FORA=false, ULT_SAIDA=0, RODANDO=false;
+  var SES={cpf:'',senha:'',prova_id:''}, PROVA=null, RESP={}, RESTANTE=0, TIMER=null, FORA=false, ULT_SAIDA=0, RODANDO=false;
 
   $('in_cpf').addEventListener('input',function(){var v=$('in_cpf').value.replace(/\D/g,'').slice(0,11);v=v.replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d{1,2})$/,'$1-$2');$('in_cpf').value=v;});
+  $('in_senha').addEventListener('input',function(){var v=$('in_senha').value.replace(/\D/g,'').slice(0,8);v=v.replace(/(\d{2})(\d)/,'$1/$2').replace(/(\d{2})\/(\d{2})(\d)/,'$1/$2/$3');$('in_senha').value=v;});
 
   async function api(rota,extra){
-    var body=Object.assign({cpf:SES.cpf,codigo:SES.codigo},extra||{});
+    var body=Object.assign({cpf:SES.cpf,senha:SES.senha,prova_id:SES.prova_id},extra||{});
     var r=await fetch('/api/prova/'+rota,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     return {ok:r.ok, j:await r.json()};
   }
 
   async function entrar(){
-    var cpf=$('in_cpf').value.replace(/\D/g,''), codigo=$('in_codigo').value.trim().toUpperCase();
-    if(cpf.length!==11||!codigo){ mostraErro('Informe o CPF e o código.'); return; }
-    SES.cpf=cpf; SES.codigo=codigo;
+    var cpf=$('in_cpf').value.replace(/\D/g,''), senha=$('in_senha').value.replace(/\D/g,'');
+    if(cpf.length!==11){ mostraErro('Informe o CPF completo.'); return; }
+    if(senha.length!==8){ mostraErro('Informe a data de nascimento (dd/mm/aaaa).'); return; }
+    SES.cpf=cpf; SES.senha=senha;
+    // Se a lista de escolha já apareceu, manda junto qual prova o candidato marcou.
+    if($('box_escolha').style.display!=='none' && $('in_prova').value) SES.prova_id=$('in_prova').value;
     $('btn_entrar').disabled=true; $('btn_entrar').textContent='Entrando...';
     var res=await api('login');
     $('btn_entrar').disabled=false; $('btn_entrar').textContent='Entrar';
     if(!res.ok){ mostraErro(res.j.erro||'Não foi possível entrar.'); return; }
+    if(res.j.escolher){ // mais de uma prova: mostra o seletor e espera o candidato escolher
+      $('in_prova').innerHTML=res.j.provas.map(function(p){
+        var det=[p.concurso,p.empresa].filter(Boolean).join(' · ');
+        return '<option value="'+p.prova_id+'">'+p.titulo+(det?(' — '+det):'')+(p.ativa?'':' (indisponível)')+'</option>';
+      }).join('');
+      $('box_escolha').style.display='block';
+      mostraErro('Escolha a prova e clique em Entrar novamente.');
+      return;
+    }
+    SES.prova_id=res.j.prova_id||'';
     PROVA=res.j; RESP=res.j.respostas||{}; RESTANTE=res.j.restante_seg||0;
     if(PROVA.status==='finalizado'){ return telaFim('finalizado', PROVA.nota, PROVA.questoes.length, PROVA.respostas); }
     if(PROVA.status==='eliminado'){ return telaFim('eliminado'); }
@@ -175,7 +193,7 @@
 
   function renderQuestoes(){
     if(PROVA.tipo==='pdf'){
-      var pdfUrl='/api/prova/pdf?cpf='+encodeURIComponent(SES.cpf)+'&codigo='+encodeURIComponent(SES.codigo);
+      var pdfUrl='/api/prova/pdf?cpf='+encodeURIComponent(SES.cpf)+'&senha='+encodeURIComponent(SES.senha)+'&prova_id='+encodeURIComponent(SES.prova_id);
       var grid='';
       for(var q=1;q<=PROVA.num_questoes;q++){
         var alts='';
