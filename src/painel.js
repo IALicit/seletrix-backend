@@ -1057,7 +1057,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     QUESTOES=d.questoes; $('q_total').innerHTML='<b>'+d.questoes.length+'</b> questão(ões) no banco (com os filtros atuais).';
     $('q_lista').innerHTML = d.questoes.length ? d.questoes.map(function(q){
       var alts=(q.alternativas||[]).map(function(a,i){return '<div style="font-size:.85rem'+(i===q.correta?';color:#0f6b41;font-weight:700':'')+'">'+String.fromCharCode(65+i)+') '+esc(a)+(i===q.correta?' ✓':'')+'</div>';}).join('');
-      var tags=[q.disciplina,q.nivel,q.cargo].filter(Boolean).map(function(t){return '<span class="tag on">'+esc(t)+'</span>';}).join(' ') + (q.autor?(' <span class="hint">por '+esc(q.autor)+'</span>'):'');
+      var tags=[q.concurso_titulo,q.disciplina,q.nivel].concat(q.cargos||[]).filter(Boolean).map(function(t){return '<span class="tag on">'+esc(t)+'</span>';}).join(' ') + (q.autor?(' <span class="hint">por '+esc(q.autor)+'</span>'):'');
       return '<div class="card" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:10px"><div style="flex:1;display:flex;gap:10px"><input type="checkbox" class="qsel" value="'+q.id+'" onchange="contarSel()" style="width:auto;margin-top:3px"><div><div style="font-weight:600">'+esc(q.enunciado)+(q.tem_imagem?' 🖼️':'')+'</div><div style="margin:4px 0">'+tags+'</div>'+alts+'</div></div><div class="row-actions"><button class="mini" onclick="editarQuestao('+q.id+')">Editar</button><button class="del" onclick="delQuestao('+q.id+')">Excluir</button></div></div></div>';
     }).join('') : '<p class="hint">Nenhuma questão cadastrada ainda.</p>';
     contarSel();
@@ -1124,7 +1124,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   function popularProvaOnline(){
     $('po_link').textContent = location.origin + '/prova.html';
     $('po_concurso').innerHTML='<option value="">Selecione o concurso...</option>'+CONCURSOS.map(function(c){return '<option value="'+c.id+'">'+esc(c.titulo)+'</option>';}).join('');
-    $('po_concurso').onchange=carregarProvas;
+    $('po_concurso').onchange=function(){ carregarProvas(); carregarQuestoesProva(); };
     novaProva(); carregarQuestoesProva(); carregarProvas();
   }
   function novaProva(){ $('po_id').value=''; $('po_titulo').value=''; $('po_duracao').value='60'; $('po_maxsaidas').value='2'; $('po_inicio').value=''; $('po_tolerancia').value='0'; PO_SEL={}; marcarSelProva(); atualizaSelQ(); $('po_tipo').value='banco'; PO_GAB=[]; $('po_numq').value='30'; $('po_numalt').value='4'; if($('po_pdf_file'))$('po_pdf_file').value=''; $('po_pdf_atual').innerHTML='<i>Nenhum PDF enviado.</i>'; toggleOrigem(); }
@@ -1153,11 +1153,14 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('po_pdf_atual').innerHTML='PDF enviado ✓';
   }
   async function carregarQuestoesProva(){
-    var d=await (await fetch('/admin/questoes.json?busca='+encodeURIComponent($('po_busca_q').value))).json();
+    // Questão agora pertence a um concurso: só listamos as do concurso desta prova.
+    var cid=$('po_concurso')?$('po_concurso').value:'';
+    if(!cid){ $('po_questoes').innerHTML='<p class="hint">Selecione o concurso acima para ver as questões dele.</p>'; return; }
+    var d=await (await fetch('/admin/questoes.json?concurso='+encodeURIComponent(cid)+'&busca='+encodeURIComponent($('po_busca_q').value))).json();
     $('po_questoes').innerHTML = d.questoes.length ? d.questoes.map(function(q){
-      var tags=[q.disciplina,q.nivel,q.cargo].filter(Boolean).join(' · ');
+      var tags=[q.disciplina,q.nivel].concat(q.cargos||[]).filter(Boolean).join(' · ');
       return '<label style="display:flex;gap:8px;align-items:flex-start;padding:6px 0;border-bottom:1px solid var(--linha);font-weight:400"><input type="checkbox" class="poq" value="'+q.id+'" '+(PO_SEL[q.id]?'checked':'')+' onchange="togglePoQ('+q.id+',this.checked)" style="width:auto;margin-top:3px"><span><span style="font-weight:600">'+esc(q.enunciado)+'</span>'+(tags?' <span class="hint">('+esc(tags)+')</span>':'')+'</span></label>';
-    }).join('') : '<p class="hint">Nenhuma questão no banco. Cadastre na aba Questões.</p>';
+    }).join('') : '<p class="hint">Nenhuma questão cadastrada para este concurso. Peça ao professor para cadastrar na Área do Professor.</p>';
   }
   function togglePoQ(id,on){ if(on)PO_SEL[id]=true; else delete PO_SEL[id]; atualizaSelQ(); }
   function marcarSelProva(){ document.querySelectorAll('.poq').forEach(function(c){c.checked=!!PO_SEL[c.value];}); }

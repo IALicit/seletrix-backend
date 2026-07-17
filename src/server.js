@@ -201,12 +201,15 @@ async function inicializarBanco() {
   // Professores (cadastram questões) — por empresa
   await pool.query(`CREATE TABLE IF NOT EXISTS professores (id SERIAL PRIMARY KEY, empresa_id INT, nome TEXT, email TEXT UNIQUE,
     senha_hash TEXT, disciplina TEXT, ativo BOOLEAN DEFAULT TRUE, criado_em TIMESTAMPTZ DEFAULT now());`);
-  for (const col of ['professor_id INT', 'empresa_id INT']) {
+  for (const col of ['professor_id INT', 'empresa_id INT', 'concurso_id INT', "cargos TEXT DEFAULT '[]'"]) {
     await pool.query(`ALTER TABLE questoes ADD COLUMN IF NOT EXISTS ${col}`);
   }
   {
     const pri = await pool.query('SELECT id FROM empresas ORDER BY id LIMIT 1');
     if (pri.rows.length) await pool.query('UPDATE questoes SET empresa_id=$1 WHERE empresa_id IS NULL', [pri.rows[0].id]);
+    // Questões antigas tinham um cargo único em texto: vira lista de um item.
+    await pool.query(`UPDATE questoes SET cargos = json_build_array(cargo)::text
+      WHERE (cargos IS NULL OR cargos='' OR cargos='[]') AND cargo IS NOT NULL AND cargo<>''`);
   }
   const { rows: qc } = await pool.query('SELECT COUNT(*)::int n FROM concursos');
   if (qc[0].n === 0) {
@@ -459,7 +462,7 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'meta-dominio-v1' }));
+app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'questao-empresa-concurso-cargos-v1' }));
 
 function hostLimpo(req) {
   return String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim().toLowerCase().replace(/:\d+$/, '').replace(/^www\./, '');
@@ -1938,16 +1941,25 @@ app.get('/admin/questoes.json', exigirSenha, async (req, res) => {
   if (!pool) return res.json({ questoes: [] });
   const q = req.query; const where = []; const params = [];
   if (q.empresa) { params.push(parseInt(q.empresa)); where.push('(qa.empresa_id=$' + params.length + ' OR qa.empresa_id IS NULL)'); }
+  if (q.concurso) { params.push(parseInt(q.concurso)); where.push('qa.concurso_id=$' + params.length); }
   if (q.disciplina) { params.push('%' + q.disciplina + '%'); where.push('qa.disciplina ILIKE $' + params.length); }
   if (q.nivel) { params.push(q.nivel); where.push('qa.nivel=$' + params.length); }
-  if (q.cargo) { params.push('%' + q.cargo + '%'); where.push('qa.cargo ILIKE $' + params.length); }
+  if (q.cargo) { params.push('%' + q.cargo + '%'); where.push('(qa.cargo ILIKE $' + params.length + ' OR qa.cargos ILIKE $' + params.length + ')'); }
   if (q.busca) { params.push('%' + q.busca + '%'); where.push('qa.enunciado ILIKE $' + params.length); }
   if (q.professor) { params.push(parseInt(q.professor)); where.push('qa.professor_id=$' + params.length); }
   const w = where.length ? ('WHERE ' + where.join(' AND ')) : '';
-  const { rows } = await pool.query(`SELECT qa.id,qa.enunciado,qa.alternativas,qa.correta,qa.disciplina,qa.nivel,qa.cargo,
-    (qa.imagem_dados IS NOT NULL) AS tem_imagem, p.nome AS autor
-    FROM questoes qa LEFT JOIN professores p ON p.id=qa.professor_id ${w} ORDER BY qa.id DESC LIMIT 500`, params);
-  res.json({ questoes: rows.map((r) => { let a = []; try { a = JSON.parse(r.alternativas || '[]'); } catch {} return { id: r.id, enunciado: r.enunciado, alternativas: a, correta: r.correta, disciplina: r.disciplina, nivel: r.nivel, cargo: r.cargo, tem_imagem: r.tem_imagem, autor: r.autor || '' }; }) });
+  const { rows } = await pool.query(`SELECT qa.id,qa.enunciado,qa.alternativas,qa.correta,qa.disciplina,qa.nivel,qa.cargo,qa.cargos,
+    qa.empresa_id,qa.concurso_id,(qa.imagem_dados IS NOT NULL) AS tem_imagem, p.nome AS autor, c.titulo AS concurso_titulo
+    FROM questoes qa LEFT JOIN professores p ON p.id=qa.professor_id LEFT JOIN concursos c ON c.id=qa.concurso_id
+    ${w} ORDER BY qa.id DESC LIMIT 500`, params);
+  res.json({ questoes: rows.map((r) => {
+    let a = []; try { a = JSON.parse(r.alternativas || '[]'); } catch {}
+    let cg = []; try { cg = JSON.parse(r.cargos || '[]'); } catch {}
+    if (!cg.length && r.cargo) cg = [r.cargo];
+    return { id: r.id, enunciado: r.enunciado, alternativas: a, correta: r.correta, disciplina: r.disciplina, nivel: r.nivel,
+      cargo: r.cargo, cargos: cg, empresa_id: r.empresa_id, concurso_id: r.concurso_id, concurso_titulo: r.concurso_titulo || '',
+      tem_imagem: r.tem_imagem, autor: r.autor || '' };
+  }) });
 });
 app.post('/admin/questao', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
@@ -2463,12 +2475,38 @@ app.post('/api/professor/login', async (req, res) => {
   const emp = await pool.query('SELECT nome, slug, (logo_dados IS NOT NULL) AS tem_logo, id FROM empresas WHERE id=$1', [p.empresa_id]);
   res.json({ ok: true, nome: p.nome, disciplina: p.disciplina || '', empresa: emp.rows[0] || null });
 });
+// Empresas ativas + concursos de cada uma + cargos de cada concurso.
+// Alimenta os três selects em cascata do formulário do professor.
+app.post('/api/professor/opcoes', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const p = await autenticaProfessor(req.body);
+  if (!p) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
+  const emps = await pool.query('SELECT id, nome, slug FROM empresas WHERE ativa=TRUE ORDER BY nome');
+  const cons = await pool.query('SELECT id, empresa_id, titulo, cargos, aberto FROM concursos ORDER BY criado_em DESC');
+  const empresas = emps.rows.map((e) => ({
+    id: e.id, nome: e.nome, slug: e.slug,
+    concursos: cons.rows.filter((c) => c.empresa_id === e.id).map((c) => {
+      let cg = []; try { cg = JSON.parse(c.cargos || '[]'); } catch {}
+      return { id: c.id, titulo: c.titulo, aberto: c.aberto, cargos: cg };
+    }),
+  }));
+  res.json({ empresas, empresa_padrao: p.empresa_id || null });
+});
 app.post('/api/professor/questoes', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
   const p = await autenticaProfessor(req.body);
   if (!p) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
-  const { rows } = await pool.query('SELECT id,enunciado,alternativas,correta,disciplina,nivel,cargo,(imagem_dados IS NOT NULL) AS tem_imagem FROM questoes WHERE professor_id=$1 ORDER BY id DESC LIMIT 500', [p.id]);
-  res.json({ questoes: rows.map((r) => { let a = []; try { a = JSON.parse(r.alternativas || '[]'); } catch {} return { ...r, alternativas: a }; }) });
+  const { rows } = await pool.query(`SELECT qa.id,qa.enunciado,qa.alternativas,qa.correta,qa.disciplina,qa.nivel,qa.cargo,qa.cargos,
+    qa.empresa_id,qa.concurso_id,(qa.imagem_dados IS NOT NULL) AS tem_imagem,
+    e.nome AS empresa_nome, c.titulo AS concurso_titulo
+    FROM questoes qa LEFT JOIN empresas e ON e.id=qa.empresa_id LEFT JOIN concursos c ON c.id=qa.concurso_id
+    WHERE qa.professor_id=$1 ORDER BY qa.id DESC LIMIT 500`, [p.id]);
+  res.json({ questoes: rows.map((r) => {
+    let a = []; try { a = JSON.parse(r.alternativas || '[]'); } catch {}
+    let cg = []; try { cg = JSON.parse(r.cargos || '[]'); } catch {}
+    if (!cg.length && r.cargo) cg = [r.cargo];
+    return { ...r, alternativas: a, cargos: cg };
+  }) });
 });
 app.post('/api/professor/questao', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
@@ -2480,17 +2518,35 @@ app.post('/api/professor/questao', async (req, res) => {
   const correta = Math.max(0, Math.min(alts.length - 1, parseInt(b.correta) || 0));
   if (!enunciado) return res.status(400).json({ erro: 'Informe o enunciado.' });
   if (alts.length < 2) return res.status(400).json({ erro: 'Informe pelo menos 2 alternativas.' });
+
+  // Empresa + concurso: o concurso precisa pertencer mesmo à empresa escolhida.
+  const empId = parseInt(b.empresa_id) || 0;
+  const conId = parseInt(b.concurso_id) || 0;
+  if (!empId) return res.status(400).json({ erro: 'Selecione a empresa.' });
+  if (!conId) return res.status(400).json({ erro: 'Selecione o concurso.' });
+  const emp = await pool.query('SELECT id FROM empresas WHERE id=$1 AND ativa=TRUE', [empId]);
+  if (!emp.rows.length) return res.status(400).json({ erro: 'Empresa inválida.' });
+  const con = await pool.query('SELECT id, cargos FROM concursos WHERE id=$1 AND empresa_id=$2', [conId, empId]);
+  if (!con.rows.length) return res.status(400).json({ erro: 'Este concurso não pertence à empresa selecionada.' });
+
+  // Cargos: só valem os que existem no concurso. Vazio = questão vale para todos.
+  let doConcurso = []; try { doConcurso = JSON.parse(con.rows[0].cargos || '[]'); } catch {}
+  const pedidos = Array.isArray(b.cargos) ? b.cargos.map((c) => String(c || '').trim()).filter(Boolean) : [];
+  const cargos = [...new Set(pedidos.filter((c) => doConcurso.includes(c)))];
+  if (pedidos.length && !cargos.length) return res.status(400).json({ erro: 'Os cargos enviados não existem neste concurso.' });
+
   const disc = String(b.disciplina || p.disciplina || '').trim().slice(0, 120);
   const nivel = String(b.nivel || '').trim().slice(0, 40);
-  const cargo = String(b.cargo || '').trim().slice(0, 120);
+  const cargoTxt = cargos.join(', ').slice(0, 120); // compatibilidade com telas antigas
   if (b.id) {
     const own = await pool.query('SELECT id FROM questoes WHERE id=$1 AND professor_id=$2', [b.id, p.id]);
     if (!own.rows.length) return res.status(403).json({ erro: 'Você só pode editar as suas questões.' });
-    await pool.query('UPDATE questoes SET enunciado=$1,alternativas=$2,correta=$3,disciplina=$4,nivel=$5,cargo=$6 WHERE id=$7', [enunciado, JSON.stringify(alts), correta, disc, nivel, cargo, b.id]);
+    await pool.query('UPDATE questoes SET enunciado=$1,alternativas=$2,correta=$3,disciplina=$4,nivel=$5,cargo=$6,cargos=$7,empresa_id=$8,concurso_id=$9 WHERE id=$10',
+      [enunciado, JSON.stringify(alts), correta, disc, nivel, cargoTxt, JSON.stringify(cargos), empId, conId, b.id]);
     return res.json({ ok: true, id: b.id });
   }
-  const r = await pool.query('INSERT INTO questoes (enunciado,alternativas,correta,disciplina,nivel,cargo,professor_id,empresa_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id',
-    [enunciado, JSON.stringify(alts), correta, disc, nivel, cargo, p.id, p.empresa_id]);
+  const r = await pool.query('INSERT INTO questoes (enunciado,alternativas,correta,disciplina,nivel,cargo,cargos,professor_id,empresa_id,concurso_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id',
+    [enunciado, JSON.stringify(alts), correta, disc, nivel, cargoTxt, JSON.stringify(cargos), p.id, empId, conId]);
   res.json({ ok: true, id: r.rows[0].id });
 });
 app.post('/api/professor/questao/excluir', async (req, res) => {
