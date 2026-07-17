@@ -462,7 +462,12 @@ function servirArquivo(res, row) {
 }
 
 // ---- Rotas públicas ----------------------------------------
-app.get('/health', (req, res) => res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'prova-pdf-nao-sobrescreve-v2' }));
+app.get('/health', (req, res) => {
+  // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
+  // foi mesmo deployado, e não só o server.js.
+  const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'prova-pdf-nao-sobrescreve-v3', painel: mv ? mv[1] : 'desconhecida' });
+});
 
 function hostLimpo(req) {
   return String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim().toLowerCase().replace(/:\d+$/, '').replace(/^www\./, '');

@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v3 -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -1129,14 +1129,18 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('po_concurso').onchange=function(){ carregarProvas(); renderCargosProva([]); carregarQuestoesProva(); };
     novaProva(); carregarQuestoesProva(); carregarProvas();
   }
-  function novaProva(){ $('po_id').value=''; $('po_titulo').value=''; $('po_duracao').value='60'; $('po_maxsaidas').value='2'; $('po_inicio').value=''; $('po_tolerancia').value='0'; PO_SEL={}; marcarSelProva(); atualizaSelQ(); PO_GAB=[]; $('po_numq').value='30'; $('po_numalt').value='4'; if($('po_pdf_file'))$('po_pdf_file').value=''; $('po_pdf_atual').innerHTML='<i>Nenhum PDF enviado.</i>'; PROVA_TEM_PDF=false; toggleOrigem(); renderCargosProva([]); marcaModoProva(); }
+  function novaProva(){ $('po_id').value=''; $('po_titulo').value=''; $('po_duracao').value='60'; $('po_maxsaidas').value='2'; $('po_inicio').value=''; $('po_tolerancia').value='0'; PO_SEL={}; marcarSelProva(); atualizaSelQ(); PO_GAB=[]; $('po_numq').value='30'; $('po_numalt').value='4'; if($('po_pdf_file'))$('po_pdf_file').value=''; $('po_pdf_atual').innerHTML='<i>Nenhum PDF enviado.</i>'; PROVA_TEM_PDF=false; PO_PDF_ALVO=0; toggleOrigem(); renderCargosProva([]); marcaModoProva(); }
   function marcaModoProva(){
     var id=$('po_id').value;
-    $('po_form_titulo').innerHTML = id
-      ? 'Editando prova <span class="tag on">#'+id+'</span> <button class="mini" type="button" onclick="novaProva()" style="margin-left:8px">Criar outra prova</button>'
-      : 'Nova prova online';
+    if(id){
+      $('po_form_titulo').innerHTML='Editando prova <span class="tag on">#'+id+'</span> <button class="mini" type="button" onclick="novaProva()" style="margin-left:8px">Criar outra prova</button>';
+    } else if(PO_PDF_ALVO && !PROVA_TEM_PDF){
+      $('po_form_titulo').innerHTML='Prova <span class="tag on">#'+PO_PDF_ALVO+'</span> salva — falta enviar o PDF dela <button class="mini" type="button" onclick="novaProva()" style="margin-left:8px">Descartar e criar outra</button>';
+    } else {
+      $('po_form_titulo').innerHTML='Nova prova online';
+    }
   }
-  var PO_GAB=[], PROVA_TEM_PDF=false;
+  var PO_GAB=[], PROVA_TEM_PDF=false, PO_PDF_ALVO=0;
   function toggleOrigem(){ var t=$('po_tipo').value; $('po_bloco_banco').style.display=(t==='banco')?'block':'none'; $('po_bloco_pdf').style.display=(t==='pdf')?'block':'none'; if(t==='pdf') renderGabarito(); }
   function renderGabarito(){
     var nq=Math.max(0,Math.min(200,parseInt($('po_numq').value)||0)), na=Math.max(2,Math.min(6,parseInt($('po_numalt').value)||4));
@@ -1151,7 +1155,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   }
   function setGab(q,a){ PO_GAB[q]=a; renderGabarito(); }
   async function enviarPdfProva(auto){
-    var id=$('po_id').value; if(!id){alert('Salve a prova primeiro; depois envie o PDF.');return false;}
+    var id=PO_PDF_ALVO||$('po_id').value; if(!id){alert('Salve a prova primeiro; depois envie o PDF.');return false;}
     var f=$('po_pdf_file').files[0]; if(!f){alert('Escolha um arquivo PDF.');return false;}
     if(f.type!=='application/pdf'){alert('Envie um arquivo PDF.');return false;}
     if(f.size>30*1024*1024){alert('PDF muito grande (máx. 30 MB).');return false;}
@@ -1208,16 +1212,18 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     }
     var r=await fetch('/admin/prova',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
-    $('po_id').value=j.id; marcaModoProva();
+    // O id NUNCA volta para o formulário: só editarProva() preenche po_id.
+    // Assim, salvar de novo sempre CRIA uma prova nova, nunca sobrescreve.
+    // O envio do PDF usa PO_PDF_ALVO, que guarda o alvo separadamente.
+    PO_PDF_ALVO=j.id; $('po_id').value=''; marcaModoProva();
     var mandouPdf=false;
     if(tipo==='pdf' && $('po_pdf_file') && $('po_pdf_file').files[0]){ mandouPdf=await enviarPdfProva(true); }
     carregarProvas();
-    // Só mantemos o formulário aberto quando a prova em PDF ainda precisa do arquivo:
-    // o envio do PDF depende do id. Fora isso, limpamos — senão a próxima prova
-    // salva por cima desta.
     var faltaPdf = (tipo==='pdf' && !mandouPdf && !PROVA_TEM_PDF);
     if(faltaPdf){
-      alert('Prova salva!\\n\\nAgora escolha o arquivo PDF abaixo e clique em "Enviar PDF".\\n\\nAssim que o PDF subir, o formulário se limpa sozinho e você já pode criar a próxima prova.');
+      $('po_pdf_atual').innerHTML='<b style="color:#b45309">Prova #'+PO_PDF_ALVO+' salva, mas ainda sem PDF.</b> Escolha o arquivo e clique em "Enviar PDF".';
+      marcaModoProva();
+      alert('Prova #'+PO_PDF_ALVO+' salva!\\n\\nAgora escolha o arquivo PDF abaixo e clique em "Enviar PDF".');
     } else {
       alert('Prova salva!'); novaProva();
     }
@@ -1252,6 +1258,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('po_inicio').value=p.inicio_em||''; $('po_tolerancia').value=p.tolerancia_min||0;
     PO_SEL={}; (p.questao_ids||[]).forEach(function(qid){PO_SEL[qid]=true;}); marcarSelProva(); atualizaSelQ();
     $('po_tipo').value=p.tipo||'banco';
+    PO_PDF_ALVO=p.id;
     renderCargosProva(p.cargos||[]); marcaModoProva();
     PO_GAB=(p.gabarito||[]).slice(); $('po_numq').value=p.num_questoes||30; $('po_numalt').value=p.num_alternativas||4;
     PROVA_TEM_PDF=!!p.tem_pdf;
