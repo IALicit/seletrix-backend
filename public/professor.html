@@ -32,6 +32,10 @@
  .alt-line{font-size:.85rem;margin-top:2px}
  .ok{color:#0f6b41;font-weight:700}
  .hint{color:var(--suave);font-size:.85rem}
+ .cargos{border:1.5px solid var(--linha);border-radius:9px;padding:10px 12px;background:#fff;max-height:170px;overflow:auto}
+ .cargos label{display:flex;align-items:center;gap:8px;margin:0;padding:5px 0;font-weight:500;font-size:.92rem;cursor:pointer}
+ .cargos input[type=checkbox]{width:auto;margin:0}
+ .cargos p{margin:2px 0}
 </style></head><body>
 
 <div class="center" id="tela_login">
@@ -54,6 +58,12 @@
     <div class="card">
       <h3 id="form_titulo">Nova questão</h3>
       <input type="hidden" id="q_id">
+      <div class="grid2">
+        <div><label>Empresa</label><select id="q_empresa" onchange="empresaMudou()"><option value="">Selecione...</option></select></div>
+        <div><label>Concurso</label><select id="q_concurso" onchange="concursoMudou()"><option value="">Selecione a empresa primeiro</option></select></div>
+      </div>
+      <label>Cargos desta questão</label>
+      <div id="q_cargos" class="cargos"><p class="hint">Selecione o concurso para ver os cargos.</p></div>
       <label>Enunciado</label>
       <textarea id="q_enunciado" rows="3" placeholder="Digite o enunciado da questão"></textarea>
       <label>Alternativas (marque a correta no círculo à esquerda)</label>
@@ -62,7 +72,6 @@
       <div class="grid2" style="margin-top:12px">
         <div><label>Disciplina</label><input id="q_disciplina" placeholder="Ex.: Português"></div>
         <div><label>Nível</label><select id="q_nivel"><option value="">—</option><option>Fácil</option><option>Médio</option><option>Difícil</option></select></div>
-        <div><label>Cargo (opcional)</label><input id="q_cargo" placeholder="Em branco = todos"></div>
       </div>
       <label>Imagem do enunciado (opcional)</label>
       <div id="q_img_atual" class="hint" style="margin-bottom:6px"></div>
@@ -81,9 +90,46 @@
 
 <script>
   var $=function(id){return document.getElementById(id);};
-  var SES={email:'',senha:''}, QALTS=[], QCOR=0, MINHAS=[];
+  var SES={email:'',senha:''}, QALTS=[], QCOR=0, MINHAS=[], EMPRESAS=[];
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
   function toB64(f){return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res(String(r.result).split(',')[1]);};r.onerror=rej;r.readAsDataURL(f);});}
+
+  // --- Empresa > Concurso > Cargos (em cascata) ---
+  async function carregarOpcoes(padrao){
+    var r=await fetch('/api/professor/opcoes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(SES)});
+    var j=await r.json(); if(!r.ok){ return; }
+    EMPRESAS=j.empresas||[];
+    $('q_empresa').innerHTML='<option value="">Selecione...</option>'+EMPRESAS.map(function(e){
+      return '<option value="'+e.id+'">'+esc(e.nome)+'</option>'; }).join('');
+    // Se o professor só tem uma opção, já deixa escolhida.
+    var pref = padrao || (EMPRESAS.length===1 ? EMPRESAS[0].id : '');
+    if(pref){ $('q_empresa').value=pref; empresaMudou(); }
+  }
+  function empresaAtual(){ return EMPRESAS.find(function(e){return String(e.id)===String($('q_empresa').value);}); }
+  function empresaMudou(){
+    var e=empresaAtual();
+    var cs=(e&&e.concursos)||[];
+    $('q_concurso').innerHTML = cs.length
+      ? '<option value="">Selecione...</option>'+cs.map(function(c){ return '<option value="'+c.id+'">'+esc(c.titulo)+(c.aberto?'':' (encerrado)')+'</option>'; }).join('')
+      : '<option value="">'+(e?'Esta empresa não tem concursos':'Selecione a empresa primeiro')+'</option>';
+    concursoMudou();
+  }
+  function concursoMudou(){ renderCargos([]); }
+  function concursoAtual(){
+    var e=empresaAtual(); if(!e) return null;
+    return (e.concursos||[]).find(function(c){return String(c.id)===String($('q_concurso').value);});
+  }
+  function renderCargos(marcados){
+    var c=concursoAtual();
+    if(!c){ $('q_cargos').innerHTML='<p class="hint">Selecione o concurso para ver os cargos.</p>'; return; }
+    if(!c.cargos||!c.cargos.length){ $('q_cargos').innerHTML='<p class="hint">Este concurso não tem cargos cadastrados.</p>'; return; }
+    var sel=marcados||[];
+    $('q_cargos').innerHTML = c.cargos.map(function(cg){
+      var on = sel.indexOf(cg)>=0 ? 'checked' : '';
+      return '<label><input type="checkbox" class="cgsel" value="'+esc(cg).replace(/"/g,'&quot;')+'" '+on+'> '+esc(cg)+'</label>';
+    }).join('') + '<p class="hint" style="margin-top:6px">Marque um ou mais. Nenhum marcado = vale para todos os cargos.</p>';
+  }
+  function cargosMarcados(){ return Array.from(document.querySelectorAll('.cgsel:checked')).map(function(c){return c.value;}); }
 
   async function entrar(){
     var email=$('in_email').value.trim(), senha=$('in_senha').value;
@@ -98,12 +144,13 @@
     $('topo_sub').textContent = 'Prof. ' + j.nome + (j.disciplina?(' · '+j.disciplina):'');
     if(j.disciplina && !$('q_disciplina').value) $('q_disciplina').value=j.disciplina;
     $('tela_login').style.display='none'; $('tela_area').style.display='block';
-    nova(); carregar();
+    nova(); await carregarOpcoes(j.empresa && j.empresa.id); carregar();
   }
   function erroLogin(m){ $('login_erro').textContent=m; $('login_erro').style.display='block'; }
   function sair(){ try{ sessionStorage.removeItem('prof_ses'); }catch(e){} location.reload(); }
 
-  function nova(){ $('q_id').value=''; $('q_enunciado').value=''; $('q_cargo').value=''; $('q_nivel').value='';
+  function nova(){ $('q_id').value=''; $('q_enunciado').value=''; $('q_nivel').value='';
+    renderCargos([]); // mantém empresa/concurso escolhidos: agiliza cadastrar várias seguidas
     QALTS=['','','','']; QCOR=0; renderAlts(); if($('q_img_file'))$('q_img_file').value='';
     $('q_img_atual').innerHTML='<i>Salve a questão para anexar imagem.</i>'; $('form_titulo').textContent='Nova questão'; }
   function renderAlts(){
@@ -119,9 +166,12 @@
 
   async function salvar(){
     var alts=QALTS.map(function(a){return (a||'').trim();}).filter(function(a){return a!=='';});
+    if(!$('q_empresa').value){alert('Selecione a empresa.');return;}
+    if(!$('q_concurso').value){alert('Selecione o concurso.');return;}
     if(!$('q_enunciado').value.trim()){alert('Informe o enunciado.');return;}
     if(alts.length<2){alert('Informe pelo menos 2 alternativas.');return;}
-    var body={email:SES.email,senha:SES.senha,id:$('q_id').value||undefined,enunciado:$('q_enunciado').value,alternativas:QALTS,correta:QCOR,disciplina:$('q_disciplina').value,nivel:$('q_nivel').value,cargo:$('q_cargo').value};
+    var body={email:SES.email,senha:SES.senha,id:$('q_id').value||undefined,enunciado:$('q_enunciado').value,alternativas:QALTS,correta:QCOR,disciplina:$('q_disciplina').value,nivel:$('q_nivel').value,
+      empresa_id:$('q_empresa').value, concurso_id:$('q_concurso').value, cargos:cargosMarcados()};
     var r=await fetch('/api/professor/questao',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
     $('q_id').value=j.id;
@@ -142,7 +192,7 @@
     var j=await r.json(); if(!r.ok){ return; }
     MINHAS=j.questoes; $('q_total').textContent=j.questoes.length;
     $('q_lista').innerHTML = j.questoes.length ? j.questoes.map(function(q){
-      var tags=[q.disciplina,q.nivel,q.cargo].filter(Boolean).map(function(t){return '<span class="tag">'+esc(t)+'</span>';}).join('');
+      var tags=[q.empresa_nome,q.concurso_titulo,q.disciplina,q.nivel].concat(q.cargos||[]).filter(Boolean).map(function(t){return '<span class="tag">'+esc(t)+'</span>';}).join('');
       var alts=(q.alternativas||[]).map(function(a,i){ return '<div class="alt-line'+(i===q.correta?' ok':'')+'">'+String.fromCharCode(65+i)+') '+esc(a)+(i===q.correta?' ✓':'')+'</div>'; }).join('');
       return '<div class="qitem"><div class="qhead"><div style="flex:1"><b>'+esc(q.enunciado)+'</b>'+(q.tem_imagem?' 🖼️':'')+'<div style="margin:4px 0">'+tags+'</div>'+alts+'</div>'
         +'<div><button class="mini" onclick="editar('+q.id+')">Editar</button> <button class="del" onclick="excluir('+q.id+')">Excluir</button></div></div></div>';
@@ -150,7 +200,10 @@
   }
   function editar(id){
     var q=MINHAS.find(function(x){return x.id===id;}); if(!q)return;
-    $('q_id').value=q.id; $('q_enunciado').value=q.enunciado||''; $('q_disciplina').value=q.disciplina||''; $('q_nivel').value=q.nivel||''; $('q_cargo').value=q.cargo||'';
+    $('q_id').value=q.id; $('q_enunciado').value=q.enunciado||''; $('q_disciplina').value=q.disciplina||''; $('q_nivel').value=q.nivel||'';
+    if(q.empresa_id){ $('q_empresa').value=q.empresa_id; empresaMudou(); }
+    if(q.concurso_id){ $('q_concurso').value=q.concurso_id; }
+    renderCargos(q.cargos||[]);
     QALTS=(q.alternativas&&q.alternativas.length)?q.alternativas.slice():['','']; QCOR=q.correta||0; renderAlts();
     $('form_titulo').textContent='Editando questão';
     $('q_img_atual').innerHTML = q.tem_imagem ? ('Imagem atual: <img src="/api/professor/questao/'+q.id+'/imagem?email='+encodeURIComponent(SES.email)+'&senha='+encodeURIComponent(SES.senha)+'&t='+Date.now()+'" style="height:60px;vertical-align:middle;border-radius:4px">') : '<i>Nenhuma imagem.</i>';
