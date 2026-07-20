@@ -103,6 +103,8 @@
 
   function statusInfo(r){
     if(r.status==='pago') return {badge:'<span class="badge b-pago">Pago ✓</span>', pagar:false};
+    if(r.isencao_status==='aprovada' || r.status==='isento') return {badge:'<span class="badge b-pago">Isento ✓</span>', pagar:false};
+    if(r.isencao_status==='pendente' || r.status==='isencao_pendente') return {badge:'<span class="badge b-aguard">Isenção em análise</span>', pagar:false};
     if(r.gratuito) return {badge:'<span class="badge b-insc">Inscrição gratuita</span>', pagar:false};
     if(r.status==='aguardando_pagamento') return {badge:'<span class="badge b-aguard">Aguardando pagamento</span>', pagar:true};
     return {badge:'<span class="badge b-insc">Inscrito</span>', pagar:true};
@@ -211,6 +213,38 @@
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
     alert('Enviado com sucesso!'); recarregar();
   }
+  function isencaoBlock(r){
+    if(!r.pede_isencao || !r.quer_isencao) return '';
+    var per = (r.isencao_inicio||r.isencao_fim) ? ('<p class="tit-hint">Prazo p/ comprovação: '+(r.isencao_inicio?fmt(r.isencao_inicio):'—')+' até '+(r.isencao_fim?fmt(r.isencao_fim):'—')+'</p>') : '';
+    var doc = r.tem_isencao_doc ? ('<div class="rec-resp">Comprovação enviada ✓ <a href="/api/candidato/isencao/'+r.id+'?cpf='+encodeURIComponent(SESSAO.cpf)+'&senha='+encodeURIComponent(SESSAO.senha)+'" target="_blank">📎 '+esc(r.isencao_doc_nome||'ver arquivo')+'</a></div>') : '';
+    var st = r.isencao_status;
+    var faixa, corpo='';
+    if(st==='aprovada'){
+      faixa = '<div class="rec-resp" style="background:#e6f4ea;color:#1e7d34"><b>Isenção APROVADA</b> — sua inscrição está confirmada, sem taxa.'+(r.isencao_obs?(' '+esc(r.isencao_obs)):'')+'</div>';
+    } else if(st==='negada'){
+      faixa = '<div class="rec-resp" style="background:#fde8e8;color:#b42318"><b>Isenção NEGADA.</b> '+(r.isencao_obs?esc(r.isencao_obs)+' ':'')+'Gere o boleto acima e pague até o fim das inscrições.</div>';
+    } else {
+      faixa = '<div class="rec-resp" style="background:#fff3cd;color:#8a6d1b"><b>Em análise.</b> Assim que decidirmos, o resultado aparece aqui.</div>';
+      if(r.pode_enviar_isencao){
+        corpo = '<p class="tit-hint">Anexe o documento que comprova o direito à isenção (PDF, JPG ou PNG · até 5 MB).'+(r.tem_isencao_doc?' Enviar de novo substitui o anterior.':'')+'</p>'
+          +'<input type="file" id="isdoc_'+r.id+'" accept=".pdf,.jpg,.jpeg,.png" style="display:block;margin:8px 0">'
+          +'<button class="tit-btn" onclick="enviarIsencao('+r.id+')">Enviar comprovação</button>';
+      } else {
+        corpo = '<p class="tit-hint">'+(r.isencao_prazo_status==='antes'?'⏳ O prazo para envio da comprovação ainda não abriu.':'🔒 O prazo para envio da comprovação está encerrado.')+'</p>';
+      }
+    }
+    var regras = r.isencao_texto ? ('<p class="tit-hint">'+esc(r.isencao_texto)+'</p>') : '';
+    return '<div class="titulos-box"><h4>Isenção da taxa</h4>'+regras+per+faixa+doc+corpo+'</div>';
+  }
+  async function enviarIsencao(id){
+    var inp=$('isdoc_'+id);
+    if(!inp || !inp.files[0]){alert('Selecione o arquivo da comprovação.');return;}
+    if(inp.files[0].size>5*1024*1024){alert('Arquivo máximo 5 MB.');return;}
+    var b64=await toB64(inp.files[0]);
+    var r=await fetch('/api/candidato/isencao',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf:SESSAO.cpf,senha:SESSAO.senha,inscricao_id:id,dataBase64:b64,filename:inp.files[0].name})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    alert('Comprovação enviada! Aguarde a análise.'); recarregar();
+  }
   function cardInsc(r){
     var s=statusInfo(r);
     var acoes = '';
@@ -222,6 +256,7 @@
       + '<div class="acoes">'+acoes+'</div>'
       + titulosBlock(r)
       + recursosBlock(r)
+      + isencaoBlock(r)
       + laudoBlock(r)
       + '</div>';
   }

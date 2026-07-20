@@ -116,6 +116,14 @@
         <div class="campo"><label>Nome social (se houver)</label><input name="nome_social" placeholder="Opcional"></div>
         <div class="campo check full"><input type="checkbox" name="pcd" id="pcd"><label for="pcd">Concorro às vagas reservadas a Pessoa com Deficiência (PcD)</label></div>
       </div>
+      <div id="isencao_wrap" style="display:none;margin-top:12px;padding:14px;border:1.5px solid var(--linha);border-radius:10px;background:#f8fafc">
+        <div class="campo check full" style="margin:0"><input type="checkbox" id="quer_isencao" onchange="document.getElementById('isencao_extra').style.display=this.checked?'block':'none'"><label for="quer_isencao"><b>Quero solicitar isenção da taxa de inscrição</b></label></div>
+        <p id="isencao_regras" class="aviso" style="margin:8px 0 0"></p>
+        <div id="isencao_extra" style="display:none;margin-top:10px">
+          <div class="campo"><label>Motivo da isenção</label><input id="isencao_motivo" placeholder="Ex.: Inscrito no CadÚnico / Doador de medula / etc."></div>
+          <p class="aviso" style="margin-top:6px">Ao enviar, sua inscrição fica <b>sem boleto</b> e aguardando análise. Você deverá enviar a comprovação na <b>Área do Candidato</b> dentro do prazo. Se a isenção for negada, o boleto será liberado para pagamento.</p>
+        </div>
+      </div>
       <div id="titulos_wrap" style="display:none;flex-direction:column;gap:6px;margin-top:12px"></div>
       <button type="submit" id="enviar">Enviar inscrição</button>
       <p class="aviso">Ao enviar, você concorda com os termos do edital. Seus dados são usados apenas para fins deste processo seletivo.</p>
@@ -147,7 +155,7 @@
   const slug = new URLSearchParams(location.search).get('c') || '';
   var modoEtapas = new URLSearchParams(location.search).get('ver')==='etapas';
   if(modoEtapas){ var _ct=document.querySelector('.container'); if(_ct) _ct.classList.add('modo-etapas'); }
-  let PEDE=false, TIPOS=[];
+  let PEDE=false, TIPOS=[], CONC=null;
   const form = document.getElementById('form'), erro = document.getElementById('erro'), btn = document.getElementById('enviar');
   (async function(){
     if(!slug){ document.getElementById('ed-titulo').textContent='Concurso não informado'; return; }
@@ -155,6 +163,15 @@
       const r = await fetch('/api/concurso/'+encodeURIComponent(slug));
       if(!r.ok) throw new Error('nao encontrado');
       const c = await r.json();
+      CONC = c;
+      // Opção de isenção: só aparece se o concurso permite e o prazo está aberto.
+      if(c.pede_isencao && c.pode_isencao && !c.gratuito){
+        var wrap=document.getElementById('isencao_wrap');
+        if(wrap){
+          wrap.style.display='block';
+          if(c.isencao_texto){ document.getElementById('isencao_regras').textContent=c.isencao_texto; }
+        }
+      }
       if(c.empresa){
         var e=c.empresa;
         document.title = 'Inscrição — ' + e.nome;
@@ -212,6 +229,8 @@
     e.preventDefault(); erro.style.display='none';
     const dados = Object.fromEntries(new FormData(form).entries());
     dados.pcd = document.getElementById('pcd').checked; dados.concurso = slug;
+    var qi=document.getElementById('quer_isencao');
+    if(qi && qi.checked){ dados.quer_isencao = true; dados.isencao_motivo = (document.getElementById('isencao_motivo')||{}).value || ''; }
     if(PEDE){ try{ dados.titulos = await coletarTitulos(); }catch(err){ erro.textContent=err.message; erro.style.display='block'; return; } }
     btn.disabled=true; btn.textContent='Enviando...';
     try{
@@ -221,7 +240,8 @@
       document.getElementById('t-nome').textContent = j.nome+' — '+j.cargo;
       document.getElementById('t-prot').textContent = j.protocolo;
       const msg=document.getElementById('t-msg'), pagar=document.getElementById('t-pagar');
-      if(j.invoiceUrl){ msg.textContent='Sua inscrição só é efetivada após o pagamento da taxa. Pague por Pix, boleto ou cartão:'; pagar.href=j.invoiceUrl; pagar.style.display='block'; }
+      if(j.isencao){ msg.innerHTML='Seu <b>pedido de isenção</b> foi registrado. Agora entre na <b>Área do Candidato</b> e envie a comprovação dentro do prazo. Não há boleto por enquanto — aguarde a análise.'; }
+      else if(j.invoiceUrl){ msg.textContent='Sua inscrição só é efetivada após o pagamento da taxa. Pague por Pix, boleto ou cartão:'; pagar.href=j.invoiceUrl; pagar.style.display='block'; }
       else if(j.avisoPagamento){ msg.textContent='Guarde este número. O link para pagamento da taxa será enviado em instantes.'; }
       else { msg.textContent='Guarde este número. Sua inscrição foi registrada com sucesso.'; }
       form.style.display='none'; document.getElementById('ticket').style.display='block';
