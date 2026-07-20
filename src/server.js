@@ -188,7 +188,7 @@ async function inicializarBanco() {
   // Prova online + respostas/sessão por candidato
   await pool.query(`CREATE TABLE IF NOT EXISTS provas_online (id SERIAL PRIMARY KEY, concurso_id INT, titulo TEXT,
     duracao_min INT DEFAULT 60, max_saidas INT DEFAULT 2, questao_ids TEXT DEFAULT '[]', ativa BOOLEAN DEFAULT TRUE, criado_em TIMESTAMPTZ DEFAULT now());`);
-  for (const col of ['inicio_em TEXT', 'tolerancia_min INT DEFAULT 0', 'tipo TEXT DEFAULT \'banco\'', 'pdf_mime TEXT', 'pdf_dados BYTEA', 'num_questoes INT DEFAULT 0', 'num_alternativas INT DEFAULT 4', 'gabarito TEXT DEFAULT \'[]\'', 'cargos TEXT DEFAULT \'[]\'']) {
+  for (const col of ['inicio_em TEXT', 'tolerancia_min INT DEFAULT 0', 'tipo TEXT DEFAULT \'banco\'', 'pdf_mime TEXT', 'pdf_dados BYTEA', 'num_questoes INT DEFAULT 0', 'num_alternativas INT DEFAULT 4', 'gabarito TEXT DEFAULT \'[]\'', 'cargos TEXT DEFAULT \'[]\'', 'entrada_fim TEXT']) {
     await pool.query(`ALTER TABLE provas_online ADD COLUMN IF NOT EXISTS ${col}`);
   }
   await pool.query(`CREATE TABLE IF NOT EXISTS prova_respostas (id SERIAL PRIMARY KEY, prova_id INT, candidato_id INT, codigo TEXT,
@@ -481,7 +481,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'isencao-taxa-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'janela-entrada-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -2284,12 +2284,20 @@ function janelaEntrada(a) {
   const ini = new Date(a.inicio_em + ':00-03:00').getTime();
   const now = Date.now();
   if (now < ini) return { pode: false, motivo: 'antes' };
-  if (a.tolerancia_min > 0) { const fim = ini + a.tolerancia_min * 60000; if (now > fim) return { pode: false, motivo: 'encerrado' }; }
+  // Fechamento: preferimos o horário explícito (entrada_fim). Se não houver,
+  // caímos na tolerância antiga em minutos (provas criadas antes desta mudança).
+  if (a.entrada_fim) {
+    const fim = new Date(a.entrada_fim + ':00-03:00').getTime();
+    if (now > fim) return { pode: false, motivo: 'encerrado' };
+  } else if (a.tolerancia_min > 0) {
+    const fim = ini + a.tolerancia_min * 60000;
+    if (now > fim) return { pode: false, motivo: 'encerrado' };
+  }
   return { pode: true };
 }
 // Acesso à prova: CPF + data de nascimento (DDMMAAAA), igual à Área do Candidato.
 // O código aleatório antigo continua gravado na coluna 'codigo', mas não é mais exigido.
-const SQL_PROVA_SEL = `SELECT pr.*, p.titulo,p.duracao_min,p.max_saidas,p.questao_ids,p.ativa,p.inicio_em,p.tolerancia_min,
+const SQL_PROVA_SEL = `SELECT pr.*, p.titulo,p.duracao_min,p.max_saidas,p.questao_ids,p.ativa,p.inicio_em,p.tolerancia_min,p.entrada_fim,
       p.tipo,p.num_questoes,p.num_alternativas,p.gabarito,(p.pdf_dados IS NOT NULL) AS tem_pdf, k.nome,
       c.titulo AS concurso_titulo, e.nome AS empresa_nome
     FROM prova_respostas pr JOIN provas_online p ON p.id=pr.prova_id JOIN candidatos k ON k.id=pr.candidato_id
@@ -2352,8 +2360,8 @@ app.get('/admin/provas.json', exigirSenha, async (req, res) => {
   if (!pool) return res.json({ provas: [] });
   const cid = parseInt(req.query.concurso) || 0;
   const w = cid ? 'WHERE concurso_id=$1' : ''; const p = cid ? [cid] : [];
-  const { rows } = await pool.query(`SELECT id,concurso_id,titulo,duracao_min,max_saidas,questao_ids,ativa,inicio_em,tolerancia_min,tipo,num_questoes,num_alternativas,gabarito,cargos,(pdf_dados IS NOT NULL) AS tem_pdf FROM provas_online ${w} ORDER BY id DESC`, p);
-  res.json({ provas: rows.map((r) => { let q = []; try { q = JSON.parse(r.questao_ids || '[]'); } catch {} let g = []; try { g = JSON.parse(r.gabarito || '[]'); } catch {} let cg = []; try { cg = JSON.parse(r.cargos || '[]'); } catch {} return { cargos: cg, id: r.id, concurso_id: r.concurso_id, titulo: r.titulo, duracao_min: r.duracao_min, max_saidas: r.max_saidas, questao_ids: q, num_questoes: (r.tipo === 'pdf' ? r.num_questoes : q.length), ativa: r.ativa, inicio_em: r.inicio_em || '', tolerancia_min: r.tolerancia_min || 0, tipo: r.tipo || 'banco', num_alternativas: r.num_alternativas || 4, gabarito: g, tem_pdf: r.tem_pdf || false }; }) });
+  const { rows } = await pool.query(`SELECT id,concurso_id,titulo,duracao_min,max_saidas,questao_ids,ativa,inicio_em,tolerancia_min,entrada_fim,tipo,num_questoes,num_alternativas,gabarito,cargos,(pdf_dados IS NOT NULL) AS tem_pdf FROM provas_online ${w} ORDER BY id DESC`, p);
+  res.json({ provas: rows.map((r) => { let q = []; try { q = JSON.parse(r.questao_ids || '[]'); } catch {} let g = []; try { g = JSON.parse(r.gabarito || '[]'); } catch {} let cg = []; try { cg = JSON.parse(r.cargos || '[]'); } catch {} return { cargos: cg, id: r.id, concurso_id: r.concurso_id, titulo: r.titulo, duracao_min: r.duracao_min, max_saidas: r.max_saidas, questao_ids: q, num_questoes: (r.tipo === 'pdf' ? r.num_questoes : q.length), ativa: r.ativa, inicio_em: r.inicio_em || '', tolerancia_min: r.tolerancia_min || 0, entrada_fim: r.entrada_fim || '', tipo: r.tipo || 'banco', num_alternativas: r.num_alternativas || 4, gabarito: g, tem_pdf: r.tem_pdf || false }; }) });
 });
 app.post('/admin/prova', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
@@ -2365,6 +2373,7 @@ app.post('/admin/prova', exigirSenha, async (req, res) => {
   const qids = Array.isArray(b.questao_ids) ? b.questao_ids.map((x) => parseInt(x)).filter(Boolean) : [];
   const inicio = String(b.inicio_em || '').trim().slice(0, 16) || null;
   const tol = Math.max(0, parseInt(b.tolerancia_min) || 0);
+  const entradaFim = String(b.entrada_fim || '').trim().slice(0, 16) || null;
   const tipo = (b.tipo === 'pdf') ? 'pdf' : 'banco';
   const numQ = Math.max(0, Math.min(200, parseInt(b.num_questoes) || 0));
   const numA = Math.max(2, Math.min(6, parseInt(b.num_alternativas) || 4));
@@ -2381,8 +2390,8 @@ app.post('/admin/prova', exigirSenha, async (req, res) => {
   if (!titulo) return res.status(400).json({ erro: 'Informe o título da prova.' });
   if (tipo === 'banco' && !qids.length) return res.status(400).json({ erro: 'Selecione ao menos uma questão.' });
   if (tipo === 'pdf' && numQ < 1) return res.status(400).json({ erro: 'Informe o número de questões.' });
-  if (b.id) { await pool.query('UPDATE provas_online SET titulo=$1,duracao_min=$2,max_saidas=$3,questao_ids=$4,ativa=$5,inicio_em=$6,tolerancia_min=$7,tipo=$8,num_questoes=$9,num_alternativas=$10,gabarito=$11,cargos=$12 WHERE id=$13', [titulo, dur, maxs, JSON.stringify(qids), b.ativa !== false, inicio, tol, tipo, numQ, numA, JSON.stringify(gabarito), JSON.stringify(cargosProva), b.id]); return res.json({ ok: true, id: b.id }); }
-  const r = await pool.query('INSERT INTO provas_online (concurso_id,titulo,duracao_min,max_saidas,questao_ids,inicio_em,tolerancia_min,tipo,num_questoes,num_alternativas,gabarito,cargos) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id', [cid, titulo, dur, maxs, JSON.stringify(qids), inicio, tol, tipo, numQ, numA, JSON.stringify(gabarito), JSON.stringify(cargosProva)]);
+  if (b.id) { await pool.query('UPDATE provas_online SET titulo=$1,duracao_min=$2,max_saidas=$3,questao_ids=$4,ativa=$5,inicio_em=$6,tolerancia_min=$7,tipo=$8,num_questoes=$9,num_alternativas=$10,gabarito=$11,cargos=$12,entrada_fim=$13 WHERE id=$14', [titulo, dur, maxs, JSON.stringify(qids), b.ativa !== false, inicio, tol, tipo, numQ, numA, JSON.stringify(gabarito), JSON.stringify(cargosProva), entradaFim, b.id]); return res.json({ ok: true, id: b.id }); }
+  const r = await pool.query('INSERT INTO provas_online (concurso_id,titulo,duracao_min,max_saidas,questao_ids,inicio_em,tolerancia_min,tipo,num_questoes,num_alternativas,gabarito,cargos,entrada_fim) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id', [cid, titulo, dur, maxs, JSON.stringify(qids), inicio, tol, tipo, numQ, numA, JSON.stringify(gabarito), JSON.stringify(cargosProva), entradaFim]);
   res.json({ ok: true, id: r.rows[0].id });
 });
 app.delete('/admin/prova/:id', exigirSenha, async (req, res) => {
@@ -2528,7 +2537,7 @@ app.post('/api/prova/login', async (req, res) => {
   const questoes = (a.tipo === 'pdf') ? [] : await questoesParaProva(qids);
   const jan = janelaEntrada(a);
   const podeIniciar = !!a.iniciado_em || jan.pode;
-  res.json({ ok: true, prova_id: a.prova_id, nome: a.nome, titulo: a.titulo, duracao_min: a.duracao_min, max_saidas: a.max_saidas, status: a.status, saidas: a.saidas, nota: a.nota, restante_seg: restanteSeg(a), respostas, questoes, tipo: a.tipo || 'banco', num_questoes: a.num_questoes || 0, num_alternativas: a.num_alternativas || 4, tem_pdf: a.tem_pdf || false, inicio_em: a.inicio_em || '', inicio_fmt: a.inicio_em ? fmtDTBR(a.inicio_em) : '', tolerancia_min: a.tolerancia_min || 0, pode_iniciar: podeIniciar, janela_motivo: jan.motivo || '' });
+  res.json({ ok: true, prova_id: a.prova_id, nome: a.nome, titulo: a.titulo, duracao_min: a.duracao_min, max_saidas: a.max_saidas, status: a.status, saidas: a.saidas, nota: a.nota, restante_seg: restanteSeg(a), respostas, questoes, tipo: a.tipo || 'banco', num_questoes: a.num_questoes || 0, num_alternativas: a.num_alternativas || 4, tem_pdf: a.tem_pdf || false, inicio_em: a.inicio_em || '', inicio_fmt: a.inicio_em ? fmtDTBR(a.inicio_em) : '', entrada_fim: a.entrada_fim || '', entrada_fim_fmt: a.entrada_fim ? fmtDTBR(a.entrada_fim) : '', tolerancia_min: a.tolerancia_min || 0, pode_iniciar: podeIniciar, janela_motivo: jan.motivo || '' });
 });
 app.post('/api/prova/iniciar', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });

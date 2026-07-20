@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v4-isencao -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v5-janela -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -394,10 +394,12 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
         <div><label>Título da prova</label><input id="po_titulo" placeholder="Ex.: Prova Objetiva Online"></div>
         <div><label>Duração (minutos)</label><input id="po_duracao" type="number" min="1" value="60"></div>
         <div><label>Máx. de saídas antes de eliminar</label><input id="po_maxsaidas" type="number" min="0" value="2"></div>
-        <div><label>Data/hora de início (opcional)</label><input id="po_inicio" type="datetime-local"></div>
-        <div><label>Tolerância de entrada (min) — 0 = sem limite</label><input id="po_tolerancia" type="number" min="0" value="10"></div>
+        <div><label>Entrada abre em (data/hora)</label><input id="po_inicio" type="datetime-local"></div>
+        <div><label>Entrada fecha em (data/hora)</label><input id="po_entrada_fim" type="datetime-local"></div>
+        <input id="po_tolerancia" type="hidden" value="0">
         <div><label>Origem das questões</label><select id="po_tipo" onchange="toggleOrigem()"><option value="banco">Banco de questões</option><option value="pdf">PDF + gabarito</option></select></div>
       </div>
+      <p class="hint" style="margin:-2px 0 10px">A prova abre e fecha para <b>entrada</b> nesses horários. Cada candidato tem a <b>duração</b> acima a partir do momento em que inicia — quem entra perto do fechamento faz o tempo cheio. Em branco = sem restrição de horário.</p>
       <label style="margin-top:14px">Cargos que fazem esta prova</label>
       <div id="po_cargos" style="border:1px solid var(--linha);border-radius:8px;padding:10px;max-height:150px;overflow:auto"><p class="hint">Selecione o concurso.</p></div>
       <div id="po_bloco_banco">
@@ -1189,7 +1191,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('po_concurso').onchange=function(){ carregarProvas(); renderCargosProva([]); carregarQuestoesProva(); };
     novaProva(); carregarQuestoesProva(); carregarProvas();
   }
-  function novaProva(){ $('po_id').value=''; $('po_titulo').value=''; $('po_duracao').value='60'; $('po_maxsaidas').value='2'; $('po_inicio').value=''; $('po_tolerancia').value='0'; PO_SEL={}; marcarSelProva(); atualizaSelQ(); PO_GAB=[]; $('po_numq').value='30'; $('po_numalt').value='4'; if($('po_pdf_file'))$('po_pdf_file').value=''; $('po_pdf_atual').innerHTML='<i>Nenhum PDF enviado.</i>'; PROVA_TEM_PDF=false; PO_PDF_ALVO=0; toggleOrigem(); renderCargosProva([]); marcaModoProva(); }
+  function novaProva(){ $('po_id').value=''; $('po_titulo').value=''; $('po_duracao').value='60'; $('po_maxsaidas').value='2'; $('po_inicio').value=''; $('po_entrada_fim').value=''; $('po_tolerancia').value='0'; PO_SEL={}; marcarSelProva(); atualizaSelQ(); PO_GAB=[]; $('po_numq').value='30'; $('po_numalt').value='4'; if($('po_pdf_file'))$('po_pdf_file').value=''; $('po_pdf_atual').innerHTML='<i>Nenhum PDF enviado.</i>'; PROVA_TEM_PDF=false; PO_PDF_ALVO=0; toggleOrigem(); renderCargosProva([]); marcaModoProva(); }
   function marcaModoProva(){
     var id=$('po_id').value;
     if(id){
@@ -1258,7 +1260,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     if(!$('po_concurso').value){alert('Selecione o concurso.');return;}
     if(!$('po_titulo').value.trim()){alert('Informe o título.');return;}
     var tipo=$('po_tipo').value;
-    var body={id:$('po_id').value||undefined, concurso_id:$('po_concurso').value, titulo:$('po_titulo').value, duracao_min:$('po_duracao').value, max_saidas:$('po_maxsaidas').value, inicio_em:$('po_inicio').value, tolerancia_min:$('po_tolerancia').value, tipo:tipo, cargos:cargosProvaSel()};
+    var body={id:$('po_id').value||undefined, concurso_id:$('po_concurso').value, titulo:$('po_titulo').value, duracao_min:$('po_duracao').value, max_saidas:$('po_maxsaidas').value, inicio_em:$('po_inicio').value, entrada_fim:$('po_entrada_fim').value, tolerancia_min:$('po_tolerancia').value, tipo:tipo, cargos:cargosProvaSel()};
     if(tipo==='banco'){
       var ids=Object.keys(PO_SEL).map(function(x){return parseInt(x);});
       if(!ids.length){alert('Selecione ao menos uma questão.');return;}
@@ -1293,7 +1295,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var d=await (await fetch('/admin/provas.json?concurso='+$('po_concurso').value)).json();
     $('po_lista').innerHTML = d.provas.length ? d.provas.map(function(p){
       return '<div class="card" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center">'
-        +'<div><b>'+esc(p.titulo)+'</b>'+(p.tipo==='pdf'?' <span class="tag on">PDF</span>':'')+((p.cargos&&p.cargos.length)?(' '+p.cargos.map(function(c){return '<span class="tag on">'+esc(c)+'</span>';}).join(' ')):' <span class="tag">todos os cargos</span>')+'<div class="hint">'+p.num_questoes+' questões · '+p.duracao_min+' min · máx. '+p.max_saidas+' saídas'+(p.inicio_em?' · início '+fmtDTcurto(p.inicio_em)+(p.tolerancia_min?(' (+'+p.tolerancia_min+'min)'):''):'')+'</div></div>'
+        +'<div><b>'+esc(p.titulo)+'</b>'+(p.tipo==='pdf'?' <span class="tag on">PDF</span>':'')+((p.cargos&&p.cargos.length)?(' '+p.cargos.map(function(c){return '<span class="tag on">'+esc(c)+'</span>';}).join(' ')):' <span class="tag">todos os cargos</span>')+'<div class="hint">'+p.num_questoes+' questões · '+p.duracao_min+' min · máx. '+p.max_saidas+' saídas'+(p.inicio_em?' · entrada '+fmtDTcurto(p.inicio_em)+(p.entrada_fim?(' até '+fmtDTcurto(p.entrada_fim)):(p.tolerancia_min?(' (+'+p.tolerancia_min+'min)'):'')):'')+'</div></div>'
         +'<div class="row-actions"><button class="mini" onclick="editarProva('+p.id+')">Editar</button><button class="mini" onclick="gerarAcessos('+p.id+')">Gerar acessos</button><button class="mini" onclick="verAcessos('+p.id+')">Ver acessos</button><button class="mini" onclick="abrirResultados('+p.id+')">Resultados PDF</button><button class="mini" onclick="excelResultados('+p.id+')">Excel</button><button class="mini" onclick="zerarProva('+p.id+')">Zerar tentativas</button><button class="del" onclick="delProva('+p.id+')">Excluir</button></div>'
         +'</div></div>';
     }).join('') : '<p class="hint">Nenhuma prova criada para este concurso.</p>';
@@ -1315,7 +1317,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   function editarProva(id){
     var p=PROVAS_PO.find(function(x){return x.id===id;}); if(!p)return;
     $('po_id').value=p.id; $('po_titulo').value=p.titulo; $('po_duracao').value=p.duracao_min; $('po_maxsaidas').value=p.max_saidas;
-    $('po_inicio').value=p.inicio_em||''; $('po_tolerancia').value=p.tolerancia_min||0;
+    $('po_inicio').value=p.inicio_em||''; $('po_entrada_fim').value=p.entrada_fim||''; $('po_tolerancia').value=p.tolerancia_min||0;
     PO_SEL={}; (p.questao_ids||[]).forEach(function(qid){PO_SEL[qid]=true;}); marcarSelProva(); atualizaSelQ();
     $('po_tipo').value=p.tipo||'banco';
     PO_PDF_ALVO=p.id;
