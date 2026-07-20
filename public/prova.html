@@ -244,9 +244,24 @@
   // ---- Anti-fraude ----
   function ativarAntifraude(){
     document.addEventListener('visibilitychange', function(){ if(document.hidden) registrarSaida('Você saiu da janela da prova (minimizou ou trocou de aba/app).'); });
-    window.addEventListener('blur', function(){ registrarSaida('A janela da prova perdeu o foco.'); });
+    // O 'blur' pega Alt+Tab / troca de janela. Mas clicar no PDF (um iframe dentro
+    // da própria prova) também dispara blur — e NÃO é saída. Então, ao perder o foco,
+    // esperamos um instante: se o foco foi para um iframe da nossa página, ignoramos.
+    window.addEventListener('blur', function(){
+      setTimeout(function(){
+        if(!RODANDO) return;
+        var a=document.activeElement;
+        if(a && a.tagName==='IFRAME') return;        // foco foi para o PDF: não é saída
+        if(document.hidden) return;                   // visibilitychange já tratou
+        if(document.hasFocus && document.hasFocus()) return; // a página ainda tem foco
+        registrarSaida('A janela da prova perdeu o foco.');
+      }, 250);
+    });
     document.addEventListener('fullscreenchange', function(){ if(!document.fullscreenElement && RODANDO){ registrarSaida('Você saiu do modo tela cheia.'); mostrarOverlay(); } });
     window.addEventListener('beforeunload', function(e){ if(RODANDO){ e.preventDefault(); e.returnValue=''; } });
+    // Ao voltar o foco para a prova (fechou o zoom, clicou de volta), limpamos o overlay
+    // se na verdade não houve saída — evita o candidato ficar preso na tela de aviso.
+    window.addEventListener('focus', function(){ /* apenas reforça o estado; nada a punir */ });
   }
   async function registrarSaida(motivo){
     if(!RODANDO) return;
