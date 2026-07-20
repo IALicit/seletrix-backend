@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v3 -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v4-isencao -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -149,6 +149,16 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
           <div class="grid2">
             <div><label>Abertura</label><input id="c_laudo_inicio" type="datetime-local"></div>
             <div><label>Fechamento</label><input id="c_laudo_fim" type="datetime-local"></div>
+          </div>
+        </div>
+        <div class="checkline"><input type="checkbox" id="c_pede_isencao" onchange="toggleIsencao()"><label for="c_pede_isencao" style="margin:0">Permitir pedido de isenção da taxa de inscrição</label></div>
+        <div id="bloco_isencao" style="display:none;margin:6px 0 4px;padding:10px;border:1px solid var(--linha);border-radius:8px">
+          <label>Motivos/regras da isenção (aparece para o candidato)</label>
+          <textarea id="c_isencao_texto" rows="3" placeholder="Ex.: Isenção para candidatos inscritos no CadÚnico, doadores de medula, negros (Lei X), etc. Descreva as condições e o que comprovar."></textarea>
+          <p class="hint" style="margin:8px 0">Prazo para o candidato enviar a comprovação (em branco = liberado enquanto ativado).</p>
+          <div class="grid2">
+            <div><label>Abertura</label><input id="c_isencao_inicio" type="datetime-local"></div>
+            <div><label>Fechamento</label><input id="c_isencao_fim" type="datetime-local"></div>
           </div>
         </div>
         <div id="bloco_titulos" style="display:none;margin-top:10px">
@@ -544,6 +554,15 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     <div style="margin-top:16px"><button onclick="salvarPagamento()">Salvar configuração</button></div>
   </div>
 </div>
+<div id="modal_isencoes" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:12px;max-width:820px;width:94%;padding:22px;max-height:90vh;overflow:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <h3>Pedidos de isenção — <span id="is_titulo"></span></h3><button class="sec" onclick="document.getElementById('modal_isencoes').style.display='none'">Fechar</button>
+    </div>
+    <p class="hint">Confira a comprovação de cada candidato e decida. Ao <b>negar</b>, o boleto é gerado automaticamente para o candidato pagar até o fim das inscrições.</p>
+    <div id="is_lista" style="max-height:66vh;overflow:auto;margin-top:10px"></div>
+  </div>
+</div>
 <div id="modal_acessos" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
   <div style="background:#fff;border-radius:12px;max-width:680px;width:94%;padding:22px;max-height:90vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -629,7 +648,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
           <div class="meta">\${esc(c.orgao||'')} &middot; \${c.inscritos} inscritos (\${c.pagos} pagos) &middot; taxa \${esc(c.taxa||'-')}</div>
           <div class="meta">Link: <a href="/concurso.html?c=\${esc(c.slug)}" target="_blank">/concurso.html?c=\${esc(c.slug)}</a></div>
         </div>
-        <div class="row-actions"><button class="mini" onclick='abrirPagamento(\${JSON.stringify(c.id)})'>Pagamento</button><button class="mini" onclick='abrirImport(\${JSON.stringify(c.id)})'>Importar Excel</button><button class="mini" onclick='gerarLogins(\${JSON.stringify(c.id)})'>Gerar acessos</button><button class="mini" onclick='abrirEtapas(\${JSON.stringify(c.id)})'>Etapas / Docs</button><button class="mini" onclick='editarConcurso(\${JSON.stringify(c.id)})'>Editar</button><button class="del" onclick='limparCandidatos(\${JSON.stringify(c.id)})'>Excluir candidatos</button><button class="del" onclick='excluirConcurso(\${JSON.stringify(c.id)})'>Excluir</button></div>
+        <div class="row-actions"><button class="mini" onclick='abrirPagamento(\${JSON.stringify(c.id)})'>Pagamento</button><button class="mini" onclick='abrirImport(\${JSON.stringify(c.id)})'>Importar Excel</button><button class="mini" onclick='gerarLogins(\${JSON.stringify(c.id)})'>Gerar acessos</button><button class="mini" onclick='abrirEtapas(\${JSON.stringify(c.id)})'>Etapas / Docs</button><button class="mini" onclick='abrirIsencoes(\${JSON.stringify(c.id)})'>Isenções</button><button class="mini" onclick='editarConcurso(\${JSON.stringify(c.id)})'>Editar</button><button class="del" onclick='limparCandidatos(\${JSON.stringify(c.id)})'>Excluir candidatos</button><button class="del" onclick='excluirConcurso(\${JSON.stringify(c.id)})'>Excluir</button></div>
       </div>\`).join('') || '<p class="hint">Nenhum concurso ainda. Clique em "Novo concurso".</p>';
     // popular filtro de inscritos
     $('filtro_concurso').innerHTML = '<option value="">Todos os concursos</option>' + concursos.map(c=>'<option value="'+c.id+'">'+esc(c.titulo)+'</option>').join('');
@@ -638,7 +657,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('form_titulo').textContent='Novo concurso'; $('c_id').value='';
     ['c_titulo','c_orgao','c_periodo','c_prova','c_vagas','c_taxa','c_valor','c_dias','c_pdf','c_data_inicio','c_data_fim','c_data_encerramento'].forEach(id=>$(id).value='');
     $('c_dias').value='5'; $('c_aberto').checked=true; cargosEdit=[]; renderCargos();
-    $('c_gratuito').checked=false; $('c_pede_titulos').checked=false; $('c_pede_laudo').checked=false; popularEmpresaSel(EMPRESA_ID); $('c_laudo_inicio').value=''; $('c_laudo_fim').value=''; toggleLaudo(); tiposEdit=[]; renderTipos(); toggleTitulos();
+    $('c_gratuito').checked=false; $('c_pede_titulos').checked=false; $('c_pede_laudo').checked=false; popularEmpresaSel(EMPRESA_ID); $('c_laudo_inicio').value=''; $('c_laudo_fim').value=''; toggleLaudo(); $('c_pede_isencao').checked=false; $('c_isencao_texto').value=''; $('c_isencao_inicio').value=''; $('c_isencao_fim').value=''; toggleIsencao(); tiposEdit=[]; renderTipos(); toggleTitulos();
     $('c_tit_ini_data').value=''; $('c_tit_ini_hora').value=''; $('c_tit_fim_data').value=''; $('c_tit_fim_hora').value='';
     if($('c_brasao_file')) $('c_brasao_file').value='';
     $('brasao_atual').innerHTML='<i>Salve o concurso primeiro para enviar o brasão.</i>';
@@ -654,7 +673,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('c_valor').value=c.taxa_valor||0; $('c_dias').value=c.dias_vencimento||5; $('c_pdf').value=c.pdf_url||'';
     $('c_data_inicio').value=c.data_inicio||''; $('c_data_fim').value=c.data_fim||''; $('c_data_encerramento').value=c.data_encerramento||'';
     $('c_aberto').checked=!!c.aberto; cargosEdit=(c.cargos||[]).slice(); renderCargos();
-    $('c_gratuito').checked=!!c.gratuito; $('c_pede_titulos').checked=!!c.pede_titulos; $('c_pede_laudo').checked=!!c.pede_laudo; popularEmpresaSel(c.empresa_id||EMPRESA_ID); $('c_laudo_inicio').value=c.laudo_inicio||''; $('c_laudo_fim').value=c.laudo_fim||''; toggleLaudo(); tiposEdit=(c.tipos_titulos||[]).slice(); renderTipos(); toggleTitulos();
+    $('c_gratuito').checked=!!c.gratuito; $('c_pede_titulos').checked=!!c.pede_titulos; $('c_pede_laudo').checked=!!c.pede_laudo; popularEmpresaSel(c.empresa_id||EMPRESA_ID); $('c_laudo_inicio').value=c.laudo_inicio||''; $('c_laudo_fim').value=c.laudo_fim||''; toggleLaudo(); $('c_pede_isencao').checked=!!c.pede_isencao; $('c_isencao_texto').value=c.isencao_texto||''; $('c_isencao_inicio').value=c.isencao_inicio||''; $('c_isencao_fim').value=c.isencao_fim||''; toggleIsencao(); tiposEdit=(c.tipos_titulos||[]).slice(); renderTipos(); toggleTitulos();
     var _ti=(c.titulos_inicio||'').split('T'), _tf=(c.titulos_fim||'').split('T');
     $('c_tit_ini_data').value=_ti[0]||''; $('c_tit_ini_hora').value=(_ti[1]||'').slice(0,5);
     $('c_tit_fim_data').value=_tf[0]||''; $('c_tit_fim_hora').value=(_tf[1]||'').slice(0,5);
@@ -670,6 +689,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   function removeCargo(i){ cargosEdit.splice(i,1); renderCargos(); }
   function toggleLaudo(){ $('bloco_laudo').style.display = $('c_pede_laudo').checked ? 'block' : 'none'; }
   function toggleTitulos(){ $('bloco_titulos').style.display = $('c_pede_titulos').checked ? 'block' : 'none'; }
+  function toggleIsencao(){ $('bloco_isencao').style.display = $('c_pede_isencao').checked ? 'block' : 'none'; }
   function renderTipos(){ $('lista_tipos').innerHTML = tiposEdit.map((t,i)=>'<div class="cargo-item"><span>'+esc(t)+'</span><button class="del" onclick="removeTipo('+i+')">Remover</button></div>').join('')||'<p class="hint">Nenhum tipo cadastrado.</p>'; }
   function addTipo(){ const v=$('novo_tipo').value.trim(); if(!v)return; tiposEdit.push(v); $('novo_tipo').value=''; renderTipos(); }
   function removeTipo(i){ tiposEdit.splice(i,1); renderTipos(); }
@@ -678,7 +698,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       prova:$('c_prova').value, vagas:$('c_vagas').value, taxa:$('c_taxa').value, taxa_valor:$('c_valor').value,
       dias_vencimento:$('c_dias').value, pdf_url:$('c_pdf').value, aberto:$('c_aberto').checked,
       data_inicio:$('c_data_inicio').value, data_fim:$('c_data_fim').value, data_encerramento:$('c_data_encerramento').value,
-      gratuito:$('c_gratuito').checked, pede_titulos:$('c_pede_titulos').checked, pede_laudo:$('c_pede_laudo').checked, laudo_inicio:$('c_laudo_inicio').value, laudo_fim:$('c_laudo_fim').value, tipos_titulos:tiposEdit, cargos:cargosEdit, empresa_id:(parseInt($('c_empresa').value)||EMPRESA_ID),
+      gratuito:$('c_gratuito').checked, pede_titulos:$('c_pede_titulos').checked, pede_laudo:$('c_pede_laudo').checked, laudo_inicio:$('c_laudo_inicio').value, laudo_fim:$('c_laudo_fim').value, pede_isencao:$('c_pede_isencao').checked, isencao_texto:$('c_isencao_texto').value, isencao_inicio:$('c_isencao_inicio').value, isencao_fim:$('c_isencao_fim').value, tipos_titulos:tiposEdit, cargos:cargosEdit, empresa_id:(parseInt($('c_empresa').value)||EMPRESA_ID),
       titulos_inicio: combinaDT($('c_tit_ini_data').value, $('c_tit_ini_hora').value, '00:00'),
       titulos_fim: combinaDT($('c_tit_fim_data').value, $('c_tit_fim_hora').value, '23:59') };
     const r=await fetch('/admin/concurso',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
@@ -774,6 +794,46 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
 
   function toB64(file){ return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res(r.result);};r.onerror=rej;r.readAsDataURL(file);}); }
   function abrirEtapas(id){ var c=CONCURSOS.find(function(x){return x.id===id;}); $('me_cid').value=id; $('me_titulo').textContent=c?c.titulo:''; $('modal_etapas').style.display='flex'; carregarEtapas(); }
+  var ISENCAO_CONC=0;
+  async function abrirIsencoes(id){
+    var c=CONCURSOS.find(function(x){return x.id===id;});
+    $('is_titulo').textContent=c?c.titulo:'';
+    $('modal_isencoes').style.display='flex';
+    await carregarIsencoes(id);
+  }
+  async function carregarIsencoes(id){
+    ISENCAO_CONC=id;
+    var d=await (await fetch('/admin/concurso/'+id+'/isencoes.json')).json();
+    var arr=d.isencoes||[];
+    if(!arr.length){ $('is_lista').innerHTML='<p class="hint">Nenhum candidato pediu isenção neste concurso.</p>'; return; }
+    $('is_lista').innerHTML=arr.map(function(k){
+      var badge = k.isencao_status==='aprovada' ? '<span class="tag on">Aprovada</span>'
+        : k.isencao_status==='negada' ? '<span class="tag" style="background:#fde2e2;color:#b42318">Negada</span>'
+        : '<span class="tag" style="background:#fff3cd;color:#8a6d1b">Pendente</span>';
+      var doc = k.tem_doc
+        ? '<a href="/admin/candidato/'+k.id+'/isencao" target="_blank">Ver comprovação'+(k.isencao_doc_nome?(' ('+esc(k.isencao_doc_nome)+')'):'')+'</a>'
+        : '<span class="hint">Sem comprovação enviada ainda</span>';
+      var acoes = (k.isencao_status==='aprovada' || k.isencao_status==='negada')
+        ? '<span class="hint">Analisado'+(k.analise_em?(' em '+k.analise_em):'')+(k.isencao_obs?(' — '+esc(k.isencao_obs)):'')+'</span>'
+        : '<button class="mini" onclick="decidirIsencao('+k.id+',\\'aprovar\\')">Aprovar</button> <button class="del" onclick="decidirIsencao('+k.id+',\\'negar\\')">Negar (gera boleto)</button>';
+      return '<div style="border:1px solid var(--linha);border-radius:9px;padding:12px;margin-bottom:10px">'
+        +'<div style="display:flex;justify-content:space-between;gap:10px"><b>'+esc(k.nome)+'</b> '+badge+'</div>'
+        +'<div class="hint" style="margin:3px 0">'+esc(k.cpf)+' · '+esc(k.cargo)+' · '+esc(k.protocolo)+'</div>'
+        +(k.isencao_motivo?('<div style="margin:4px 0"><b>Motivo:</b> '+esc(k.isencao_motivo)+'</div>'):'')
+        +'<div style="margin:6px 0">'+doc+'</div>'
+        +'<div style="margin-top:8px">'+acoes+'</div></div>';
+    }).join('');
+  }
+  async function decidirIsencao(id,decisao){
+    var obs='';
+    if(decisao==='negar'){ obs=prompt('Motivo da negativa (opcional, aparece para o candidato):'); if(obs===null)return; }
+    if(!confirm(decisao==='aprovar'?'Aprovar a isenção deste candidato? A inscrição será confirmada sem pagamento.':'Negar a isenção? O boleto será gerado para o candidato pagar.'))return;
+    var r=await fetch('/admin/candidato/'+id+'/isencao',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decisao:decisao,obs:obs||''})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    if(decisao==='negar') alert(j.boleto?'Isenção negada. Boleto gerado para o candidato.':'Isenção negada. '+(j.avisoPagamento?'O boleto sai quando o candidato acessar a área dele.':'Sem cobrança configurada.'));
+    else alert('Isenção aprovada! Inscrição confirmada.');
+    carregarIsencoes(ISENCAO_CONC);
+  }
   function fecharEtapas(){ $('modal_etapas').style.display='none'; }
   async function carregarEtapas(){
     var id=$('me_cid').value;

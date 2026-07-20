@@ -122,6 +122,14 @@ async function inicializarBanco() {
   }
   // remove restrição antiga (cpf,cargo) que atrapalha multi-concurso
   await pool.query(`ALTER TABLE candidatos DROP CONSTRAINT IF EXISTS candidatos_cpf_cargo_key`).catch(() => {});
+  // Isenção de taxa: pedido do candidato + comprovante + análise
+  for (const col of [
+    'quer_isencao BOOLEAN DEFAULT FALSE', 'isencao_motivo TEXT', 'isencao_status TEXT',
+    'isencao_obs TEXT', 'isencao_doc_mime TEXT', 'isencao_doc_dados BYTEA', 'isencao_doc_nome TEXT',
+    'isencao_analise_em TIMESTAMPTZ',
+  ]) {
+    await pool.query(`ALTER TABLE candidatos ADD COLUMN IF NOT EXISTS ${col}`);
+  }
   // Tabela de concursos
   await pool.query(`CREATE TABLE IF NOT EXISTS concursos (
     id SERIAL PRIMARY KEY, slug TEXT UNIQUE, titulo TEXT, orgao TEXT, periodo TEXT,
@@ -154,6 +162,9 @@ async function inicializarBanco() {
   }
   // Data + hora (Brasília) da janela de títulos — 'YYYY-MM-DDTHH:MM'
   for (const col of ['titulos_inicio_dt TEXT', 'titulos_fim_dt TEXT', 'laudo_inicio_dt TEXT', 'laudo_fim_dt TEXT']) {
+    await pool.query(`ALTER TABLE concursos ADD COLUMN IF NOT EXISTS ${col}`);
+  }
+  for (const col of ['pede_isencao BOOLEAN DEFAULT FALSE', 'isencao_texto TEXT', 'isencao_inicio_dt TEXT', 'isencao_fim_dt TEXT']) {
     await pool.query(`ALTER TABLE concursos ADD COLUMN IF NOT EXISTS ${col}`);
   }
   await pool.query(`UPDATE concursos SET titulos_inicio_dt = to_char(titulos_inicio,'YYYY-MM-DD')||'T00:00' WHERE titulos_inicio IS NOT NULL AND (titulos_inicio_dt IS NULL OR titulos_inicio_dt='')`).catch(() => {});
@@ -263,6 +274,10 @@ function parseConcurso(r) {
     data_inicio: di, data_fim: df, data_encerramento: de,
     titulos_inicio: ti, titulos_fim: tf, titulos_status: tc.status, pode_titulos: tc.pode,
     laudo_inicio: r.laudo_inicio_dt || null, laudo_fim: r.laudo_fim_dt || null, empresa_id: r.empresa_id || null,
+    pede_isencao: !!r.pede_isencao, isencao_texto: r.isencao_texto || '',
+    isencao_inicio: r.isencao_inicio_dt || null, isencao_fim: r.isencao_fim_dt || null,
+    isencao_status: calcTitulos(!!r.pede_isencao, r.isencao_inicio_dt || null, r.isencao_fim_dt || null, agoraBR()).status,
+    pode_isencao: calcTitulos(!!r.pede_isencao, r.isencao_inicio_dt || null, r.isencao_fim_dt || null, agoraBR()).pode,
     brasao_url: r.brasao_url || null,
     situacao: calcSituacao(di, df, de, hoje), pode_inscrever: calcPode(di, df, hoje),
   };
@@ -466,7 +481,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'prova-pdf-nao-sobrescreve-v3', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'isencao-taxa-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -604,6 +619,14 @@ app.post('/api/inscricao', async (req, res) => {
     const protocolo = 'SLX2026' + String(id).padStart(5, '0');
     await pool.query('UPDATE candidatos SET protocolo=$1 WHERE id=$2', [protocolo, id]);
 
+    // Pedido de isenção: o candidato marcou que quer e o concurso permite agora.
+    const querIsencao = concurso.pede_isencao && concurso.pode_isencao
+      && (b.quer_isencao === true || b.quer_isencao === 'on' || b.quer_isencao === 'sim');
+    if (querIsencao) {
+      await pool.query("UPDATE candidatos SET quer_isencao=TRUE, isencao_status='pendente', isencao_motivo=$1, status='isencao_pendente' WHERE id=$2",
+        [String(b.isencao_motivo || '').trim().slice(0, 300) || null, id]);
+    }
+
     // Anexos de títulos (se o concurso pedir)
     if (concurso.pede_titulos && Array.isArray(b.titulos)) {
       for (const t of b.titulos.slice(0, 5)) {
@@ -623,6 +646,7 @@ app.post('/api/inscricao', async (req, res) => {
     }
 
     const cobrar = !concurso.gratuito && Number(concurso.taxa_valor) > 0 && (concurso.pagamento_gateway === 'bb' || temAsaas);
+    if (querIsencao) return res.json({ ok: true, protocolo, nome, cargo, invoiceUrl: null, cobrar: false, isencao: true });
     if (!cobrar) return res.json({ ok: true, protocolo, nome, cargo, invoiceUrl: null, cobrar: false });
     try {
       const pay = await criarCobranca({ id, nome, cpf, email, telefone, cargo, protocolo }, concurso);
@@ -660,7 +684,9 @@ app.post('/api/candidato/login', async (req, res) => {
     `SELECT k.id, k.protocolo, k.cargo, k.status, k.invoice_url, k.criado_em, k.concurso_id,
             k.condicao_especial, (k.laudo_dados IS NOT NULL) AS tem_laudo, k.laudo_nome,
             c.titulo AS concurso, c.slug, c.gratuito, c.prova, c.pede_laudo, c.laudo_inicio_dt, c.laudo_fim_dt,
-            c.pede_titulos, c.tipos_titulos, c.titulos_inicio_dt, c.titulos_fim_dt
+            c.pede_titulos, c.tipos_titulos, c.titulos_inicio_dt, c.titulos_fim_dt,
+            k.quer_isencao, k.isencao_status, k.isencao_motivo, k.isencao_obs, (k.isencao_doc_dados IS NOT NULL) AS tem_isencao_doc, k.isencao_doc_nome,
+            c.pede_isencao, c.isencao_texto, c.isencao_inicio_dt, c.isencao_fim_dt
      FROM candidatos k LEFT JOIN concursos c ON c.id=k.concurso_id LEFT JOIN empresas e ON e.id=c.empresa_id
      WHERE k.cpf=$1${filtroEmp} ORDER BY k.id DESC`, paramsL);
   const ids = rows.map((r) => r.id);
@@ -696,6 +722,12 @@ app.post('/api/candidato/login', async (req, res) => {
       laudo_inicio: r.laudo_inicio_dt || null, laudo_fim: r.laudo_fim_dt || null, empresa_id: r.empresa_id || null,
       laudo_status: calcJanelaLaudo(!!r.pede_laudo, r.laudo_inicio_dt, r.laudo_fim_dt, agora).status,
       pode_laudo: calcJanelaLaudo(!!r.pede_laudo, r.laudo_inicio_dt, r.laudo_fim_dt, agora).pode,
+      pede_isencao: !!r.pede_isencao, isencao_texto: r.isencao_texto || '',
+      quer_isencao: !!r.quer_isencao, isencao_status: r.isencao_status || '', isencao_motivo: r.isencao_motivo || '',
+      isencao_obs: r.isencao_obs || '', tem_isencao_doc: !!r.tem_isencao_doc, isencao_doc_nome: r.isencao_doc_nome || '',
+      isencao_inicio: r.isencao_inicio_dt || null, isencao_fim: r.isencao_fim_dt || null,
+      isencao_prazo_status: calcTitulos(!!r.pede_isencao, r.isencao_inicio_dt, r.isencao_fim_dt, agora).status,
+      pode_enviar_isencao: calcTitulos(!!r.pede_isencao, r.isencao_inicio_dt, r.isencao_fim_dt, agora).pode,
     };
   });
   res.json({ ok: true, nome: lg.rows[0].nome, inscricoes });
@@ -764,6 +796,8 @@ app.post('/api/candidato/boleto', async (req, res) => {
   if (!cand.rows.length) return res.status(404).json({ erro: 'Inscrição não encontrada.' });
   const c = cand.rows[0];
   if (c.status === 'pago') return res.status(400).json({ erro: 'Esta inscrição já está paga.' });
+  if (c.isencao_status === 'pendente') return res.status(400).json({ erro: 'Seu pedido de isenção está em análise. Aguarde o resultado antes de gerar boleto.' });
+  if (c.isencao_status === 'aprovada' || c.status === 'isento') return res.status(400).json({ erro: 'Sua isenção foi aprovada. Não há taxa a pagar.' });
   const concurso = await lerConcursoPorChave(String(c.concurso_id));
   if (!concurso) return res.status(404).json({ erro: 'Concurso não encontrado.' });
   if (concurso.gratuito || !(Number(concurso.taxa_valor) > 0)) return res.status(400).json({ erro: 'Esta inscrição é gratuita, não há boleto.' });
@@ -818,6 +852,86 @@ app.get('/admin/candidato/:id/laudo', exigirSenha, async (req, res) => {
   res.setHeader('Content-Type', rows[0].laudo_mime || 'application/octet-stream');
   res.setHeader('Content-Disposition', 'inline; filename="' + (rows[0].laudo_nome || 'laudo') + '"');
   res.send(rows[0].laudo_dados);
+});
+
+// ---- Isenção de taxa ----------------------------------------
+// Candidato envia (ou reenvia) o comprovante de isenção pela Área do Candidato.
+app.post('/api/candidato/isencao', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const b = req.body || {};
+  const cpf = await autenticaCandidato(b);
+  if (!cpf) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
+  const cand = await pool.query(`SELECT k.id, k.isencao_status, c.pede_isencao, c.isencao_inicio_dt, c.isencao_fim_dt
+    FROM candidatos k LEFT JOIN concursos c ON c.id=k.concurso_id WHERE k.id=$1 AND k.cpf=$2`, [parseInt(b.inscricao_id), cpf]);
+  if (!cand.rows.length) return res.status(404).json({ erro: 'Inscrição não encontrada.' });
+  const cr = cand.rows[0];
+  if (!cr.pede_isencao) return res.status(403).json({ erro: 'Este concurso não oferece isenção de taxa.' });
+  if (cr.isencao_status === 'aprovada') return res.status(400).json({ erro: 'Sua isenção já foi aprovada.' });
+  if (cr.isencao_status === 'negada') return res.status(400).json({ erro: 'Sua isenção foi analisada e negada. Efetue o pagamento pela Área do Candidato.' });
+  const jan = calcTitulos(true, cr.isencao_inicio_dt, cr.isencao_fim_dt, agoraBR());
+  if (!jan.pode) return res.status(403).json({ erro: jan.status === 'antes' ? 'O prazo para envio da comprovação ainda não abriu.' : 'O prazo para envio da comprovação está encerrado.' });
+  const buf = decodeB64(b.dataBase64);
+  if (!buf) return res.status(400).json({ erro: 'Selecione o arquivo da comprovação.' });
+  const mime = mimeDe(buf);
+  if (!mime) return res.status(400).json({ erro: 'Envie PDF, JPG ou PNG.' });
+  if (buf.length > 5 * 1024 * 1024) return res.status(400).json({ erro: 'Arquivo muito grande (máx. 5 MB).' });
+  const motivo = String(b.isencao_motivo || '').trim().slice(0, 300);
+  await pool.query(`UPDATE candidatos SET quer_isencao=TRUE, isencao_status='pendente', status='isencao_pendente',
+    isencao_motivo=COALESCE(NULLIF($1,''), isencao_motivo), isencao_doc_mime=$2, isencao_doc_dados=$3, isencao_doc_nome=$4
+    WHERE id=$5`, [motivo, mime, buf, String(b.filename || 'comprovante').slice(0, 200), cr.id]);
+  res.json({ ok: true });
+});
+// Candidato baixa o próprio comprovante enviado
+app.get('/api/candidato/isencao/:id', async (req, res) => {
+  if (!pool) return res.status(503).send('Indisponível.');
+  const cpf = await autenticaCandidato({ cpf: req.query.cpf, senha: req.query.senha });
+  if (!cpf) return res.status(401).send('Sessão inválida.');
+  const { rows } = await pool.query('SELECT isencao_doc_mime, isencao_doc_dados, isencao_doc_nome FROM candidatos WHERE id=$1 AND cpf=$2', [parseInt(req.params.id), cpf]);
+  if (!rows.length || !rows[0].isencao_doc_dados) return res.status(404).send('Sem comprovante.');
+  res.setHeader('Content-Type', rows[0].isencao_doc_mime || 'application/octet-stream');
+  res.setHeader('Content-Disposition', 'inline; filename="' + (rows[0].isencao_doc_nome || 'comprovante') + '"');
+  res.send(rows[0].isencao_doc_dados);
+});
+// Admin baixa o comprovante para analisar
+app.get('/admin/candidato/:id/isencao', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Indisponível.');
+  const { rows } = await pool.query('SELECT isencao_doc_mime, isencao_doc_dados, isencao_doc_nome FROM candidatos WHERE id=$1', [parseInt(req.params.id)]);
+  if (!rows.length || !rows[0].isencao_doc_dados) return res.status(404).send('Sem comprovante.');
+  res.setHeader('Content-Type', rows[0].isencao_doc_mime || 'application/octet-stream');
+  res.setHeader('Content-Disposition', 'inline; filename="' + (rows[0].isencao_doc_nome || 'comprovante') + '"');
+  res.send(rows[0].isencao_doc_dados);
+});
+// Admin aprova ou nega. Negada = gera o boleto para o candidato pagar.
+app.post('/admin/candidato/:id/isencao', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const id = parseInt(req.params.id);
+  const decisao = String((req.body || {}).decisao || '');
+  const obs = String((req.body || {}).obs || '').trim().slice(0, 500);
+  if (!['aprovar', 'negar'].includes(decisao)) return res.status(400).json({ erro: 'Decisão inválida.' });
+  const cand = await pool.query('SELECT * FROM candidatos WHERE id=$1', [id]);
+  if (!cand.rows.length) return res.status(404).json({ erro: 'Candidato não encontrado.' });
+  const k = cand.rows[0];
+
+  if (decisao === 'aprovar') {
+    await pool.query("UPDATE candidatos SET isencao_status='aprovada', status='isento', isencao_obs=$1, isencao_analise_em=now() WHERE id=$2", [obs, id]);
+    return res.json({ ok: true, status: 'isento' });
+  }
+  // Negada: agora sim cobramos. Gera o boleto como numa inscrição normal.
+  const concurso = await lerConcursoPorChave(String(k.concurso_id));
+  const cobrar = concurso && !concurso.gratuito && Number(concurso.taxa_valor) > 0 && (concurso.pagamento_gateway === 'bb' || temAsaas);
+  if (!cobrar) {
+    await pool.query("UPDATE candidatos SET isencao_status='negada', status='inscrito', isencao_obs=$1, isencao_analise_em=now() WHERE id=$2", [obs, id]);
+    return res.json({ ok: true, status: 'inscrito', boleto: false });
+  }
+  try {
+    const pay = await criarCobranca({ id: k.id, nome: k.nome, cpf: k.cpf, email: k.email, telefone: k.telefone, cargo: k.cargo, protocolo: k.protocolo }, concurso);
+    await persistirPagamento(id, pay);
+    await pool.query("UPDATE candidatos SET isencao_status='negada', status='aguardando_pagamento', isencao_obs=$1, isencao_analise_em=now() WHERE id=$2", [obs, id]);
+    return res.json({ ok: true, status: 'aguardando_pagamento', boleto: true, invoiceUrl: pay.invoiceUrl });
+  } catch (e) {
+    await pool.query("UPDATE candidatos SET isencao_status='negada', status='aguardando_pagamento', isencao_obs=$1, isencao_analise_em=now() WHERE id=$2", [obs, id]);
+    return res.json({ ok: true, status: 'aguardando_pagamento', boleto: false, avisoPagamento: true });
+  }
 });
 app.post('/api/candidato/recurso', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
@@ -1042,6 +1156,8 @@ app.post('/admin/concurso', exigirSenha, async (req, res) => {
       empresa_id: parseInt(b.empresa_id) || null,
       data_inicio: dnull(b.data_inicio), data_fim: dnull(b.data_fim), data_encerramento: dnull(b.data_encerramento),
       titulos_inicio_dt: dtnull(b.titulos_inicio), titulos_fim_dt: dtnull(b.titulos_fim),
+      pede_isencao: bool(b.pede_isencao), isencao_texto: String(b.isencao_texto || '').trim().slice(0, 2000),
+      isencao_inicio_dt: dtnull(b.isencao_inicio), isencao_fim_dt: dtnull(b.isencao_fim),
       cargos,
     };
     // slug único
@@ -1051,12 +1167,12 @@ app.post('/admin/concurso', exigirSenha, async (req, res) => {
       if (!q.rows.length) break; slug = base + '-' + (n++);
     }
     if (b.id) {
-      await pool.query(`UPDATE concursos SET slug=$1,titulo=$2,orgao=$3,periodo=$4,taxa=$5,prova=$6,vagas=$7,pdf_url=$8,taxa_valor=$9,dias_vencimento=$10,cargos=$11,aberto=$12,gratuito=$13,pede_titulos=$14,tipos_titulos=$15,data_inicio=$16,data_fim=$17,data_encerramento=$18,titulos_inicio_dt=$19,titulos_fim_dt=$20,pede_laudo=$21,laudo_inicio_dt=$22,laudo_fim_dt=$23,empresa_id=COALESCE($24,empresa_id) WHERE id=$25`,
-        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), dados.data_inicio, dados.data_fim, dados.data_encerramento, dados.titulos_inicio_dt, dados.titulos_fim_dt, dados.pede_laudo, dados.laudo_inicio_dt, dados.laudo_fim_dt, dados.empresa_id, b.id]);
+      await pool.query(`UPDATE concursos SET slug=$1,titulo=$2,orgao=$3,periodo=$4,taxa=$5,prova=$6,vagas=$7,pdf_url=$8,taxa_valor=$9,dias_vencimento=$10,cargos=$11,aberto=$12,gratuito=$13,pede_titulos=$14,tipos_titulos=$15,data_inicio=$16,data_fim=$17,data_encerramento=$18,titulos_inicio_dt=$19,titulos_fim_dt=$20,pede_laudo=$21,laudo_inicio_dt=$22,laudo_fim_dt=$23,empresa_id=COALESCE($24,empresa_id),pede_isencao=$25,isencao_texto=$26,isencao_inicio_dt=$27,isencao_fim_dt=$28 WHERE id=$29`,
+        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), dados.data_inicio, dados.data_fim, dados.data_encerramento, dados.titulos_inicio_dt, dados.titulos_fim_dt, dados.pede_laudo, dados.laudo_inicio_dt, dados.laudo_fim_dt, dados.empresa_id, dados.pede_isencao, dados.isencao_texto, dados.isencao_inicio_dt, dados.isencao_fim_dt, b.id]);
       return res.json({ ok: true, id: b.id, slug });
     } else {
-      const ins = await pool.query(`INSERT INTO concursos (slug,titulo,orgao,periodo,taxa,prova,vagas,pdf_url,taxa_valor,dias_vencimento,cargos,aberto,gratuito,pede_titulos,tipos_titulos,data_inicio,data_fim,data_encerramento,titulos_inicio_dt,titulos_fim_dt,pede_laudo,laudo_inicio_dt,laudo_fim_dt,empresa_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,COALESCE($24,(SELECT id FROM empresas ORDER BY id LIMIT 1))) RETURNING id`,
-        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), dados.data_inicio, dados.data_fim, dados.data_encerramento, dados.titulos_inicio_dt, dados.titulos_fim_dt, dados.pede_laudo, dados.laudo_inicio_dt, dados.laudo_fim_dt, dados.empresa_id]);
+      const ins = await pool.query(`INSERT INTO concursos (slug,titulo,orgao,periodo,taxa,prova,vagas,pdf_url,taxa_valor,dias_vencimento,cargos,aberto,gratuito,pede_titulos,tipos_titulos,data_inicio,data_fim,data_encerramento,titulos_inicio_dt,titulos_fim_dt,pede_laudo,laudo_inicio_dt,laudo_fim_dt,empresa_id,pede_isencao,isencao_texto,isencao_inicio_dt,isencao_fim_dt) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,COALESCE($24,(SELECT id FROM empresas ORDER BY id LIMIT 1)),$25,$26,$27,$28) RETURNING id`,
+        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), dados.data_inicio, dados.data_fim, dados.data_encerramento, dados.titulos_inicio_dt, dados.titulos_fim_dt, dados.pede_laudo, dados.laudo_inicio_dt, dados.laudo_fim_dt, dados.empresa_id, dados.pede_isencao, dados.isencao_texto, dados.isencao_inicio_dt, dados.isencao_fim_dt]);
       return res.json({ ok: true, id: ins.rows[0].id, slug });
     }
   } catch (e) { console.error('concurso:', e.message); res.status(500).json({ erro: 'Não foi possível salvar.' }); }
@@ -1282,7 +1398,11 @@ function filtrosInscritos(q) {
   return { where: where.join(' AND '), params };
 }
 function mascaraCpf(cpf) { cpf = soDigitos(cpf); if (cpf.length !== 11) return cpf || ''; return '***.' + cpf.slice(3, 6) + '.' + cpf.slice(6, 9) + '-**'; }
-function situacaoTxt(r, gratuito) { return (r.status === 'pago' || gratuito) ? 'Confirmada' : 'Aguardando pagamento'; }
+function situacaoTxt(r, gratuito) {
+  if (r.isencao_status === 'pendente' || r.status === 'isencao_pendente') return 'Isenção em análise';
+  if (r.isencao_status === 'aprovada' || r.status === 'isento') return 'Isento (confirmada)';
+  return (r.status === 'pago' || gratuito) ? 'Confirmada' : 'Aguardando pagamento';
+}
 function resumoFiltros(q) {
   const p = [];
   if (q.cargo) p.push('Cargo: ' + q.cargo);
@@ -1291,6 +1411,14 @@ function resumoFiltros(q) {
   return p.join(' · ');
 }
 
+app.get('/admin/concurso/:id/isencoes.json', exigirSenha, async (req, res) => {
+  if (!pool) return res.json({ isencoes: [] });
+  const { rows } = await pool.query(`SELECT id, nome, cpf, cargo, protocolo, isencao_status, isencao_motivo, isencao_obs,
+      (isencao_doc_dados IS NOT NULL) AS tem_doc, isencao_doc_nome, to_char(isencao_analise_em,'DD/MM/YYYY HH24:MI') AS analise_em
+    FROM candidatos WHERE concurso_id=$1 AND quer_isencao=TRUE ORDER BY
+      CASE COALESCE(isencao_status,'pendente') WHEN 'pendente' THEN 0 WHEN 'aprovada' THEN 1 ELSE 2 END, nome`, [parseInt(req.params.id)]);
+  res.json({ isencoes: rows });
+});
 app.get('/admin/relatorio/inscritos.json', exigirSenha, async (req, res) => {
   if (!pool || !req.query.concurso) return res.json({ total: 0 });
   const f = filtrosInscritos(req.query);
