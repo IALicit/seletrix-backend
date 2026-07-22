@@ -189,6 +189,37 @@
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao enviar');return;}
     alert('Recurso enviado com sucesso!'); recarregar();
   }
+  function provaBlock(r){
+    var lista = r.provas_online || [];
+    if(!lista.length) return '';
+    var itens = lista.map(function(p){
+      var quando = p.inicio_fmt
+        ? ('<p class="tit-hint">Entrada de <b>'+p.inicio_fmt+'</b>'+(p.entrada_fim_fmt?(' até <b>'+p.entrada_fim_fmt+'</b>'):'')+' · duração <b>'+p.duracao_min+' min</b></p>')
+        : ('<p class="tit-hint">Duração: <b>'+p.duracao_min+' min</b></p>');
+      var corpo;
+      // Quem JÁ começou continua podendo entrar, mesmo com a janela de entrada
+      // fechada: a janela controla o início, não a continuação. O tempo individual
+      // é que encerra a prova dele.
+      var emAndamento = (p.status==='em_andamento');
+      if(p.status==='finalizado'){
+        corpo = '<div class="rec-resp" style="background:#e6f4ea;color:#1e7d34"><b>Prova concluída ✓</b> Aguarde a divulgação do resultado.</div>';
+      } else if(p.status==='eliminado'){
+        corpo = '<div class="rec-resp" style="background:#fde8e8;color:#b42318"><b>Prova encerrada por descumprimento das regras.</b></div>';
+      } else if(!emAndamento && !p.pode_entrar && p.janela_motivo==='antes'){
+        corpo = '<p class="tit-hint">⏳ A prova ainda não abriu. O botão de acesso aparece aqui no horário de início.</p>';
+      } else if(!emAndamento && !p.pode_entrar && p.janela_motivo==='encerrado'){
+        corpo = '<div class="rec-resp" style="background:#fde8e8;color:#b42318">⛔ O período de entrada foi encerrado.</div>';
+      } else {
+        var aviso = p.status==='em_andamento'
+          ? '<div class="rec-resp" style="background:#fff3cd;color:#8a6d1b"><b>Prova em andamento.</b> Clique abaixo para continuar de onde parou — o tempo segue correndo.</div>'
+          : '<p class="tit-hint">Ao entrar, o cronômetro começa e a prova roda em tela cheia. Use CPF e sua data de nascimento para acessar.</p>';
+        corpo = aviso + '<a class="tit-btn" style="display:inline-block;text-decoration:none;margin-top:4px" href="/prova.html?prova_id='+p.prova_id+'" target="_blank">'
+          + (p.status==='em_andamento'?'Continuar a prova':'Acessar a prova') + '</a>';
+      }
+      return '<div style="padding:10px 0;border-top:1px solid var(--linha)"><b>'+esc(p.titulo)+'</b>'+quando+corpo+'</div>';
+    }).join('');
+    return '<div class="titulos-box"><h4>Prova Online</h4>'+itens+'</div>';
+  }
   function laudoBlock(r){
     if(!r.pede_laudo) return '';
     var atual = r.tem_laudo ? ('<div class="rec-resp">Laudo enviado ✓ <a href="/api/candidato/laudo/'+r.id+'?cpf='+encodeURIComponent(SESSAO.cpf)+'&senha='+encodeURIComponent(SESSAO.senha)+'" target="_blank">📎 '+esc(r.laudo_nome||'ver laudo')+'</a></div>') : '';
@@ -254,6 +285,7 @@
       +'<div class="meta">Protocolo <b>'+esc(r.protocolo)+'</b> &middot; '+esc(r.cargo)+(r.prova?(' &middot; Prova: '+esc(r.prova)):'')+'</div>'
       + s.badge
       + '<div class="acoes">'+acoes+'</div>'
+      + provaBlock(r)
       + titulosBlock(r)
       + recursosBlock(r)
       + isencaoBlock(r)

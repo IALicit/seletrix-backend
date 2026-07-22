@@ -117,6 +117,9 @@
 <script>
   var $=function(id){return document.getElementById(id);};
   var SES={cpf:'',senha:'',prova_id:''}, PROVA=null, RESP={}, RESTANTE=0, TIMER=null, FORA=false, ULT_SAIDA=0, RODANDO=false;
+  // Link vindo da Área do Candidato traz ?prova_id=N: já entra na prova certa,
+  // sem precisar escolher quando o candidato tem mais de uma.
+  (function(){ var q=(new URLSearchParams(location.search)).get('prova_id'); if(q) SES.prova_id=q; })();
 
   $('in_cpf').addEventListener('input',function(){var v=$('in_cpf').value.replace(/\D/g,'').slice(0,11);v=v.replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d{1,2})$/,'$1-$2');$('in_cpf').value=v;});
   $('in_senha').addEventListener('input',function(){var v=$('in_senha').value.replace(/\D/g,'').slice(0,8);v=v.replace(/(\d{2})(\d)/,'$1/$2').replace(/(\d{2})\/(\d{2})(\d)/,'$1/$2/$3');$('in_senha').value=v;});
