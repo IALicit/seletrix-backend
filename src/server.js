@@ -481,7 +481,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'janela-entrada-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'prova-na-area-candidato-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -708,6 +708,32 @@ app.post('/api/candidato/login', async (req, res) => {
       FROM recursos r LEFT JOIN recurso_fases f ON f.id=r.fase_id WHERE r.candidato_id = ANY($1::int[]) ORDER BY r.id DESC`, [ids]);
     rc.rows.forEach((x) => { (recursosPorCand[x.candidato_id] = recursosPorCand[x.candidato_id] || []).push(x); });
   }
+  // Provas online disponíveis para cada candidato: mesma regra do "Gerar acessos"
+  // (prova ativa, do concurso dele e do cargo dele). Junta o status da tentativa,
+  // se já existir, para o candidato saber se já fez.
+  const provasPorCand = {};
+  if (ids.length) {
+    const pv = await pool.query(`SELECT k.id AS candidato_id, p.id AS prova_id, p.titulo, p.duracao_min,
+        p.inicio_em, p.entrada_fim, p.tolerancia_min, p.tipo, pr.status, pr.nota
+      FROM candidatos k
+      JOIN provas_online p ON p.concurso_id = k.concurso_id AND p.ativa = TRUE
+      LEFT JOIN prova_respostas pr ON pr.prova_id = p.id AND pr.candidato_id = k.id
+      WHERE k.id = ANY($1::int[])
+        AND (jsonb_array_length(COALESCE(NULLIF(p.cargos,''),'[]')::jsonb) = 0
+             OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(NULLIF(p.cargos,''),'[]')::jsonb) AS x(c)
+                         WHERE ${normCargoSQL('x.c')} = ${normCargoSQL('k.cargo')}))
+      ORDER BY p.id DESC`, [ids]).catch((e) => { console.error('provas do candidato:', e.message); return { rows: [] }; });
+    pv.rows.forEach((x) => {
+      const jan = janelaEntrada(x);
+      (provasPorCand[x.candidato_id] = provasPorCand[x.candidato_id] || []).push({
+        prova_id: x.prova_id, titulo: x.titulo, duracao_min: x.duracao_min, tipo: x.tipo || 'banco',
+        inicio_em: x.inicio_em || '', inicio_fmt: x.inicio_em ? fmtDTBR(x.inicio_em) : '',
+        entrada_fim: x.entrada_fim || '', entrada_fim_fmt: x.entrada_fim ? fmtDTBR(x.entrada_fim) : '',
+        status: x.status || 'nao_iniciado', nota: x.nota,
+        pode_entrar: jan.pode, janela_motivo: jan.motivo || '',
+      });
+    });
+  }
   const inscricoes = rows.map((r) => {
     let tipos = []; try { tipos = JSON.parse(r.tipos_titulos || '[]'); } catch {}
     const ti = r.titulos_inicio_dt || null, tf = r.titulos_fim_dt || null;
@@ -728,6 +754,7 @@ app.post('/api/candidato/login', async (req, res) => {
       isencao_inicio: r.isencao_inicio_dt || null, isencao_fim: r.isencao_fim_dt || null,
       isencao_prazo_status: calcTitulos(!!r.pede_isencao, r.isencao_inicio_dt, r.isencao_fim_dt, agora).status,
       pode_enviar_isencao: calcTitulos(!!r.pede_isencao, r.isencao_inicio_dt, r.isencao_fim_dt, agora).pode,
+      provas_online: provasPorCand[r.id] || [],
     };
   });
   res.json({ ok: true, nome: lg.rows[0].nome, inscricoes });
@@ -2521,7 +2548,10 @@ app.post('/api/prova/login', async (req, res) => {
   const b = req.body || {};
   const lista = await provasDoCandidato(b.cpf, b.senha);
   if (!lista.length) return res.status(401).json({ erro: 'CPF ou data de nascimento inválidos, ou você não tem prova liberada.' });
-  const pid = parseInt(b.prova_id) || 0;
+  // prova_id pode vir do link da Área do Candidato. Se não for uma prova dele,
+  // ignoramos em vez de barrar: cai no fluxo normal (escolha ou prova única).
+  let pid = parseInt(b.prova_id) || 0;
+  if (pid && !lista.some((r) => r.prova_id === pid)) pid = 0;
   // Mais de uma prova e nenhuma escolhida: o candidato precisa dizer qual.
   if (!pid && lista.length > 1) {
     return res.json({ ok: true, escolher: true, provas: lista.map((r) => ({
