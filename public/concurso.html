@@ -114,7 +114,12 @@
           <select name="sexo"><option value="" selected>—</option><option>Feminino</option><option>Masculino</option><option>Prefiro não informar</option></select>
         </div>
         <div class="campo"><label>Nome social (se houver)</label><input name="nome_social" placeholder="Opcional"></div>
-        <div class="campo check full"><input type="checkbox" name="pcd" id="pcd"><label for="pcd">Concorro às vagas reservadas a Pessoa com Deficiência (PcD)</label></div>
+        <div class="campo check full"><input type="checkbox" name="pcd" id="pcd" onchange="togglePcdLaudo()"><label for="pcd">Concorro às vagas reservadas a Pessoa com Deficiência (PcD)</label></div>
+        <div id="pcd_laudo_wrap" class="campo full" style="display:none;margin-top:6px;padding:12px;border:1.5px solid var(--linha);border-radius:10px;background:#f8fafc">
+          <label>Laudo médico (PDF, JPG ou PNG · até 5 MB)</label>
+          <input type="file" id="pcd_laudo_file" accept=".pdf,.jpg,.jpeg,.png" style="display:block;margin-top:6px">
+          <p class="aviso" id="pcd_laudo_hint" style="margin-top:8px">Anexe agora se já tiver o laudo em mãos. Se preferir, pode enviar depois na <b>Área do Candidato</b>, dentro do prazo.</p>
+        </div>
       </div>
       <div id="isencao_wrap" style="display:none;margin-top:12px;padding:14px;border:1.5px solid var(--linha);border-radius:10px;background:#f8fafc">
         <div class="campo check full" style="margin:0"><input type="checkbox" id="quer_isencao" onchange="document.getElementById('isencao_extra').style.display=this.checked?'block':'none'"><label for="quer_isencao"><b>Quero solicitar isenção da taxa de inscrição</b></label></div>
@@ -164,6 +169,9 @@
       if(!r.ok) throw new Error('nao encontrado');
       const c = await r.json();
       CONC = c;
+      // O upload de laudo na inscrição só faz sentido se o concurso aceita laudo.
+      // Se não aceitar, o candidato ainda marca PcD, mas envia o laudo depois.
+      window.PCD_ACEITA_LAUDO = !!c.pede_laudo;
       // Opção de isenção: só aparece se o concurso permite e o prazo está aberto.
       if(c.pede_isencao && c.pode_isencao && !c.gratuito){
         var wrap=document.getElementById('isencao_wrap');
@@ -212,6 +220,16 @@
     div.querySelector('.rm').addEventListener('click', function(){ div.remove(); });
     lista.appendChild(div);
   }
+  function togglePcdLaudo(){
+    var wrap=document.getElementById('pcd_laudo_wrap'); if(!wrap) return;
+    var on=document.getElementById('pcd').checked;
+    wrap.style.display = on ? 'block' : 'none';
+    var hint=document.getElementById('pcd_laudo_hint');
+    if(hint) hint.innerHTML = window.PCD_ACEITA_LAUDO
+      ? 'Anexe agora se já tiver o laudo em mãos. Se preferir, pode enviar depois na <b>Área do Candidato</b>, dentro do prazo.'
+      : 'Anexe o laudo médico que comprova a condição.';
+  }
+  function toB64file(file){ return new Promise(function(res,rej){var rd=new FileReader();rd.onload=function(){res(rd.result);};rd.onerror=rej;rd.readAsDataURL(file);}); }
   async function coletarTitulos(){
     const rows=document.querySelectorAll('#titulos_lista .titulo-row'); const out=[];
     for(const row of rows){
@@ -229,6 +247,13 @@
     e.preventDefault(); erro.style.display='none';
     const dados = Object.fromEntries(new FormData(form).entries());
     dados.pcd = document.getElementById('pcd').checked; dados.concurso = slug;
+    // Laudo anexado na própria inscrição (opcional). Se o candidato não anexar,
+    // pode enviar depois na Área do Candidato.
+    var lf = document.getElementById('pcd_laudo_file');
+    if(dados.pcd && lf && lf.files[0]){
+      if(lf.files[0].size>5*1024*1024){ erro.textContent='O laudo deve ter no máximo 5 MB.'; erro.style.display='block'; return; }
+      try{ dados.laudo_base64 = await toB64file(lf.files[0]); dados.laudo_nome = lf.files[0].name; }catch(e){}
+    }
     var qi=document.getElementById('quer_isencao');
     if(qi && qi.checked){ dados.quer_isencao = true; dados.isencao_motivo = (document.getElementById('isencao_motivo')||{}).value || ''; }
     if(PEDE){ try{ dados.titulos = await coletarTitulos(); }catch(err){ erro.textContent=err.message; erro.style.display='block'; return; } }
