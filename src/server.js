@@ -481,7 +481,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'prova-na-area-candidato-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'editar-candidato-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -1290,13 +1290,19 @@ app.post('/admin/inscrito/:id', exigirSenha, async (req, res) => {
     if (nome.length < 3) return res.status(400).json({ erro: 'Informe o nome completo.' });
     if (!cpfValido(cpf)) return res.status(400).json({ erro: 'CPF inválido.' });
     if (!cargo) return res.status(400).json({ erro: 'Informe o cargo.' });
-    const status = ['inscrito', 'aguardando_pagamento', 'pago'].includes(b.status) ? b.status : null;
+    // Nascimento: aceita YYYY-MM-DD (input date). Guarda null se vazio/ inválido.
+    let nasc = null;
+    if (b.nascimento) { const m = String(b.nascimento).match(/^\d{4}-\d{2}-\d{2}$/); if (m) nasc = b.nascimento; }
+    // CPF não pode colidir com outro inscrito do MESMO concurso.
+    const dup = await pool.query('SELECT id FROM candidatos WHERE cpf=$1 AND concurso_id=(SELECT concurso_id FROM candidatos WHERE id=$2) AND id<>$2 LIMIT 1', [cpf, id]);
+    if (dup.rows.length) return res.status(400).json({ erro: 'Já existe outro inscrito com este CPF neste concurso.' });
+    const status = ['inscrito', 'aguardando_pagamento', 'pago', 'isento'].includes(b.status) ? b.status : null;
     await pool.query(
-      `UPDATE candidatos SET nome=$1,cpf=$2,email=$3,telefone=$4,cargo=$5,cidade=$6,uf=$7,pcd=$8,sexo=$9,nome_social=$10,status=COALESCE($11,status) WHERE id=$12`,
+      `UPDATE candidatos SET nome=$1,cpf=$2,email=$3,telefone=$4,cargo=$5,cidade=$6,uf=$7,pcd=$8,sexo=$9,nome_social=$10,status=COALESCE($11,status),nascimento=COALESCE($12,nascimento) WHERE id=$13`,
       [nome, cpf, (b.email || '').trim() || null, soDigitos(b.telefone) || null, cargo,
        (b.cidade || '').trim() || null, (b.uf || '').trim().toUpperCase() || null,
        b.pcd === true || b.pcd === 'true' || b.pcd === 'on', b.sexo || null,
-       (b.nome_social || '').trim() || null, status, id]);
+       (b.nome_social || '').trim() || null, status, nasc, id]);
     res.json({ ok: true });
   } catch (e) { console.error('editar inscrito:', e.message); res.status(500).json({ erro: 'Não foi possível salvar.' }); }
 });

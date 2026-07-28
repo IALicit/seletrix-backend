@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v5-janela -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v6-editcand -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -509,20 +509,21 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     <input type="hidden" id="ei_id">
     <div class="grid2">
       <div><label>Nome completo</label><input id="ei_nome"></div>
-      <div><label>CPF</label><input id="ei_cpf"></div>
+      <div><label>CPF <span style="color:#b45309">(login do candidato)</span></label><input id="ei_cpf" inputmode="numeric"></div>
+      <div><label>Data de nascimento <span style="color:#b45309">(senha da prova)</span></label><input id="ei_nasc" type="date"></div>
+      <div><label>Cargo <span style="color:#b45309">(afeta prova e sala)</span></label><select id="ei_cargo"></select></div>
       <div><label>E-mail</label><input id="ei_email"></div>
       <div><label>Telefone</label><input id="ei_tel"></div>
-      <div><label>Cargo</label><input id="ei_cargo"></div>
       <div><label>Sexo</label><input id="ei_sexo"></div>
       <div><label>Cidade</label><input id="ei_cidade"></div>
       <div><label>UF</label><input id="ei_uf"></div>
       <div><label>Nome social</label><input id="ei_social"></div>
       <div><label>Status de pagamento</label>
-        <select id="ei_status"><option value="inscrito">Inscrito</option><option value="aguardando_pagamento">Aguardando pagamento</option><option value="pago">Pago</option></select>
+        <select id="ei_status"><option value="inscrito">Inscrito</option><option value="aguardando_pagamento">Aguardando pagamento</option><option value="pago">Pago</option><option value="isento">Isento</option></select>
       </div>
     </div>
     <div class="checkline"><input type="checkbox" id="ei_pcd"><label for="ei_pcd" style="margin:0">Pessoa com Deficiência (PcD)</label></div>
-    <p class="hint">Atenção: mudar o status para "Pago" manualmente confirma a inscrição sem passar pelo ASAAS. Use apenas em casos especiais.</p>
+    <p class="hint" style="background:#fff8e6;border:1px solid #f5e3b3;border-radius:8px;padding:10px;margin-top:10px">⚠️ <b>CPF e data de nascimento</b> são o login do candidato. Se alterar, avise-o dos novos dados. <b>Trocar o cargo</b> muda a prova e a sala — reveja alocação e acessos de prova depois. Mudar o status para "Pago"/"Isento" na mão confirma sem passar pelo pagamento; use só em casos especiais.</p>
     <div style="margin-top:16px;display:flex;gap:10px">
       <button onclick="salvarInscrito()">Salvar alterações</button>
       <button class="sec" onclick="fecharEdit()">Cancelar</button>
@@ -746,7 +747,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     }catch(e){ $('brasao_atual').innerHTML='<i>Falha.</i>'; alert('Não foi possível enviar a imagem.'); }
   }
 
-  function statusTag(s){ if(s==='pago')return '<span class="tag pago">Pago</span>'; if(s==='aguardando_pagamento')return '<span class="tag aguard">Aguardando</span>'; return '<span class="tag insc">Inscrito</span>'; }
+  function statusTag(s){ if(s==='pago')return '<span class="tag pago">Pago</span>'; if(s==='isento')return '<span class="tag pago">Isento</span>'; if(s==='isencao_pendente')return '<span class="tag aguard">Isenção em análise</span>'; if(s==='aguardando_pagamento')return '<span class="tag aguard">Aguardando</span>'; if(s==='eliminado')return '<span class="tag" style="background:#fde8e8;color:#b42318">Eliminado</span>'; return '<span class="tag insc">Inscrito</span>'; }
   async function carregarInscritos(){
     const cid=$('filtro_concurso').value;
     $('btn_csv').href = '/admin/inscritos.csv' + (cid?('?concurso='+cid):'');
@@ -772,7 +773,17 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   function editarInscrito(id){
     const r = INSCRITOS.find(x=>x.id===id); if(!r)return;
     $('ei_id').value=r.id; $('ei_nome').value=r.nome||''; $('ei_cpf').value=r.cpf||'';
-    $('ei_email').value=r.email||''; $('ei_tel').value=r.telefone||''; $('ei_cargo').value=r.cargo||'';
+    $('ei_email').value=r.email||''; $('ei_tel').value=r.telefone||'';
+    // Cargo vira um select com os cargos do concurso (evita erro de digitação que
+    // desalinha o candidato da prova). Mantém o valor atual mesmo se não estiver na lista.
+    var conc = CONCURSOS.find(function(x){return x.id===r.concurso_id;});
+    var cargos = (conc && conc.cargos) ? conc.cargos.slice() : [];
+    if(r.cargo && cargos.indexOf(r.cargo)<0) cargos.unshift(r.cargo);
+    $('ei_cargo').innerHTML = cargos.length
+      ? cargos.map(function(c){return '<option value="'+esc(c).replace(/"/g,'&quot;')+'"'+(c===r.cargo?' selected':'')+'>'+esc(c)+'</option>';}).join('')
+      : '<option value="'+esc(r.cargo||'')+'" selected>'+esc(r.cargo||'(sem cargo)')+'</option>';
+    // Nascimento: DATE vem como ISO; o input date precisa de YYYY-MM-DD.
+    $('ei_nasc').value = r.nascimento ? String(r.nascimento).slice(0,10) : '';
     $('ei_cidade').value=r.cidade||''; $('ei_uf').value=r.uf||''; $('ei_sexo').value=r.sexo||'';
     $('ei_social').value=r.nome_social||''; $('ei_pcd').checked=!!r.pcd; $('ei_status').value=r.status||'inscrito';
     $('modal_edit').style.display='flex';
@@ -780,13 +791,22 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   function fecharEdit(){ $('modal_edit').style.display='none'; }
   async function salvarInscrito(){
     const id=$('ei_id').value;
-    const payload={ nome:$('ei_nome').value, cpf:$('ei_cpf').value, email:$('ei_email').value, telefone:$('ei_tel').value,
+    const orig=INSCRITOS.find(x=>String(x.id)===String(id))||{};
+    // Aviso na cara quando muda algo que afeta login ou prova.
+    var mud=[];
+    if(soDig($('ei_cpf').value)!==soDig(orig.cpf||'')) mud.push('CPF (login do candidato)');
+    var nascNovo=$('ei_nasc').value, nascOrig=orig.nascimento?String(orig.nascimento).slice(0,10):'';
+    if(nascNovo!==nascOrig) mud.push('data de nascimento (senha da prova)');
+    if($('ei_cargo').value!==(orig.cargo||'')) mud.push('cargo (muda prova e sala)');
+    if(mud.length && !confirm('Você está alterando: '+mud.join(', ')+'.\\n\\nIsso afeta o acesso do candidato. Confirmar?')) return;
+    const payload={ nome:$('ei_nome').value, cpf:$('ei_cpf').value, nascimento:$('ei_nasc').value||null, email:$('ei_email').value, telefone:$('ei_tel').value,
       cargo:$('ei_cargo').value, cidade:$('ei_cidade').value, uf:$('ei_uf').value, sexo:$('ei_sexo').value,
       nome_social:$('ei_social').value, pcd:$('ei_pcd').checked, status:$('ei_status').value };
     const r=await fetch('/admin/inscrito/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao salvar');return;}
     fecharEdit(); carregarInscritos();
   }
+  function soDig(s){ return String(s||'').replace(/\\D/g,''); }
   async function excluirInscrito(id){
     if(!confirm('Excluir esta inscrição? A ação é irreversível e remove também os títulos anexados.'))return;
     const r=await fetch('/admin/inscrito/'+id,{method:'DELETE'});
