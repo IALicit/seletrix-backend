@@ -116,7 +116,8 @@ async function inicializarBanco() {
     'asaas_customer_id TEXT', 'asaas_payment_id TEXT', 'invoice_url TEXT', 'concurso_id INT', 'sala_id INT',
     'bb_nosso_numero TEXT', 'bb_linha_digitavel TEXT', 'bb_codigo_barras TEXT', 'bb_qrcode_pix TEXT',
     'cep TEXT', 'endereco TEXT', 'bairro TEXT',
-    'condicao_especial TEXT', 'laudo_mime TEXT', 'laudo_dados BYTEA', 'laudo_nome TEXT'
+    'condicao_especial TEXT', 'laudo_mime TEXT', 'laudo_dados BYTEA', 'laudo_nome TEXT',
+    'pcd_status TEXT', 'pcd_obs TEXT', 'pcd_analise_em TIMESTAMPTZ'
   ]) {
     await pool.query(`ALTER TABLE candidatos ADD COLUMN IF NOT EXISTS ${col}`);
   }
@@ -481,7 +482,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'editar-candidato-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'analise-pcd-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -872,6 +873,38 @@ app.get('/api/candidato/laudo/:id', async (req, res) => {
   res.setHeader('Content-Disposition', 'inline; filename="' + (rows[0].laudo_nome || 'laudo') + '"');
   res.send(rows[0].laudo_dados);
 });
+// ---- Análise PcD (laudo de deficiência) ---------------------
+// Lista os candidatos PcD de um concurso, com o laudo e o status da análise.
+app.get('/admin/concurso/:id/pcd.json', exigirSenha, async (req, res) => {
+  if (!pool) return res.json({ pcd: [] });
+  const { rows } = await pool.query(`SELECT id, nome, cpf, cargo, protocolo, condicao_especial,
+      pcd_status, pcd_obs, (laudo_dados IS NOT NULL) AS tem_laudo, laudo_nome,
+      to_char(pcd_analise_em,'DD/MM/YYYY HH24:MI') AS analise_em
+    FROM candidatos WHERE concurso_id=$1 AND (pcd=TRUE OR pcd_status IS NOT NULL) ORDER BY
+      CASE COALESCE(pcd_status,'pendente') WHEN 'pendente' THEN 0 WHEN 'deferido' THEN 1 ELSE 2 END, nome`, [parseInt(req.params.id)]);
+  res.json({ pcd: rows });
+});
+// Defere ou indefere a condição de PcD. Indeferir NÃO exclui o candidato:
+// ele segue inscrito, só deixa de concorrer às vagas reservadas.
+app.post('/admin/candidato/:id/pcd', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const id = parseInt(req.params.id);
+  const decisao = String((req.body || {}).decisao || '');
+  const obs = String((req.body || {}).obs || '').trim().slice(0, 500);
+  if (!['deferir', 'indeferir', 'reabrir'].includes(decisao)) return res.status(400).json({ erro: 'Decisão inválida.' });
+  if (decisao === 'reabrir') {
+    // Volta para pendente. Mantém a marca pcd=TRUE para reaparecer na fila.
+    await pool.query("UPDATE candidatos SET pcd_status=NULL, pcd_obs=NULL, pcd_analise_em=NULL, pcd=TRUE WHERE id=$1", [id]);
+    return res.json({ ok: true, status: 'pendente' });
+  }
+  const novoStatus = decisao === 'deferir' ? 'deferido' : 'indeferido';
+  // Indeferido perde a marca de PcD (não concorre à reserva); deferido mantém.
+  const novoPcd = decisao === 'deferir';
+  await pool.query('UPDATE candidatos SET pcd_status=$1, pcd_obs=$2, pcd_analise_em=now(), pcd=$3 WHERE id=$4',
+    [novoStatus, obs, novoPcd, id]);
+  res.json({ ok: true, status: novoStatus });
+});
+
 app.get('/admin/candidato/:id/laudo', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).send('Indisponível.');
   const { rows } = await pool.query('SELECT laudo_mime, laudo_dados, laudo_nome FROM candidatos WHERE id=$1', [parseInt(req.params.id)]);

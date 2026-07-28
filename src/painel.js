@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v6-editcand -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v7-pcd -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -557,6 +557,15 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     <div style="margin-top:16px"><button onclick="salvarPagamento()">Salvar configuração</button></div>
   </div>
 </div>
+<div id="modal_pcd" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:12px;max-width:820px;width:94%;padding:22px;max-height:90vh;overflow:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <h3>Laudos PcD — <span id="pcd_titulo"></span></h3><button class="sec" onclick="document.getElementById('modal_pcd').style.display='none'">Fechar</button>
+    </div>
+    <p class="hint">Analise o laudo de cada candidato PcD. <b>Indeferir não exclui</b> a inscrição — o candidato continua concorrendo, apenas sai das vagas reservadas.</p>
+    <div id="pcd_lista" style="max-height:66vh;overflow:auto;margin-top:10px"></div>
+  </div>
+</div>
 <div id="modal_isencoes" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
   <div style="background:#fff;border-radius:12px;max-width:820px;width:94%;padding:22px;max-height:90vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -651,7 +660,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
           <div class="meta">\${esc(c.orgao||'')} &middot; \${c.inscritos} inscritos (\${c.pagos} pagos) &middot; taxa \${esc(c.taxa||'-')}</div>
           <div class="meta">Link: <a href="/concurso.html?c=\${esc(c.slug)}" target="_blank">/concurso.html?c=\${esc(c.slug)}</a></div>
         </div>
-        <div class="row-actions"><button class="mini" onclick='abrirPagamento(\${JSON.stringify(c.id)})'>Pagamento</button><button class="mini" onclick='abrirImport(\${JSON.stringify(c.id)})'>Importar Excel</button><button class="mini" onclick='gerarLogins(\${JSON.stringify(c.id)})'>Gerar acessos</button><button class="mini" onclick='abrirEtapas(\${JSON.stringify(c.id)})'>Etapas / Docs</button><button class="mini" onclick='abrirIsencoes(\${JSON.stringify(c.id)})'>Isenções</button><button class="mini" onclick='editarConcurso(\${JSON.stringify(c.id)})'>Editar</button><button class="del" onclick='limparCandidatos(\${JSON.stringify(c.id)})'>Excluir candidatos</button><button class="del" onclick='excluirConcurso(\${JSON.stringify(c.id)})'>Excluir</button></div>
+        <div class="row-actions"><button class="mini" onclick='abrirPagamento(\${JSON.stringify(c.id)})'>Pagamento</button><button class="mini" onclick='abrirImport(\${JSON.stringify(c.id)})'>Importar Excel</button><button class="mini" onclick='gerarLogins(\${JSON.stringify(c.id)})'>Gerar acessos</button><button class="mini" onclick='abrirEtapas(\${JSON.stringify(c.id)})'>Etapas / Docs</button><button class="mini" onclick='abrirIsencoes(\${JSON.stringify(c.id)})'>Isenções</button><button class="mini" onclick='abrirPcd(\${JSON.stringify(c.id)})'>PcD / Laudos</button><button class="mini" onclick='editarConcurso(\${JSON.stringify(c.id)})'>Editar</button><button class="del" onclick='limparCandidatos(\${JSON.stringify(c.id)})'>Excluir candidatos</button><button class="del" onclick='excluirConcurso(\${JSON.stringify(c.id)})'>Excluir</button></div>
       </div>\`).join('') || '<p class="hint">Nenhum concurso ainda. Clique em "Novo concurso".</p>';
     // popular filtro de inscritos
     $('filtro_concurso').innerHTML = '<option value="">Todos os concursos</option>' + concursos.map(c=>'<option value="'+c.id+'">'+esc(c.titulo)+'</option>').join('');
@@ -817,6 +826,51 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   function toB64(file){ return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res(r.result);};r.onerror=rej;r.readAsDataURL(file);}); }
   function abrirEtapas(id){ var c=CONCURSOS.find(function(x){return x.id===id;}); $('me_cid').value=id; $('me_titulo').textContent=c?c.titulo:''; $('modal_etapas').style.display='flex'; carregarEtapas(); }
   var ISENCAO_CONC=0;
+  var PCD_CONC=0;
+  async function abrirPcd(id){
+    var c=CONCURSOS.find(function(x){return x.id===id;});
+    $('pcd_titulo').textContent=c?c.titulo:'';
+    $('modal_pcd').style.display='flex';
+    await carregarPcd(id);
+  }
+  async function carregarPcd(id){
+    PCD_CONC=id;
+    var d=await (await fetch('/admin/concurso/'+id+'/pcd.json')).json();
+    var arr=d.pcd||[];
+    if(!arr.length){ $('pcd_lista').innerHTML='<p class="hint">Nenhum candidato PcD inscrito neste concurso.</p>'; return; }
+    $('pcd_lista').innerHTML=arr.map(function(k){
+      var badge = k.pcd_status==='deferido' ? '<span class="tag on">Deferido</span>'
+        : k.pcd_status==='indeferido' ? '<span class="tag" style="background:#fde2e2;color:#b42318">Indeferido</span>'
+        : '<span class="tag" style="background:#fff3cd;color:#8a6d1b">Pendente</span>';
+      var doc = k.tem_laudo
+        ? '<a href="/admin/candidato/'+k.id+'/laudo" target="_blank">Ver laudo'+(k.laudo_nome?(' ('+esc(k.laudo_nome)+')'):'')+'</a>'
+        : '<span class="hint" style="color:#b42318">Laudo não enviado</span>';
+      var acoes = (k.pcd_status==='deferido' || k.pcd_status==='indeferido')
+        ? '<span class="hint">Analisado'+(k.analise_em?(' em '+k.analise_em):'')+(k.pcd_obs?(' — '+esc(k.pcd_obs)):'')+'</span> <button class="mini" onclick="decidirPcd('+k.id+',\\'reabrir\\')">Reanalisar</button>'
+        : '<button class="mini" onclick="decidirPcd('+k.id+',\\'deferir\\')">Deferir</button> <button class="del" onclick="decidirPcd('+k.id+',\\'indeferir\\')">Indeferir</button>';
+      return '<div style="border:1px solid var(--linha);border-radius:9px;padding:12px;margin-bottom:10px">'
+        +'<div style="display:flex;justify-content:space-between;gap:10px"><b>'+esc(k.nome)+'</b> '+badge+'</div>'
+        +'<div class="hint" style="margin:3px 0">'+esc(k.cpf)+' · '+esc(k.cargo)+' · '+esc(k.protocolo)+'</div>'
+        +(k.condicao_especial?('<div style="margin:4px 0"><b>Condição declarada:</b> '+esc(k.condicao_especial)+'</div>'):'')
+        +'<div style="margin:6px 0">'+doc+'</div>'
+        +'<div style="margin-top:8px">'+acoes+'</div></div>';
+    }).join('');
+  }
+  async function decidirPcd(id,decisao){
+    if(decisao==='reabrir'){
+      if(!confirm('Reabrir para nova análise? A decisão atual volta a ficar pendente.'))return;
+      var rr=await fetch('/admin/candidato/'+id+'/pcd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decisao:'reabrir'})});
+      var jj=await rr.json(); if(!rr.ok){alert(jj.erro||'Erro');return;}
+      carregarPcd(PCD_CONC); return;
+    }
+    var obs='';
+    if(decisao==='indeferir'){ obs=prompt('Motivo do indeferimento (aparece para o candidato):'); if(obs===null)return; }
+    if(!confirm(decisao==='deferir'?'Deferir a condição de PcD deste candidato?':'Indeferir? O candidato continua inscrito, mas fora das vagas reservadas.'))return;
+    var r=await fetch('/admin/candidato/'+id+'/pcd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decisao:decisao,obs:obs||''})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    alert(decisao==='deferir'?'PcD deferido.':'PcD indeferido. O candidato segue inscrito na ampla concorrência.');
+    carregarPcd(PCD_CONC);
+  }
   async function abrirIsencoes(id){
     var c=CONCURSOS.find(function(x){return x.id===id;});
     $('is_titulo').textContent=c?c.titulo:'';
