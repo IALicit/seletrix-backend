@@ -482,7 +482,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'analise-pcd-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'laudo-na-inscricao-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -619,6 +619,20 @@ app.post('/api/inscricao', async (req, res) => {
     const id = r.rows[0].id;
     const protocolo = 'SLX2026' + String(id).padStart(5, '0');
     await pool.query('UPDATE candidatos SET protocolo=$1 WHERE id=$2', [protocolo, id]);
+
+    // Laudo PcD anexado já na inscrição (opcional — também pode vir depois pela
+    // Área do Candidato). Só salva se marcou PcD e mandou arquivo válido.
+    const ehPcd = b.pcd === true || b.pcd === 'on' || b.pcd === 'sim';
+    if (ehPcd && b.laudo_base64) {
+      try {
+        const buf = decodeB64(b.laudo_base64);
+        const mime = buf && mimeDe(buf);
+        if (buf && mime && buf.length <= 5 * 1024 * 1024) {
+          await pool.query('UPDATE candidatos SET laudo_mime=$1, laudo_dados=$2, laudo_nome=$3 WHERE id=$4',
+            [mime, buf, String(b.laudo_nome || 'laudo').slice(0, 200), id]);
+        }
+      } catch (e) { console.error('laudo na inscrição:', e.message); }
+    }
 
     // Pedido de isenção: o candidato marcou que quer e o concurso permite agora.
     const querIsencao = concurso.pede_isencao && concurso.pode_isencao
