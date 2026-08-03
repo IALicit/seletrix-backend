@@ -482,7 +482,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'laudo-na-inscricao-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'reset-senha-admin-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -1355,6 +1355,28 @@ app.post('/admin/inscrito/:id', exigirSenha, async (req, res) => {
 });
 
 // Excluir uma inscrição (remove também os títulos anexados)
+// Reset de senha da Área do Candidato, pelo admin. Gera uma senha provisória
+// (ou aceita uma definida por você) e a devolve UMA vez, para você repassar ao
+// candidato. A senha fica com hash — ninguém consegue lê-la depois.
+app.post('/admin/inscrito/:id/reset-senha', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const id = parseInt(req.params.id);
+  const k = await pool.query('SELECT cpf, nome FROM candidatos WHERE id=$1', [id]);
+  if (!k.rows.length) return res.status(404).json({ erro: 'Candidato não encontrado.' });
+  const cpf = soDigitos(k.rows[0].cpf);
+  const nome = k.rows[0].nome;
+  // Senha definida pelo admin, ou uma provisória curta e fácil de ditar.
+  let nova = String((req.body || {}).nova_senha || '').trim();
+  if (!nova) {
+    nova = 'SLX' + Math.floor(1000 + Math.random() * 9000); // ex.: SLX4821
+  }
+  if (nova.length < 4) return res.status(400).json({ erro: 'A senha deve ter ao menos 4 caracteres.' });
+  // Upsert: cria o login se não existir, senão troca o hash.
+  await pool.query(`INSERT INTO candidato_login (cpf, senha_hash, nome) VALUES ($1,$2,$3)
+    ON CONFLICT (cpf) DO UPDATE SET senha_hash=EXCLUDED.senha_hash`, [cpf, hashSenha(nova), nome]);
+  res.json({ ok: true, senha: nova, cpf });
+});
+
 app.delete('/admin/inscrito/:id', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
   try {

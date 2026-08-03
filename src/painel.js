@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v7-pcd -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v8-resetsenha -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -768,7 +768,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('linhas_insc').innerHTML = inscritos.map(r=>{
       const pag = r.invoice_url ? '<a href="'+esc(r.invoice_url)+'" target="_blank">abrir fatura</a>' : '<button class="mini" onclick="gerar('+r.id+')">Gerar cobrança</button>';
       const tit = r.titulos>0 ? '<button class="mini" onclick="verTitulos('+r.id+')">Ver ('+r.titulos+')</button>' : '<span style="color:#aaa">—</span>';
-      const acoes = '<button class="mini" onclick="editarInscrito('+r.id+')">Editar</button> <button class="del" style="padding:6px 10px" onclick="excluirInscrito('+r.id+')">Excluir</button>';
+      const acoes = '<button class="mini" onclick="editarInscrito('+r.id+')">Editar</button> <button class="mini" onclick="resetarSenha('+r.id+')">Resetar senha</button> <button class="del" style="padding:6px 10px" onclick="excluirInscrito('+r.id+')">Excluir</button>';
       return '<tr><td>'+esc(r.protocolo)+'</td><td>'+esc(r.nome)+'</td><td>'+esc(r.cpf)+'</td><td>'+esc(r.cargo)+'</td><td>'+statusTag(r.status)+'</td><td>'+pag+'</td><td>'+tit+'</td><td>'+new Date(r.criado_em).toLocaleString('pt-BR')+'</td><td>'+acoes+'</td></tr>';
     }).join('') || '<tr><td colspan="9" style="text-align:center;color:#888;padding:18px">Nenhum inscrito.</td></tr>';
   }
@@ -821,6 +821,17 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     const r=await fetch('/admin/inscrito/'+id,{method:'DELETE'});
     const j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao excluir');return;}
     carregarInscritos();
+  }
+  async function resetarSenha(id){
+    var r0=(typeof INSCRITOS!=='undefined')?INSCRITOS.find(function(x){return x.id===id;}):null;
+    var nome=r0?r0.nome:('inscrição #'+id);
+    var escolha = prompt('Redefinir a senha de acesso de "'+nome+'".\\n\\nDigite a nova senha (mín. 4 caracteres) ou deixe em branco para gerar uma automática:');
+    if(escolha===null) return; // cancelou
+    escolha = String(escolha).trim();
+    if(escolha && escolha.length<4){ alert('A senha deve ter ao menos 4 caracteres.'); return; }
+    var r=await fetch('/admin/inscrito/'+id+'/reset-senha',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nova_senha:escolha})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao redefinir');return;}
+    prompt('Senha redefinida! Copie e envie ao candidato (CPF '+j.cpf+').\\n\\nA senha NÃO aparecerá de novo:', j.senha);
   }
 
   function toB64(file){ return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res(r.result);};r.onerror=rej;r.readAsDataURL(file);}); }
