@@ -106,6 +106,7 @@
         <div class="campo full"><label>Cargo pretendido <span class="req">*</span></label>
           <select name="cargo" required id="cargo"><option value="" disabled selected>Selecione...</option></select>
         </div>
+        <div class="campo full" id="matricula_wrap" style="display:none"><label>Matrícula funcional <span class="req">*</span></label><input name="matricula" id="matricula" placeholder="Sua matrícula funcional"></div>
         <div class="campo"><label>Cidade</label><input name="cidade" placeholder="Sua cidade"></div>
         <div class="campo"><label>UF</label>
           <select name="uf"><option value="" selected>—</option><option>AC</option><option>AL</option><option>AP</option><option>AM</option><option>BA</option><option>CE</option><option>DF</option><option>ES</option><option>GO</option><option>MA</option><option>MT</option><option>MS</option><option>MG</option><option>PA</option><option>PB</option><option>PR</option><option>PE</option><option>PI</option><option>RJ</option><option>RN</option><option>RS</option><option>RO</option><option>RR</option><option>SC</option><option>SP</option><option>SE</option><option>TO</option></select>
@@ -172,6 +173,11 @@
       // O upload de laudo na inscrição só faz sentido se o concurso aceita laudo.
       // Se não aceitar, o candidato ainda marca PcD, mas envia o laudo depois.
       window.PCD_ACEITA_LAUDO = !!c.pede_laudo;
+      // Matrícula funcional obrigatória (ex.: processo interno do Metrô-SP).
+      if(c.pede_matricula){
+        var mw=document.getElementById('matricula_wrap');
+        if(mw){ mw.style.display='block'; var mi=document.getElementById('matricula'); if(mi) mi.required=true; }
+      }
       // Opção de isenção: só aparece se o concurso permite e o prazo está aberto.
       if(c.pede_isencao && c.pode_isencao && !c.gratuito){
         var wrap=document.getElementById('isencao_wrap');
