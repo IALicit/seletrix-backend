@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v9-busca -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v10-metro -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -132,6 +132,8 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       </div>
       <p class="hint">Hoje entre início e fim → <b>Inscrições abertas</b>. Após o fim → <b>Em andamento</b>. Após o encerramento → <b>Encerrado</b>. Em branco = fica sempre como "abertas".</p>
       <div class="checkline"><input type="checkbox" id="c_aberto"><label for="c_aberto" style="margin:0">Publicar no site (visível para os candidatos)</label></div>
+      <div class="checkline"><input type="checkbox" id="c_oculto"><label for="c_oculto" style="margin:0">Concurso oculto (não aparece na vitrine — só quem tem o link se inscreve)</label></div>
+      <div class="checkline"><input type="checkbox" id="c_pede_matricula"><label for="c_pede_matricula" style="margin:0">Exigir matrícula funcional na inscrição (ex.: processo interno)</label></div>
       <div class="checkline"><input type="checkbox" id="c_gratuito"><label for="c_gratuito" style="margin:0">Inscrição gratuita (não gera cobrança de taxa)</label></div>
       <div style="margin-top:16px">
         <label>Cargos</label>
@@ -517,6 +519,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       <div><label>Telefone</label><input id="ei_tel"></div>
       <div><label>Sexo</label><input id="ei_sexo"></div>
       <div><label>Cidade</label><input id="ei_cidade"></div>
+      <div><label>Matrícula funcional</label><input id="ei_matricula"></div>
       <div><label>UF</label><input id="ei_uf"></div>
       <div><label>Nome social</label><input id="ei_social"></div>
       <div><label>Status de pagamento</label>
@@ -657,9 +660,9 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('lista_concursos').innerHTML = concursos.map(c => \`
       <div class="conc">
         <div>
-          <h3>\${esc(c.titulo)} \${sitTag(c)}</h3>
+          <h3>\${esc(c.titulo)} \${sitTag(c)}\${c.oculto?' <span class="tag" style="background:#ede9fe;color:#5b21b6">Oculto</span>':''}\${c.pede_matricula?' <span class="tag" style="background:#e0f2fe;color:#075985">Matrícula</span>':''}</h3>
           <div class="meta">\${esc(c.orgao||'')} &middot; \${c.inscritos} inscritos (\${c.pagos} pagos) &middot; taxa \${esc(c.taxa||'-')}</div>
-          <div class="meta">Link: <a href="/concurso.html?c=\${esc(c.slug)}" target="_blank">/concurso.html?c=\${esc(c.slug)}</a></div>
+          <div class="meta">Link: <a href="/concurso.html?c=\${esc(c.slug)}" target="_blank">/concurso.html?c=\${esc(c.slug)}</a> <button class="mini" onclick='copiarLink(\${JSON.stringify(c.slug)})'>Copiar link</button></div>
         </div>
         <div class="row-actions"><button class="mini" onclick='abrirPagamento(\${JSON.stringify(c.id)})'>Pagamento</button><button class="mini" onclick='abrirImport(\${JSON.stringify(c.id)})'>Importar Excel</button><button class="mini" onclick='gerarLogins(\${JSON.stringify(c.id)})'>Gerar acessos</button><button class="mini" onclick='abrirEtapas(\${JSON.stringify(c.id)})'>Etapas / Docs</button><button class="mini" onclick='abrirIsencoes(\${JSON.stringify(c.id)})'>Isenções</button><button class="mini" onclick='abrirPcd(\${JSON.stringify(c.id)})'>PcD / Laudos</button><button class="mini" onclick='editarConcurso(\${JSON.stringify(c.id)})'>Editar</button><button class="del" onclick='limparCandidatos(\${JSON.stringify(c.id)})'>Excluir candidatos</button><button class="del" onclick='excluirConcurso(\${JSON.stringify(c.id)})'>Excluir</button></div>
       </div>\`).join('') || '<p class="hint">Nenhum concurso ainda. Clique em "Novo concurso".</p>';
@@ -669,7 +672,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   function novoConcurso(){
     $('form_titulo').textContent='Novo concurso'; $('c_id').value='';
     ['c_titulo','c_orgao','c_periodo','c_prova','c_vagas','c_taxa','c_valor','c_dias','c_pdf','c_data_inicio','c_data_fim','c_data_encerramento'].forEach(id=>$(id).value='');
-    $('c_dias').value='5'; $('c_aberto').checked=true; cargosEdit=[]; renderCargos();
+    $('c_dias').value='5'; $('c_aberto').checked=true; $('c_oculto').checked=false; $('c_pede_matricula').checked=false; cargosEdit=[]; renderCargos();
     $('c_gratuito').checked=false; $('c_pede_titulos').checked=false; $('c_pede_laudo').checked=false; popularEmpresaSel(EMPRESA_ID); $('c_laudo_inicio').value=''; $('c_laudo_fim').value=''; toggleLaudo(); $('c_pede_isencao').checked=false; $('c_isencao_texto').value=''; $('c_isencao_inicio').value=''; $('c_isencao_fim').value=''; toggleIsencao(); tiposEdit=[]; renderTipos(); toggleTitulos();
     $('c_tit_ini_data').value=''; $('c_tit_ini_hora').value=''; $('c_tit_fim_data').value=''; $('c_tit_fim_hora').value='';
     if($('c_brasao_file')) $('c_brasao_file').value='';
@@ -685,7 +688,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('c_prova').value=c.prova||''; $('c_vagas').value=c.vagas||''; $('c_taxa').value=c.taxa||'';
     $('c_valor').value=c.taxa_valor||0; $('c_dias').value=c.dias_vencimento||5; $('c_pdf').value=c.pdf_url||'';
     $('c_data_inicio').value=c.data_inicio||''; $('c_data_fim').value=c.data_fim||''; $('c_data_encerramento').value=c.data_encerramento||'';
-    $('c_aberto').checked=!!c.aberto; cargosEdit=(c.cargos||[]).slice(); renderCargos();
+    $('c_aberto').checked=!!c.aberto; $('c_oculto').checked=!!c.oculto; $('c_pede_matricula').checked=!!c.pede_matricula; cargosEdit=(c.cargos||[]).slice(); renderCargos();
     $('c_gratuito').checked=!!c.gratuito; $('c_pede_titulos').checked=!!c.pede_titulos; $('c_pede_laudo').checked=!!c.pede_laudo; popularEmpresaSel(c.empresa_id||EMPRESA_ID); $('c_laudo_inicio').value=c.laudo_inicio||''; $('c_laudo_fim').value=c.laudo_fim||''; toggleLaudo(); $('c_pede_isencao').checked=!!c.pede_isencao; $('c_isencao_texto').value=c.isencao_texto||''; $('c_isencao_inicio').value=c.isencao_inicio||''; $('c_isencao_fim').value=c.isencao_fim||''; toggleIsencao(); tiposEdit=(c.tipos_titulos||[]).slice(); renderTipos(); toggleTitulos();
     var _ti=(c.titulos_inicio||'').split('T'), _tf=(c.titulos_fim||'').split('T');
     $('c_tit_ini_data').value=_ti[0]||''; $('c_tit_ini_hora').value=(_ti[1]||'').slice(0,5);
@@ -710,6 +713,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     const payload={ id:$('c_id').value||undefined, titulo:$('c_titulo').value, orgao:$('c_orgao').value, periodo:$('c_periodo').value,
       prova:$('c_prova').value, vagas:$('c_vagas').value, taxa:$('c_taxa').value, taxa_valor:$('c_valor').value,
       dias_vencimento:$('c_dias').value, pdf_url:$('c_pdf').value, aberto:$('c_aberto').checked,
+      oculto:$('c_oculto').checked, pede_matricula:$('c_pede_matricula').checked,
       data_inicio:$('c_data_inicio').value, data_fim:$('c_data_fim').value, data_encerramento:$('c_data_encerramento').value,
       gratuito:$('c_gratuito').checked, pede_titulos:$('c_pede_titulos').checked, pede_laudo:$('c_pede_laudo').checked, laudo_inicio:$('c_laudo_inicio').value, laudo_fim:$('c_laudo_fim').value, pede_isencao:$('c_pede_isencao').checked, isencao_texto:$('c_isencao_texto').value, isencao_inicio:$('c_isencao_inicio').value, isencao_fim:$('c_isencao_fim').value, tipos_titulos:tiposEdit, cargos:cargosEdit, empresa_id:(parseInt($('c_empresa').value)||EMPRESA_ID),
       titulos_inicio: combinaDT($('c_tit_ini_data').value, $('c_tit_ini_hora').value, '00:00'),
@@ -817,7 +821,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       : '<option value="'+esc(r.cargo||'')+'" selected>'+esc(r.cargo||'(sem cargo)')+'</option>';
     // Nascimento: DATE vem como ISO; o input date precisa de YYYY-MM-DD.
     $('ei_nasc').value = r.nascimento ? String(r.nascimento).slice(0,10) : '';
-    $('ei_cidade').value=r.cidade||''; $('ei_uf').value=r.uf||''; $('ei_sexo').value=r.sexo||'';
+    $('ei_cidade').value=r.cidade||''; $('ei_matricula').value=r.matricula||''; $('ei_uf').value=r.uf||''; $('ei_sexo').value=r.sexo||'';
     $('ei_social').value=r.nome_social||''; $('ei_pcd').checked=!!r.pcd; $('ei_status').value=r.status||'inscrito';
     $('modal_edit').style.display='flex';
   }
@@ -833,7 +837,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     if($('ei_cargo').value!==(orig.cargo||'')) mud.push('cargo (muda prova e sala)');
     if(mud.length && !confirm('Você está alterando: '+mud.join(', ')+'.\\n\\nIsso afeta o acesso do candidato. Confirmar?')) return;
     const payload={ nome:$('ei_nome').value, cpf:$('ei_cpf').value, nascimento:$('ei_nasc').value||null, email:$('ei_email').value, telefone:$('ei_tel').value,
-      cargo:$('ei_cargo').value, cidade:$('ei_cidade').value, uf:$('ei_uf').value, sexo:$('ei_sexo').value,
+      cargo:$('ei_cargo').value, cidade:$('ei_cidade').value, matricula:$('ei_matricula').value, uf:$('ei_uf').value, sexo:$('ei_sexo').value,
       nome_social:$('ei_social').value, pcd:$('ei_pcd').checked, status:$('ei_status').value };
     const r=await fetch('/admin/inscrito/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao salvar');return;}
@@ -1506,6 +1510,11 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
     alert(j.excluidos+' candidato(s) excluído(s). '+j.logins+' login(s) removido(s).');
     carregarConcursos(); if(typeof carregarInscritos==='function') carregarInscritos();
+  }
+  function copiarLink(slug){
+    var url=location.origin+'/concurso.html?c='+slug;
+    if(navigator.clipboard){ navigator.clipboard.writeText(url).then(function(){alert('Link copiado:\\n'+url);},function(){prompt('Copie o link:',url);}); }
+    else { prompt('Copie o link:',url); }
   }
   async function excluirConcurso(id){
     var c=CONCURSOS.find(function(x){return x.id===id;}); var nome=c?c.titulo:'';
