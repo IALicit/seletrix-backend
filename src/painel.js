@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v8-resetsenha -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v9-busca -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -193,7 +193,8 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   <section id="inscritos" style="display:none">
     <div class="card">
       <label>Filtrar por concurso</label>
-      <select id="filtro_concurso" onchange="carregarInscritos()"></select>
+      <select id="filtro_concurso" onchange="if(document.getElementById('busca_insc'))document.getElementById('busca_insc').value='';carregarInscritos()"></select>
+      <input id="busca_insc" placeholder="Buscar por nome, CPF, protocolo ou cargo..." oninput="filtrarInscritos()" style="margin-left:8px;padding:8px 12px;min-width:280px;border:1.5px solid var(--linha);border-radius:8px">
       <p style="margin:14px 0" id="resumo_insc"></p>
       <p><a class="btn" id="btn_csv" href="#">⬇️ Baixar Excel (CSV)</a></p>
       <div class="scroll" style="margin-top:12px"><table>
@@ -763,14 +764,37 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     const url='/admin/inscritos.json'+(cid?('?concurso='+cid):'');
     const { inscritos } = await (await fetch(url)).json();
     INSCRITOS = inscritos;
-    const pagos = inscritos.filter(r=>r.status==='pago').length;
-    $('resumo_insc').innerHTML = '<b>Total:</b> '+inscritos.length+' &nbsp; <b>Pagos:</b> '+pagos;
-    $('linhas_insc').innerHTML = inscritos.map(r=>{
+    // Se havia uma busca ativa, mantém o filtro após recarregar (ex.: depois de
+    // editar/resetar um candidato). Só limpa quando troca de concurso.
+    if($('busca_insc') && $('busca_insc').value.trim()){ filtrarInscritos(); return; }
+    renderInscritos(INSCRITOS);
+  }
+  function semAcento(s){ return String(s==null?'':s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase(); }
+  function filtrarInscritos(){
+    var raw=($('busca_insc')?$('busca_insc').value:'').trim();
+    if(!raw){ renderInscritos(INSCRITOS); return; }
+    var q=semAcento(raw);
+    var qDig=raw.replace(/\D/g,''); // pra buscar CPF com ou sem pontuação
+    var f=INSCRITOS.filter(function(r){
+      var cpfDig=String(r.cpf||'').replace(/\D/g,'');
+      return semAcento(r.nome).indexOf(q)>=0
+        || semAcento(r.protocolo).indexOf(q)>=0
+        || semAcento(r.cargo).indexOf(q)>=0
+        || (qDig && cpfDig.indexOf(qDig)>=0);
+    });
+    renderInscritos(f);
+  }
+  function renderInscritos(lista){
+    const pagos = INSCRITOS.filter(r=>r.status==='pago').length;
+    const filtrando = lista.length!==INSCRITOS.length;
+    $('resumo_insc').innerHTML = '<b>Total:</b> '+INSCRITOS.length+' &nbsp; <b>Pagos:</b> '+pagos
+      + (filtrando ? (' &nbsp; <b>Exibindo:</b> '+lista.length) : '');
+    $('linhas_insc').innerHTML = lista.map(r=>{
       const pag = r.invoice_url ? '<a href="'+esc(r.invoice_url)+'" target="_blank">abrir fatura</a>' : '<button class="mini" onclick="gerar('+r.id+')">Gerar cobrança</button>';
       const tit = r.titulos>0 ? '<button class="mini" onclick="verTitulos('+r.id+')">Ver ('+r.titulos+')</button>' : '<span style="color:#aaa">—</span>';
       const acoes = '<button class="mini" onclick="editarInscrito('+r.id+')">Editar</button> <button class="mini" onclick="resetarSenha('+r.id+')">Resetar senha</button> <button class="del" style="padding:6px 10px" onclick="excluirInscrito('+r.id+')">Excluir</button>';
       return '<tr><td>'+esc(r.protocolo)+'</td><td>'+esc(r.nome)+'</td><td>'+esc(r.cpf)+'</td><td>'+esc(r.cargo)+'</td><td>'+statusTag(r.status)+'</td><td>'+pag+'</td><td>'+tit+'</td><td>'+new Date(r.criado_em).toLocaleString('pt-BR')+'</td><td>'+acoes+'</td></tr>';
-    }).join('') || '<tr><td colspan="9" style="text-align:center;color:#888;padding:18px">Nenhum inscrito.</td></tr>';
+    }).join('') || '<tr><td colspan="9" style="text-align:center;color:#888;padding:18px">'+(filtrando?'Nenhum inscrito encontrado para esta busca.':'Nenhum inscrito.')+'</td></tr>';
   }
   async function gerar(id){ if(!confirm('Gerar link de pagamento para este inscrito?'))return; const r=await fetch('/admin/cobranca/'+id,{method:'POST'}); const j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} carregarInscritos(); }
   async function verTitulos(id){
