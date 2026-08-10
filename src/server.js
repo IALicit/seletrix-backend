@@ -489,7 +489,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'oculto-matricula-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'resultado-pcd-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -711,6 +711,7 @@ app.post('/api/candidato/login', async (req, res) => {
             c.titulo AS concurso, c.slug, c.gratuito, c.prova, c.pede_laudo, c.laudo_inicio_dt, c.laudo_fim_dt,
             c.pede_titulos, c.tipos_titulos, c.titulos_inicio_dt, c.titulos_fim_dt,
             k.quer_isencao, k.isencao_status, k.isencao_motivo, k.isencao_obs, (k.isencao_doc_dados IS NOT NULL) AS tem_isencao_doc, k.isencao_doc_nome,
+            k.pcd, k.pcd_status, k.pcd_obs,
             c.pede_isencao, c.isencao_texto, c.isencao_inicio_dt, c.isencao_fim_dt
      FROM candidatos k LEFT JOIN concursos c ON c.id=k.concurso_id LEFT JOIN empresas e ON e.id=c.empresa_id
      WHERE k.cpf=$1${filtroEmp} ORDER BY k.id DESC`, paramsL);
@@ -773,6 +774,7 @@ app.post('/api/candidato/login', async (req, res) => {
       laudo_inicio: r.laudo_inicio_dt || null, laudo_fim: r.laudo_fim_dt || null, empresa_id: r.empresa_id || null,
       laudo_status: calcJanelaLaudo(!!r.pede_laudo, r.laudo_inicio_dt, r.laudo_fim_dt, agora).status,
       pode_laudo: calcJanelaLaudo(!!r.pede_laudo, r.laudo_inicio_dt, r.laudo_fim_dt, agora).pode,
+      pcd: !!r.pcd, pcd_status: r.pcd_status || '', pcd_obs: r.pcd_obs || '',
       pede_isencao: !!r.pede_isencao, isencao_texto: r.isencao_texto || '',
       quer_isencao: !!r.quer_isencao, isencao_status: r.isencao_status || '', isencao_motivo: r.isencao_motivo || '',
       isencao_obs: r.isencao_obs || '', tem_isencao_doc: !!r.tem_isencao_doc, isencao_doc_nome: r.isencao_doc_nome || '',
@@ -899,6 +901,27 @@ app.get('/api/candidato/laudo/:id', async (req, res) => {
 });
 // ---- Análise PcD (laudo de deficiência) ---------------------
 // Lista os candidatos PcD de um concurso, com o laudo e o status da análise.
+// Relatório CSV: resultado da análise PcD (deferidos, indeferidos e motivos).
+app.get('/admin/concurso/:id/pcd.csv', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  const cid = parseInt(req.params.id);
+  const ct = await pool.query('SELECT titulo FROM concursos WHERE id=$1', [cid]);
+  const titulo = (ct.rows[0] && ct.rows[0].titulo) || 'concurso';
+  const { rows } = await pool.query(`SELECT nome, cpf, cargo, protocolo, condicao_especial,
+      pcd_status, pcd_obs, (laudo_dados IS NOT NULL) AS tem_laudo,
+      to_char(pcd_analise_em,'DD/MM/YYYY HH24:MI') AS analise_em
+    FROM candidatos WHERE concurso_id=$1 AND (pcd=TRUE OR pcd_status IS NOT NULL) ORDER BY
+      CASE COALESCE(pcd_status,'pendente') WHEN 'pendente' THEN 0 WHEN 'deferido' THEN 1 ELSE 2 END, nome`, [cid]);
+  const statusTxt = (s) => s === 'deferido' ? 'DEFERIDO' : s === 'indeferido' ? 'INDEFERIDO' : 'PENDENTE';
+  const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+  const cab = ['Nome', 'CPF', 'Cargo', 'Protocolo', 'Condição declarada', 'Laudo enviado', 'Resultado', 'Motivo/Observação', 'Analisado em'];
+  const linhas = rows.map((r) => [r.nome, r.cpf, r.cargo, r.protocolo, r.condicao_especial,
+    r.tem_laudo ? 'Sim' : 'Não', statusTxt(r.pcd_status), r.pcd_obs, r.analise_em].map(esc).join(';'));
+  const csv = '\uFEFF' + [cab.map(esc).join(';'), ...linhas].join('\r\n');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="pcd_' + slugify(titulo) + '.csv"');
+  res.send(csv);
+});
 app.get('/admin/concurso/:id/pcd.json', exigirSenha, async (req, res) => {
   if (!pool) return res.json({ pcd: [] });
   const { rows } = await pool.query(`SELECT id, nome, cpf, cargo, protocolo, condicao_especial,

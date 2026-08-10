@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v10-metro -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v11-pcdresult -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -564,7 +564,8 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
 <div id="modal_pcd" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
   <div style="background:#fff;border-radius:12px;max-width:820px;width:94%;padding:22px;max-height:90vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-      <h3>Laudos PcD — <span id="pcd_titulo"></span></h3><button class="sec" onclick="document.getElementById('modal_pcd').style.display='none'">Fechar</button>
+      <h3>Laudos PcD — <span id="pcd_titulo"></span></h3>
+      <div><a id="pcd_csv" class="mini" style="text-decoration:none;padding:6px 12px;margin-right:8px" href="#" target="_blank">⬇ Relatório (CSV)</a><button class="sec" onclick="document.getElementById('modal_pcd').style.display='none'">Fechar</button></div>
     </div>
     <p class="hint">Analise o laudo de cada candidato PcD. <b>Indeferir não exclui</b> a inscrição — o candidato continua concorrendo, apenas sai das vagas reservadas.</p>
     <div id="pcd_lista" style="max-height:66vh;overflow:auto;margin-top:10px"></div>
@@ -869,6 +870,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   async function abrirPcd(id){
     var c=CONCURSOS.find(function(x){return x.id===id;});
     $('pcd_titulo').textContent=c?c.titulo:'';
+    if($('pcd_csv')) $('pcd_csv').href='/admin/concurso/'+id+'/pcd.csv';
     $('modal_pcd').style.display='flex';
     await carregarPcd(id);
   }
