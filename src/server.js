@@ -493,7 +493,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'cartao-pdf-sala-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'cartao-pdf-sala-v2', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -920,9 +920,25 @@ app.post('/admin/concurso/:id/cartoes-pdf', exigirSenha, async (req, res) => {
   let PDFLib, pdfjs;
   try {
     PDFLib = require('pdf-lib');
-    pdfjs = require('pdfjs-dist/legacy/build/pdf.js');
   } catch (e) {
-    return res.status(500).json({ erro: 'Bibliotecas de PDF indisponíveis no servidor. Avise o suporte.' });
+    return res.status(500).json({ erro: 'Biblioteca pdf-lib indisponível no servidor.' });
+  }
+  // pdfjs-dist muda o caminho do build entre versões. Tentamos os conhecidos.
+  const caminhosPdfjs = [
+    'pdfjs-dist/legacy/build/pdf.mjs',
+    'pdfjs-dist/legacy/build/pdf.js',
+    'pdfjs-dist/build/pdf.js',
+    'pdfjs-dist/legacy/build/pdf',
+    'pdfjs-dist',
+  ];
+  let ultimoErro = '';
+  for (const cam of caminhosPdfjs) {
+    try { pdfjs = require(cam); if (pdfjs) break; } catch (e) { ultimoErro = e.message; }
+  }
+  // Alguns builds exportam em .default
+  if (pdfjs && pdfjs.default && !pdfjs.getDocument) pdfjs = pdfjs.default;
+  if (!pdfjs || !pdfjs.getDocument) {
+    return res.status(500).json({ erro: 'pdfjs indisponível (' + (ultimoErro || 'sem getDocument') + '). Avise o suporte.' });
   }
 
   try {
