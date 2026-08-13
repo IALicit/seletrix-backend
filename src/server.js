@@ -174,6 +174,10 @@ async function inicializarBanco() {
     await pool.query(`ALTER TABLE concursos ADD COLUMN IF NOT EXISTS ${col}`);
   }
   await pool.query(`ALTER TABLE candidatos ADD COLUMN IF NOT EXISTS matricula TEXT`);
+  // Cartão-resposta digitalizado (o candidato vê o dele na área do candidato)
+  for (const col of ['cartao_mime TEXT', 'cartao_dados BYTEA', 'cartao_nome TEXT', 'cartao_em TIMESTAMPTZ']) {
+    await pool.query(`ALTER TABLE candidatos ADD COLUMN IF NOT EXISTS ${col}`);
+  }
   await pool.query(`UPDATE concursos SET titulos_inicio_dt = to_char(titulos_inicio,'YYYY-MM-DD')||'T00:00' WHERE titulos_inicio IS NOT NULL AND (titulos_inicio_dt IS NULL OR titulos_inicio_dt='')`).catch(() => {});
   await pool.query(`UPDATE concursos SET titulos_fim_dt = to_char(titulos_fim,'YYYY-MM-DD')||'T23:59' WHERE titulos_fim IS NOT NULL AND (titulos_fim_dt IS NULL OR titulos_fim_dt='')`).catch(() => {});
   // Anexos de títulos enviados pelos candidatos
@@ -489,7 +493,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'resultado-pcd-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'cartao-resposta-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -711,7 +715,7 @@ app.post('/api/candidato/login', async (req, res) => {
             c.titulo AS concurso, c.slug, c.gratuito, c.prova, c.pede_laudo, c.laudo_inicio_dt, c.laudo_fim_dt,
             c.pede_titulos, c.tipos_titulos, c.titulos_inicio_dt, c.titulos_fim_dt,
             k.quer_isencao, k.isencao_status, k.isencao_motivo, k.isencao_obs, (k.isencao_doc_dados IS NOT NULL) AS tem_isencao_doc, k.isencao_doc_nome,
-            k.pcd, k.pcd_status, k.pcd_obs,
+            k.pcd, k.pcd_status, k.pcd_obs, (k.cartao_dados IS NOT NULL) AS tem_cartao,
             c.pede_isencao, c.isencao_texto, c.isencao_inicio_dt, c.isencao_fim_dt
      FROM candidatos k LEFT JOIN concursos c ON c.id=k.concurso_id LEFT JOIN empresas e ON e.id=c.empresa_id
      WHERE k.cpf=$1${filtroEmp} ORDER BY k.id DESC`, paramsL);
@@ -775,6 +779,7 @@ app.post('/api/candidato/login', async (req, res) => {
       laudo_status: calcJanelaLaudo(!!r.pede_laudo, r.laudo_inicio_dt, r.laudo_fim_dt, agora).status,
       pode_laudo: calcJanelaLaudo(!!r.pede_laudo, r.laudo_inicio_dt, r.laudo_fim_dt, agora).pode,
       pcd: !!r.pcd, pcd_status: r.pcd_status || '', pcd_obs: r.pcd_obs || '',
+      tem_cartao: !!r.tem_cartao,
       pede_isencao: !!r.pede_isencao, isencao_texto: r.isencao_texto || '',
       quer_isencao: !!r.quer_isencao, isencao_status: r.isencao_status || '', isencao_motivo: r.isencao_motivo || '',
       isencao_obs: r.isencao_obs || '', tem_isencao_doc: !!r.tem_isencao_doc, isencao_doc_nome: r.isencao_doc_nome || '',
@@ -889,6 +894,86 @@ app.post('/api/candidato/laudo', async (req, res) => {
   }
   res.json({ ok: true });
 });
+// ---- Cartão-resposta -----------------------------------------
+// Upload em massa: recebe uma lista de {filename, dataBase64}, casa cada arquivo
+// ao candidato pelo CPF no NOME do arquivo (ex.: 25790278825.jpg). Quem não casar
+// volta no relatório para resolução manual. Um arquivo = um candidato.
+app.post('/admin/concurso/:id/cartoes', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const cid = parseInt(req.params.id);
+  const arquivos = Array.isArray((req.body || {}).arquivos) ? req.body.arquivos : [];
+  if (!arquivos.length) return res.status(400).json({ erro: 'Nenhum arquivo enviado.' });
+  let casados = 0; const naoCasados = [];
+  for (const a of arquivos) {
+    const nome = String(a.filename || '');
+    const semExt = nome.replace(/\.[^.]+$/, '');
+    // Aceita o CPF de duas formas: 11 dígitos isolados (delimitados por não-dígitos,
+    // pra o 01 da sala não grudar no CPF), ou formatado 000.000.000-00.
+    const cands = [];
+    (semExt.match(/(?<!\d)\d{11}(?!\d)/g) || []).forEach((g) => cands.push(g));
+    (semExt.match(/\d{3}\.\d{3}\.\d{3}-\d{2}/g) || []).forEach((g) => cands.push(g.replace(/\D/g, '')));
+    const unicos = [...new Set(cands)];
+    if (unicos.length !== 1) {
+      naoCasados.push({ arquivo: nome, motivo: cands.length ? 'Mais de um CPF no nome (ambíguo)' : 'Sem CPF válido no nome do arquivo' });
+      continue;
+    }
+    const cpf = unicos[0];
+    const buf = decodeB64(a.dataBase64);
+    const mime = buf && mimeDe(buf);
+    if (!buf || !mime) { naoCasados.push({ arquivo: nome, motivo: 'Arquivo inválido (use PDF, JPG ou PNG)' }); continue; }
+    if (buf.length > 8 * 1024 * 1024) { naoCasados.push({ arquivo: nome, motivo: 'Arquivo maior que 8 MB' }); continue; }
+    const cand = await pool.query('SELECT id FROM candidatos WHERE concurso_id=$1 AND cpf=$2 LIMIT 1', [cid, cpf]);
+    if (!cand.rows.length) { naoCasados.push({ arquivo: nome, cpf, motivo: 'CPF não encontrado neste concurso' }); continue; }
+    await pool.query('UPDATE candidatos SET cartao_mime=$1, cartao_dados=$2, cartao_nome=$3, cartao_em=now() WHERE id=$4',
+      [mime, buf, nome.slice(0, 200), cand.rows[0].id]);
+    casados++;
+  }
+  res.json({ ok: true, casados, nao_casados: naoCasados });
+});
+// Associação manual de um cartão a um candidato (para os que não casaram).
+app.post('/admin/candidato/:id/cartao', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const id = parseInt(req.params.id);
+  const buf = decodeB64((req.body || {}).dataBase64);
+  const mime = buf && mimeDe(buf);
+  if (!buf || !mime) return res.status(400).json({ erro: 'Arquivo inválido (PDF, JPG ou PNG).' });
+  if (buf.length > 8 * 1024 * 1024) return res.status(400).json({ erro: 'Arquivo maior que 8 MB.' });
+  const r = await pool.query('UPDATE candidatos SET cartao_mime=$1, cartao_dados=$2, cartao_nome=$3, cartao_em=now() WHERE id=$4',
+    [mime, buf, String((req.body || {}).filename || 'cartao').slice(0, 200), id]);
+  if (!r.rowCount) return res.status(404).json({ erro: 'Candidato não encontrado.' });
+  res.json({ ok: true });
+});
+// Situação dos cartões de um concurso (quantos têm, quantos faltam).
+app.get('/admin/concurso/:id/cartoes.json', exigirSenha, async (req, res) => {
+  if (!pool) return res.json({ com: 0, sem: 0, faltando: [] });
+  const cid = parseInt(req.params.id);
+  const { rows } = await pool.query(`SELECT id, nome, cpf, cargo, protocolo, (cartao_dados IS NOT NULL) AS tem_cartao
+    FROM candidatos WHERE concurso_id=$1 ORDER BY nome`, [cid]);
+  const com = rows.filter((r) => r.tem_cartao).length;
+  res.json({ com, sem: rows.length - com, total: rows.length,
+    faltando: rows.filter((r) => !r.tem_cartao).map((r) => ({ id: r.id, nome: r.nome, cpf: r.cpf, cargo: r.cargo, protocolo: r.protocolo })) });
+});
+// Candidato baixa o próprio cartão.
+app.get('/api/candidato/cartao/:id', async (req, res) => {
+  if (!pool) return res.status(503).send('Indisponível.');
+  const cpf = await autenticaCandidato({ cpf: req.query.cpf, senha: req.query.senha });
+  if (!cpf) return res.status(401).send('Sessão inválida.');
+  const { rows } = await pool.query('SELECT cartao_mime, cartao_dados, cartao_nome FROM candidatos WHERE id=$1 AND cpf=$2', [parseInt(req.params.id), cpf]);
+  if (!rows.length || !rows[0].cartao_dados) return res.status(404).send('Sem cartão.');
+  res.setHeader('Content-Type', rows[0].cartao_mime || 'application/octet-stream');
+  res.setHeader('Content-Disposition', 'inline; filename="cartao-resposta"');
+  res.send(rows[0].cartao_dados);
+});
+// Admin baixa o cartão de um candidato (conferência).
+app.get('/admin/candidato/:id/cartao', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Indisponível.');
+  const { rows } = await pool.query('SELECT cartao_mime, cartao_dados FROM candidatos WHERE id=$1', [parseInt(req.params.id)]);
+  if (!rows.length || !rows[0].cartao_dados) return res.status(404).send('Sem cartão.');
+  res.setHeader('Content-Type', rows[0].cartao_mime || 'application/octet-stream');
+  res.setHeader('Content-Disposition', 'inline; filename="cartao-resposta"');
+  res.send(rows[0].cartao_dados);
+});
+
 app.get('/api/candidato/laudo/:id', async (req, res) => {
   if (!pool) return res.status(503).send('Indisponível.');
   const cpf = await autenticaCandidato({ cpf: req.query.cpf, senha: req.query.senha });

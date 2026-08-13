@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v11-pcdresult -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v12-cartao -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -561,6 +561,19 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     <div style="margin-top:16px"><button onclick="salvarPagamento()">Salvar configuração</button></div>
   </div>
 </div>
+<div id="modal_cartoes" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:12px;max-width:820px;width:94%;padding:22px;max-height:90vh;overflow:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <h3>Cartões-resposta — <span id="cr_titulo"></span></h3><button class="sec" onclick="document.getElementById('modal_cartoes').style.display='none'">Fechar</button>
+    </div>
+    <p class="hint">Envie os cartões já <b>separados por candidato</b>, cada arquivo nomeado com o <b>CPF</b> (ex.: <code>25790278825.jpg</code>). PDF, JPG ou PNG, até 8 MB cada. O sistema casa cada arquivo ao candidato pelo CPF do nome.</p>
+    <input type="file" id="cr_files" accept=".pdf,.jpg,.jpeg,.png" multiple style="display:block;margin:10px 0">
+    <button class="tit-btn" id="cr_btn" onclick="enviarCartoes()">Enviar cartões</button>
+    <div id="cr_prog" class="hint" style="margin-top:8px"></div>
+    <div id="cr_resumo" style="margin-top:12px"></div>
+    <div id="cr_faltando" style="margin-top:12px"></div>
+  </div>
+</div>
 <div id="modal_pcd" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
   <div style="background:#fff;border-radius:12px;max-width:820px;width:94%;padding:22px;max-height:90vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -665,7 +678,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
           <div class="meta">\${esc(c.orgao||'')} &middot; \${c.inscritos} inscritos (\${c.pagos} pagos) &middot; taxa \${esc(c.taxa||'-')}</div>
           <div class="meta">Link: <a href="/concurso.html?c=\${esc(c.slug)}" target="_blank">/concurso.html?c=\${esc(c.slug)}</a> <button class="mini" onclick='copiarLink(\${JSON.stringify(c.slug)})'>Copiar link</button></div>
         </div>
-        <div class="row-actions"><button class="mini" onclick='abrirPagamento(\${JSON.stringify(c.id)})'>Pagamento</button><button class="mini" onclick='abrirImport(\${JSON.stringify(c.id)})'>Importar Excel</button><button class="mini" onclick='gerarLogins(\${JSON.stringify(c.id)})'>Gerar acessos</button><button class="mini" onclick='abrirEtapas(\${JSON.stringify(c.id)})'>Etapas / Docs</button><button class="mini" onclick='abrirIsencoes(\${JSON.stringify(c.id)})'>Isenções</button><button class="mini" onclick='abrirPcd(\${JSON.stringify(c.id)})'>PcD / Laudos</button><button class="mini" onclick='editarConcurso(\${JSON.stringify(c.id)})'>Editar</button><button class="del" onclick='limparCandidatos(\${JSON.stringify(c.id)})'>Excluir candidatos</button><button class="del" onclick='excluirConcurso(\${JSON.stringify(c.id)})'>Excluir</button></div>
+        <div class="row-actions"><button class="mini" onclick='abrirPagamento(\${JSON.stringify(c.id)})'>Pagamento</button><button class="mini" onclick='abrirImport(\${JSON.stringify(c.id)})'>Importar Excel</button><button class="mini" onclick='gerarLogins(\${JSON.stringify(c.id)})'>Gerar acessos</button><button class="mini" onclick='abrirEtapas(\${JSON.stringify(c.id)})'>Etapas / Docs</button><button class="mini" onclick='abrirIsencoes(\${JSON.stringify(c.id)})'>Isenções</button><button class="mini" onclick='abrirPcd(\${JSON.stringify(c.id)})'>PcD / Laudos</button><button class="mini" onclick='abrirCartoes(\${JSON.stringify(c.id)})'>Cartões-resposta</button><button class="mini" onclick='editarConcurso(\${JSON.stringify(c.id)})'>Editar</button><button class="del" onclick='limparCandidatos(\${JSON.stringify(c.id)})'>Excluir candidatos</button><button class="del" onclick='excluirConcurso(\${JSON.stringify(c.id)})'>Excluir</button></div>
       </div>\`).join('') || '<p class="hint">Nenhum concurso ainda. Clique em "Novo concurso".</p>';
     // popular filtro de inscritos
     $('filtro_concurso').innerHTML = '<option value="">Todos os concursos</option>' + concursos.map(c=>'<option value="'+c.id+'">'+esc(c.titulo)+'</option>').join('');
@@ -865,6 +878,60 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
 
   function toB64(file){ return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res(r.result);};r.onerror=rej;r.readAsDataURL(file);}); }
   function abrirEtapas(id){ var c=CONCURSOS.find(function(x){return x.id===id;}); $('me_cid').value=id; $('me_titulo').textContent=c?c.titulo:''; $('modal_etapas').style.display='flex'; carregarEtapas(); }
+  var CR_CONC=0;
+  async function abrirCartoes(id){
+    CR_CONC=id;
+    var c=CONCURSOS.find(function(x){return x.id===id;});
+    $('cr_titulo').textContent=c?c.titulo:'';
+    $('cr_files').value=''; $('cr_prog').textContent=''; $('cr_resumo').innerHTML='';
+    $('modal_cartoes').style.display='flex';
+    carregarSituacaoCartoes(id);
+  }
+  async function carregarSituacaoCartoes(id){
+    var d=await (await fetch('/admin/concurso/'+id+'/cartoes.json')).json();
+    $('cr_resumo').innerHTML='<b>Com cartão:</b> '+d.com+' &nbsp; <b>Sem cartão:</b> '+d.sem+' &nbsp; <b>Total:</b> '+d.total;
+    if(d.faltando && d.faltando.length){
+      $('cr_faltando').innerHTML='<p class="hint" style="margin-top:10px"><b>Sem cartão ainda ('+d.faltando.length+'):</b></p>'
+        +'<div style="max-height:200px;overflow:auto;border:1px solid var(--linha);border-radius:8px;padding:8px">'
+        +d.faltando.map(function(k){ return '<div style="padding:3px 0">'+esc(k.nome)+' — '+esc(k.cpf)+' ('+esc(k.cargo)+') <label style="cursor:pointer;color:var(--navy)"><input type="file" accept=".pdf,.jpg,.jpeg,.png" style="display:none" onchange="cartaoManual('+k.id+',this)"> anexar</label></div>'; }).join('')
+        +'</div>';
+    } else { $('cr_faltando').innerHTML='<p class="hint" style="margin-top:10px;color:#1e7d34">Todos os candidatos têm cartão ✓</p>'; }
+  }
+  async function enviarCartoes(){
+    var files=$('cr_files').files;
+    if(!files.length){ alert('Selecione os arquivos dos cartões.'); return; }
+    $('cr_btn').disabled=true;
+    // Envia em lotes pequenos para não sobrecarregar (arquivos podem ser grandes).
+    var LOTE=15, total=files.length, enviados=0, casados=0, naoCasados=[];
+    for(var ini=0; ini<total; ini+=LOTE){
+      var arquivos=[];
+      for(var j=ini; j<Math.min(ini+LOTE,total); j++){
+        var f=files[j];
+        try{ arquivos.push({filename:f.name, dataBase64:await toB64(f)}); }catch(e){ naoCasados.push({arquivo:f.name,motivo:'Falha ao ler'}); }
+      }
+      $('cr_prog').textContent='Enviando... '+Math.min(ini+LOTE,total)+' de '+total;
+      var r=await fetch('/admin/concurso/'+CR_CONC+'/cartoes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({arquivos:arquivos})});
+      var jr=await r.json();
+      if(r.ok){ casados+=jr.casados||0; if(jr.nao_casados) naoCasados=naoCasados.concat(jr.nao_casados); }
+      else { alert(jr.erro||'Erro no envio'); break; }
+      enviados+=arquivos.length;
+    }
+    $('cr_btn').disabled=false; $('cr_prog').textContent='';
+    var msg='Concluído: '+casados+' cartão(ões) vinculado(s).';
+    if(naoCasados.length){
+      msg+='\\n\\n'+naoCasados.length+' não vincularam:\\n'+naoCasados.slice(0,20).map(function(x){return '• '+x.arquivo+' ('+x.motivo+')';}).join('\\n');
+      if(naoCasados.length>20) msg+='\\n... e mais '+(naoCasados.length-20);
+    }
+    alert(msg);
+    carregarSituacaoCartoes(CR_CONC);
+  }
+  async function cartaoManual(id, input){
+    if(!input.files||!input.files[0]) return;
+    var b64=await toB64(input.files[0]);
+    var r=await fetch('/admin/candidato/'+id+'/cartao',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({filename:input.files[0].name,dataBase64:b64})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    carregarSituacaoCartoes(CR_CONC);
+  }
   var ISENCAO_CONC=0;
   var PCD_CONC=0;
   async function abrirPcd(id){
