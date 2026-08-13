@@ -189,6 +189,13 @@
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao enviar');return;}
     alert('Recurso enviado com sucesso!'); recarregar();
   }
+  function cartaoBlock(r){
+    if(!r.tem_cartao) return '';
+    var url='/api/candidato/cartao/'+r.id+'?cpf='+encodeURIComponent(SESSAO.cpf)+'&senha='+encodeURIComponent(SESSAO.senha);
+    return '<div class="titulos-box"><h4>Cartão-resposta</h4>'
+      +'<p class="tit-hint">Este é o seu cartão-resposta digitalizado, para conferência.</p>'
+      +'<a class="tit-btn" style="display:inline-block;text-decoration:none" href="'+url+'" target="_blank">Ver meu cartão-resposta</a></div>';
+  }
   function provaBlock(r){
     var lista = r.provas_online || [];
     if(!lista.length) return '';
@@ -296,6 +303,7 @@
       +'<div class="meta">Protocolo <b>'+esc(r.protocolo)+'</b> &middot; '+esc(r.cargo)+(r.prova?(' &middot; Prova: '+esc(r.prova)):'')+'</div>'
       + s.badge
       + '<div class="acoes">'+acoes+'</div>'
+      + cartaoBlock(r)
       + provaBlock(r)
       + titulosBlock(r)
       + recursosBlock(r)
