@@ -493,7 +493,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'cartao-resposta-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'cartao-pdf-sala-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -894,6 +894,75 @@ app.post('/api/candidato/laudo', async (req, res) => {
   }
   res.json({ ok: true });
 });
+// Extrai o CPF do texto de uma página do cartão. Aceita formatado
+// (000.000.000-00) ou 11 dígitos isolados (delimitados, pra nº de sala/data não
+// grudar). Ambiguidade => null (vai pro relatório, nunca adivinha).
+function acharCpfNoTexto(txt) {
+  const s = String(txt || '');
+  const fmt = s.match(/\d{3}\.\d{3}\.\d{3}-\d{2}/g);
+  if (fmt) { const u = [...new Set(fmt.map((x) => x.replace(/\D/g, '')))]; if (u.length === 1) return u[0]; if (u.length > 1) return null; }
+  const iso = s.match(/(?<!\d)\d{11}(?!\d)/g);
+  if (iso) { const u = [...new Set(iso)]; if (u.length === 1) return u[0]; }
+  return null;
+}
+
+// Processa um PDF de SALA (vários candidatos): separa por página, lê o CPF
+// impresso de cada uma e guarda a página como o cartão daquele candidato.
+// Lazy-require das libs de PDF: se falharem, só esta rota quebra, não o servidor.
+app.post('/admin/concurso/:id/cartoes-pdf', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const cid = parseInt(req.params.id);
+  const buf = decodeB64((req.body || {}).dataBase64);
+  if (!buf) return res.status(400).json({ erro: 'Envie o PDF da sala.' });
+  if (buf.slice(0, 4).toString('latin1') !== '%PDF') return res.status(400).json({ erro: 'O arquivo não é um PDF.' });
+  if (buf.length > 60 * 1024 * 1024) return res.status(400).json({ erro: 'PDF muito grande (máx. 60 MB). Envie uma sala por vez.' });
+
+  let PDFLib, pdfjs;
+  try {
+    PDFLib = require('pdf-lib');
+    pdfjs = require('pdfjs-dist/legacy/build/pdf.js');
+  } catch (e) {
+    return res.status(500).json({ erro: 'Bibliotecas de PDF indisponíveis no servidor. Avise o suporte.' });
+  }
+
+  try {
+    // 1) Ler o texto (CPF) de cada página com pdfjs.
+    const uint = new Uint8Array(buf);
+    const doc = await pdfjs.getDocument({ data: uint, disableFontFace: true, useSystemFonts: false }).promise;
+    const N = doc.numPages;
+    if (N > 400) return res.status(400).json({ erro: 'PDF com muitas páginas (' + N + '). Envie uma sala por vez.' });
+    const cpfs = [];
+    for (let i = 1; i <= N; i++) {
+      const page = await doc.getPage(i);
+      const tc = await page.getTextContent();
+      const txt = tc.items.map((x) => x.str).join(' ');
+      cpfs.push(acharCpfNoTexto(txt));
+    }
+
+    // 2) Separar cada página e casar pelo CPF.
+    const origem = await PDFLib.PDFDocument.load(buf);
+    let casados = 0; const naoCasados = []; const usados = {};
+    for (let p = 0; p < N; p++) {
+      const cpf = cpfs[p];
+      if (!cpf) { naoCasados.push({ pagina: p + 1, motivo: 'CPF não localizado na página' }); continue; }
+      if (usados[cpf]) { naoCasados.push({ pagina: p + 1, cpf, motivo: 'CPF repetido em mais de uma página' }); continue; }
+      const cand = await pool.query('SELECT id FROM candidatos WHERE concurso_id=$1 AND cpf=$2 LIMIT 1', [cid, cpf]);
+      if (!cand.rows.length) { naoCasados.push({ pagina: p + 1, cpf, motivo: 'CPF não encontrado neste concurso' }); continue; }
+      const novo = await PDFLib.PDFDocument.create();
+      const [pg] = await novo.copyPages(origem, [p]);
+      novo.addPage(pg);
+      const bytes = Buffer.from(await novo.save());
+      await pool.query('UPDATE candidatos SET cartao_mime=$1, cartao_dados=$2, cartao_nome=$3, cartao_em=now() WHERE id=$4',
+        ['application/pdf', bytes, 'cartao_' + cpf + '.pdf', cand.rows[0].id]);
+      usados[cpf] = true; casados++;
+    }
+    res.json({ ok: true, paginas: N, casados, nao_casados: naoCasados });
+  } catch (e) {
+    console.error('cartoes-pdf:', e.message);
+    res.status(500).json({ erro: 'Falha ao processar o PDF: ' + e.message });
+  }
+});
+
 // ---- Cartão-resposta -----------------------------------------
 // Upload em massa: recebe uma lista de {filename, dataBase64}, casa cada arquivo
 // ao candidato pelo CPF no NOME do arquivo (ex.: 25790278825.jpg). Quem não casar

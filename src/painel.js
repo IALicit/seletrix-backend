@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v12-cartao -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v13-pdfsala -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -566,10 +566,19 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
       <h3>Cartões-resposta — <span id="cr_titulo"></span></h3><button class="sec" onclick="document.getElementById('modal_cartoes').style.display='none'">Fechar</button>
     </div>
-    <p class="hint">Envie os cartões já <b>separados por candidato</b>, cada arquivo nomeado com o <b>CPF</b> (ex.: <code>25790278825.jpg</code>). PDF, JPG ou PNG, até 8 MB cada. O sistema casa cada arquivo ao candidato pelo CPF do nome.</p>
-    <input type="file" id="cr_files" accept=".pdf,.jpg,.jpeg,.png" multiple style="display:block;margin:10px 0">
-    <button class="tit-btn" id="cr_btn" onclick="enviarCartoes()">Enviar cartões</button>
-    <div id="cr_prog" class="hint" style="margin-top:8px"></div>
+    <p class="hint">Duas formas de enviar:</p>
+    <div style="border:1px solid var(--linha);border-radius:9px;padding:12px;margin-bottom:10px">
+      <b>1) PDF da sala inteira</b> <span class="hint">(o sistema separa e identifica cada candidato pelo CPF impresso)</span>
+      <input type="file" id="cr_pdf_sala" accept="application/pdf" style="display:block;margin:8px 0">
+      <button class="tit-btn" id="cr_pdf_btn" onclick="enviarPdfSala()">Processar PDF da sala</button>
+      <div id="cr_pdf_prog" class="hint" style="margin-top:6px"></div>
+    </div>
+    <div style="border:1px solid var(--linha);border-radius:9px;padding:12px;margin-bottom:10px">
+      <b>2) Cartões já separados</b> <span class="hint">(um arquivo por candidato, nomeado com o CPF)</span>
+      <input type="file" id="cr_files" accept=".pdf,.jpg,.jpeg,.png" multiple style="display:block;margin:8px 0">
+      <button class="tit-btn" id="cr_btn" onclick="enviarCartoes()">Enviar cartões</button>
+      <div id="cr_prog" class="hint" style="margin-top:6px"></div>
+    </div>
     <div id="cr_resumo" style="margin-top:12px"></div>
     <div id="cr_faltando" style="margin-top:12px"></div>
   </div>
@@ -883,7 +892,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     CR_CONC=id;
     var c=CONCURSOS.find(function(x){return x.id===id;});
     $('cr_titulo').textContent=c?c.titulo:'';
-    $('cr_files').value=''; $('cr_prog').textContent=''; $('cr_resumo').innerHTML='';
+    $('cr_files').value=''; if($('cr_pdf_sala'))$('cr_pdf_sala').value=''; $('cr_prog').textContent=''; if($('cr_pdf_prog'))$('cr_pdf_prog').textContent=''; $('cr_resumo').innerHTML='';
     $('modal_cartoes').style.display='flex';
     carregarSituacaoCartoes(id);
   }
@@ -896,6 +905,27 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
         +d.faltando.map(function(k){ return '<div style="padding:3px 0">'+esc(k.nome)+' — '+esc(k.cpf)+' ('+esc(k.cargo)+') <label style="cursor:pointer;color:var(--navy)"><input type="file" accept=".pdf,.jpg,.jpeg,.png" style="display:none" onchange="cartaoManual('+k.id+',this)"> anexar</label></div>'; }).join('')
         +'</div>';
     } else { $('cr_faltando').innerHTML='<p class="hint" style="margin-top:10px;color:#1e7d34">Todos os candidatos têm cartão ✓</p>'; }
+  }
+  async function enviarPdfSala(){
+    var f=$('cr_pdf_sala').files[0];
+    if(!f){ alert('Selecione o PDF da sala.'); return; }
+    if(f.type!=='application/pdf'){ alert('Envie um arquivo PDF.'); return; }
+    if(f.size>60*1024*1024){ alert('PDF muito grande (máx. 60 MB). Envie uma sala por vez.'); return; }
+    $('cr_pdf_btn').disabled=true; $('cr_pdf_prog').textContent='Enviando e processando... isso pode levar até 1 minuto.';
+    try{
+      var b64=await toB64(f);
+      var r=await fetch('/admin/concurso/'+CR_CONC+'/cartoes-pdf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dataBase64:b64})});
+      var j=await r.json();
+      $('cr_pdf_btn').disabled=false; $('cr_pdf_prog').textContent='';
+      if(!r.ok){ alert(j.erro||'Erro ao processar'); return; }
+      var msg='PDF processado: '+j.paginas+' página(s), '+j.casados+' cartão(ões) vinculado(s).';
+      if(j.nao_casados && j.nao_casados.length){
+        msg+='\\n\\n'+j.nao_casados.length+' não vincularam:\\n'+j.nao_casados.slice(0,20).map(function(x){return '• Página '+x.pagina+(x.cpf?(' (CPF '+x.cpf+')'):'')+': '+x.motivo;}).join('\\n');
+        if(j.nao_casados.length>20) msg+='\\n... e mais '+(j.nao_casados.length-20);
+      }
+      alert(msg);
+      carregarSituacaoCartoes(CR_CONC);
+    }catch(e){ $('cr_pdf_btn').disabled=false; $('cr_pdf_prog').textContent=''; alert('Erro: '+e.message); }
   }
   async function enviarCartoes(){
     var files=$('cr_files').files;
