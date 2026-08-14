@@ -174,6 +174,8 @@ async function inicializarBanco() {
     await pool.query(`ALTER TABLE concursos ADD COLUMN IF NOT EXISTS ${col}`);
   }
   await pool.query(`ALTER TABLE candidatos ADD COLUMN IF NOT EXISTS matricula TEXT`);
+  // Tokens temporários para o admin pré-visualizar a Área do Candidato (só leitura).
+  await pool.query(`CREATE TABLE IF NOT EXISTS preview_tokens (token TEXT PRIMARY KEY, cpf TEXT, expira_em TIMESTAMPTZ);`);
   // Cartão-resposta digitalizado (o candidato vê o dele na área do candidato)
   for (const col of ['cartao_mime TEXT', 'cartao_dados BYTEA', 'cartao_nome TEXT', 'cartao_em TIMESTAMPTZ']) {
     await pool.query(`ALTER TABLE candidatos ADD COLUMN IF NOT EXISTS ${col}`);
@@ -493,7 +495,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'cartao-pdf-sala-v2', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'preview-candidato-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -696,15 +698,22 @@ app.post('/api/inscricao', async (req, res) => {
 // ---- Área do Candidato (login CPF + senha) -----------------
 app.post('/api/candidato/login', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
-  const cpf = soDigitos((req.body || {}).cpf);
+  let cpf = soDigitos((req.body || {}).cpf);
   const senha = String((req.body || {}).senha || '');
-  if (!cpfValido(cpf) || !senha) return res.status(400).json({ erro: 'Informe CPF e senha.' });
-  const lg = await pool.query('SELECT senha_hash, nome FROM candidato_login WHERE cpf=$1', [cpf]);
-  const okSenha = lg.rows.length && (verificaSenha(senha, lg.rows[0].senha_hash) ||
-    // aceita a data de nascimento digitada com barras/pontos (ex.: 01/01/1990 == 01011990)
-    (/^[\d\/.\-\s]+$/.test(senha) && soDigitos(senha).length === 8 && verificaSenha(soDigitos(senha), lg.rows[0].senha_hash)));
-  if (!okSenha)
-    return res.status(401).json({ erro: 'CPF ou senha inválidos, ou você ainda não fez nenhuma inscrição.' });
+  // Prévia do admin: token no lugar de cpf+senha. Resolve o CPF pelo token válido.
+  const tk = String((req.body || {}).preview_token || '');
+  if (tk) {
+    const t = await pool.query('SELECT cpf FROM preview_tokens WHERE token=$1 AND expira_em > now()', [tk]);
+    if (!t.rows.length) return res.status(401).json({ erro: 'Prévia expirada. Gere um novo acesso no painel.' });
+    cpf = soDigitos(t.rows[0].cpf);
+  } else {
+    if (!cpfValido(cpf) || !senha) return res.status(400).json({ erro: 'Informe CPF e senha.' });
+    const lg = await pool.query('SELECT senha_hash, nome FROM candidato_login WHERE cpf=$1', [cpf]);
+    const okSenha = lg.rows.length && (verificaSenha(senha, lg.rows[0].senha_hash) ||
+      (/^[\d\/.\-\s]+$/.test(senha) && soDigitos(senha).length === 8 && verificaSenha(soDigitos(senha), lg.rows[0].senha_hash)));
+    if (!okSenha)
+      return res.status(401).json({ erro: 'CPF ou senha inválidos, ou você ainda não fez nenhuma inscrição.' });
+  }
   const empSlug = String((req.body || {}).empresa || '').trim();
   const paramsL = [cpf];
   let filtroEmp = '';
@@ -808,14 +817,44 @@ function calcJanelaLaudo(pede, ab, fe, agora) {
 // Candidato envia um título (só dentro da janela)
 async function autenticaCandidato(b) {
   const cpf = soDigitos((b || {}).cpf), senha = String((b || {}).senha || '');
+  // Modo prévia (admin): um token temporário no lugar da senha. Só concede acesso
+  // de LEITURA — as rotas de escrita checam isso à parte (ver ehPreview).
+  const tk = String((b || {}).preview_token || '');
+  if (tk && pool) {
+    const t = await pool.query('SELECT cpf FROM preview_tokens WHERE token=$1 AND expira_em > now()', [tk]);
+    if (t.rows.length && (!cpf || soDigitos(t.rows[0].cpf) === cpf)) return soDigitos(t.rows[0].cpf);
+  }
   if (!cpfValido(cpf) || !senha) return null;
   const lg = await pool.query('SELECT senha_hash FROM candidato_login WHERE cpf=$1', [cpf]);
   if (!lg.rows.length || !verificaSenha(senha, lg.rows[0].senha_hash)) return null;
   return cpf;
 }
+// True quando a requisição veio de uma prévia do admin (token), não do candidato real.
+async function ehPreview(b) {
+  const tk = String((b || {}).preview_token || '');
+  if (!tk || !pool) return false;
+  const t = await pool.query('SELECT 1 FROM preview_tokens WHERE token=$1 AND expira_em > now()', [tk]);
+  return t.rows.length > 0;
+}
+// Admin gera um token de prévia para ver a Área de um candidato (10 min, só leitura).
+app.post('/admin/inscrito/:id/preview', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const k = await pool.query('SELECT cpf FROM candidatos WHERE id=$1', [parseInt(req.params.id)]);
+  if (!k.rows.length) return res.status(404).json({ erro: 'Candidato não encontrado.' });
+  const cpf = soDigitos(k.rows[0].cpf);
+  const token = 'pv_' + require('crypto').randomBytes(24).toString('hex');
+  await pool.query("INSERT INTO preview_tokens (token, cpf, expira_em) VALUES ($1,$2, now() + interval '10 minutes')", [token, cpf]);
+  await pool.query("DELETE FROM preview_tokens WHERE expira_em < now()"); // limpeza
+  // slug da empresa do candidato, para abrir a Área na marca certa
+  const emp = await pool.query(`SELECT e.slug FROM candidatos k JOIN concursos c ON c.id=k.concurso_id JOIN empresas e ON e.id=c.empresa_id WHERE k.id=$1`, [parseInt(req.params.id)]);
+  const slug = emp.rows.length ? emp.rows[0].slug : '';
+  res.json({ ok: true, token, cpf, empresa: slug });
+});
 app.post('/api/candidato/titulo', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
   const b = req.body || {};
+
+  if (await ehPreview(req.body)) return res.status(403).json({ erro: 'Modo prévia (admin): apenas visualização. Ações ficam desativadas.' });
   const cpf = await autenticaCandidato(b);
   if (!cpf) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
   const cand = await pool.query('SELECT id, concurso_id FROM candidatos WHERE id=$1 AND cpf=$2', [parseInt(b.inscricao_id), cpf]);
@@ -836,6 +875,8 @@ app.post('/api/candidato/titulo', async (req, res) => {
 app.post('/api/candidato/titulo/excluir', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
   const b = req.body || {};
+
+  if (await ehPreview(req.body)) return res.status(403).json({ erro: 'Modo prévia (admin): apenas visualização. Ações ficam desativadas.' });
   const cpf = await autenticaCandidato(b);
   if (!cpf) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
   const t = await pool.query('SELECT t.id, k.concurso_id FROM titulos t JOIN candidatos k ON k.id=t.candidato_id WHERE t.id=$1 AND k.cpf=$2', [parseInt(b.titulo_id), cpf]);
@@ -849,6 +890,8 @@ app.post('/api/candidato/titulo/excluir', async (req, res) => {
 app.post('/api/candidato/boleto', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
   const b = req.body || {};
+
+  if (await ehPreview(req.body)) return res.status(403).json({ erro: 'Modo prévia (admin): apenas visualização. Ações ficam desativadas.' });
   const cpf = await autenticaCandidato(b);
   if (!cpf) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
   const cand = await pool.query('SELECT * FROM candidatos WHERE id=$1 AND cpf=$2', [parseInt(b.inscricao_id), cpf]);
@@ -873,6 +916,8 @@ app.post('/api/candidato/boleto', async (req, res) => {
 app.post('/api/candidato/laudo', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
   const b = req.body || {};
+
+  if (await ehPreview(req.body)) return res.status(403).json({ erro: 'Modo prévia (admin): apenas visualização. Ações ficam desativadas.' });
   const cpf = await autenticaCandidato(b);
   if (!cpf) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
   const cand = await pool.query('SELECT k.id, c.pede_laudo, c.laudo_inicio_dt, c.laudo_fim_dt FROM candidatos k LEFT JOIN concursos c ON c.id=k.concurso_id WHERE k.id=$1 AND k.cpf=$2', [parseInt(b.inscricao_id), cpf]);
@@ -1136,6 +1181,8 @@ app.get('/admin/candidato/:id/laudo', exigirSenha, async (req, res) => {
 app.post('/api/candidato/isencao', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
   const b = req.body || {};
+
+  if (await ehPreview(req.body)) return res.status(403).json({ erro: 'Modo prévia (admin): apenas visualização. Ações ficam desativadas.' });
   const cpf = await autenticaCandidato(b);
   if (!cpf) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
   const cand = await pool.query(`SELECT k.id, k.isencao_status, c.pede_isencao, c.isencao_inicio_dt, c.isencao_fim_dt
@@ -1213,6 +1260,8 @@ app.post('/admin/candidato/:id/isencao', exigirSenha, async (req, res) => {
 app.post('/api/candidato/recurso', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
   const b = req.body || {};
+
+  if (await ehPreview(req.body)) return res.status(403).json({ erro: 'Modo prévia (admin): apenas visualização. Ações ficam desativadas.' });
   const cpf = await autenticaCandidato(b);
   if (!cpf) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
   const cand = await pool.query('SELECT id, concurso_id FROM candidatos WHERE id=$1 AND cpf=$2', [parseInt(b.inscricao_id), cpf]);

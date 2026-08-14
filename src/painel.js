@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v14-pdfsala2 -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v15-preview -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -819,7 +819,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('linhas_insc').innerHTML = lista.map(r=>{
       const pag = r.invoice_url ? '<a href="'+esc(r.invoice_url)+'" target="_blank">abrir fatura</a>' : '<button class="mini" onclick="gerar('+r.id+')">Gerar cobrança</button>';
       const tit = r.titulos>0 ? '<button class="mini" onclick="verTitulos('+r.id+')">Ver ('+r.titulos+')</button>' : '<span style="color:#aaa">—</span>';
-      const acoes = '<button class="mini" onclick="editarInscrito('+r.id+')">Editar</button> <button class="mini" onclick="resetarSenha('+r.id+')">Resetar senha</button> <button class="del" style="padding:6px 10px" onclick="excluirInscrito('+r.id+')">Excluir</button>';
+      const acoes = '<button class="mini" onclick="editarInscrito('+r.id+')">Editar</button> <button class="mini" onclick="verAreaCandidato('+r.id+')">Ver área do candidato</button> <button class="mini" onclick="resetarSenha('+r.id+')">Resetar senha</button> <button class="del" style="padding:6px 10px" onclick="excluirInscrito('+r.id+')">Excluir</button>';
       return '<tr><td>'+esc(r.protocolo)+'</td><td>'+esc(r.nome)+'</td><td>'+esc(r.cpf)+'</td><td>'+esc(r.cargo)+'</td><td>'+statusTag(r.status)+'</td><td>'+pag+'</td><td>'+tit+'</td><td>'+new Date(r.criado_em).toLocaleString('pt-BR')+'</td><td>'+acoes+'</td></tr>';
     }).join('') || '<tr><td colspan="9" style="text-align:center;color:#888;padding:18px">'+(filtrando?'Nenhum inscrito encontrado para esta busca.':'Nenhum inscrito.')+'</td></tr>';
   }
@@ -872,6 +872,12 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     const r=await fetch('/admin/inscrito/'+id,{method:'DELETE'});
     const j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao excluir');return;}
     carregarInscritos();
+  }
+  async function verAreaCandidato(id){
+    var r=await fetch('/admin/inscrito/'+id+'/preview',{method:'POST'});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    var url='/candidato.html?preview='+encodeURIComponent(j.token)+(j.empresa?('&e='+encodeURIComponent(j.empresa)):'');
+    window.open(url,'_blank');
   }
   async function resetarSenha(id){
     var r0=(typeof INSCRITOS!=='undefined')?INSCRITOS.find(function(x){return x.id===id;}):null;
