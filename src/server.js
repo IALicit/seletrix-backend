@@ -495,7 +495,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'preview-candidato-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'fix-lista-inscritos-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -1573,7 +1573,15 @@ app.post('/admin/concurso/:id/brasao/remover', exigirSenha, async (req, res) => 
 app.get('/admin/inscritos.json', exigirSenha, async (req, res) => {
   if (!pool) return res.json({ inscritos: [] });
   const cid = req.query.concurso;
-  const sel = 'SELECT k.*, c.titulo AS concurso, (SELECT COUNT(*)::int FROM titulos t WHERE t.candidato_id=k.id) AS titulos FROM candidatos k LEFT JOIN concursos c ON c.id=k.concurso_id';
+  // Colunas de texto apenas — nunca os BYTEA (laudo/cartão/isenção), senão a lista
+  // fica com megabytes por candidato e trava a tela. Flags booleanas indicam presença.
+  const campos = `k.id, k.protocolo, k.nome, k.cpf, k.email, k.telefone, k.sexo, k.cargo, k.pcd,
+    k.nome_social, k.cidade, k.uf, k.nascimento, k.status, k.invoice_url, k.criado_em, k.concurso_id,
+    k.matricula, k.condicao_especial, k.quer_isencao, k.isencao_status, k.isencao_motivo, k.isencao_obs,
+    k.pcd_status, k.pcd_obs,
+    (k.laudo_dados IS NOT NULL) AS tem_laudo, (k.cartao_dados IS NOT NULL) AS tem_cartao,
+    (k.isencao_doc_dados IS NOT NULL) AS tem_isencao_doc`;
+  const sel = 'SELECT ' + campos + ', c.titulo AS concurso, (SELECT COUNT(*)::int FROM titulos t WHERE t.candidato_id=k.id) AS titulos FROM candidatos k LEFT JOIN concursos c ON c.id=k.concurso_id';
   const { rows } = cid
     ? await pool.query(sel + ' WHERE k.concurso_id=$1 ORDER BY k.id DESC', [cid])
     : await pool.query(sel + ' ORDER BY k.id DESC');
