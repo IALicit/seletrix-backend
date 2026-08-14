@@ -109,22 +109,38 @@
     if(r.status==='aguardando_pagamento') return {badge:'<span class="badge b-aguard">Aguardando pagamento</span>', pagar:true};
     return {badge:'<span class="badge b-insc">Inscrito</span>', pagar:true};
   }
-  var SESSAO={cpf:'',senha:''};
+  var SESSAO={cpf:'',senha:'',preview_token:''};
   var EMPRESA_SLUG = (new URLSearchParams(location.search)).get('e') || '';
+  var PREVIEW_TOKEN = (new URLSearchParams(location.search)).get('preview') || '';
   (async function(){
     if(!EMPRESA_SLUG){
       try{ var da = await (await fetch('/api/empresa-atual')).json(); if(da.empresa) EMPRESA_SLUG = da.empresa.slug; }catch(err){}
     }
-    if(!EMPRESA_SLUG) return;
-    try{
-      var d = await (await fetch('/api/empresa/'+encodeURIComponent(EMPRESA_SLUG))).json();
-      if(d.empresa){
-        var e=d.empresa;
-        document.title = 'Área do Candidato — ' + e.nome;
-        if($('topo_marca')) $('topo_marca').textContent = e.nome;
-        if($('topo_voltar')) $('topo_voltar').href = '/e/' + e.slug;
-      }
-    }catch(err){}
+    if(EMPRESA_SLUG){
+      try{
+        var d = await (await fetch('/api/empresa/'+encodeURIComponent(EMPRESA_SLUG))).json();
+        if(d.empresa){
+          var e=d.empresa;
+          document.title = 'Área do Candidato — ' + e.nome;
+          if($('topo_marca')) $('topo_marca').textContent = e.nome;
+          if($('topo_voltar')) $('topo_voltar').href = '/e/' + e.slug;
+        }
+      }catch(err){}
+    }
+    // Modo prévia (admin): entra sozinho usando o token, sem senha.
+    if(PREVIEW_TOKEN){
+      SESSAO={cpf:'', senha:'', preview_token:PREVIEW_TOKEN};
+      var faixa=document.createElement('div');
+      faixa.style.cssText='background:#fde68a;color:#7c4a03;padding:10px 14px;text-align:center;font-weight:600;position:sticky;top:0;z-index:99';
+      faixa.textContent='👁 Prévia do administrador — você está vendo a Área do Candidato. Ações (enviar/anexar) estão desativadas.';
+      document.body.insertBefore(faixa, document.body.firstChild);
+      try{
+        var rp=await fetch('/api/candidato/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({preview_token:PREVIEW_TOKEN,empresa:EMPRESA_SLUG})});
+        var jp=await rp.json();
+        if(rp.ok){ if($('form-login')) $('form-login').style.display='none'; render(jp); }
+        else{ faixa.textContent='Prévia expirada ou inválida. Gere um novo acesso no painel.'; }
+      }catch(err){}
+    }
   })();
   function toB64(file){ return new Promise(function(res,rej){var rd=new FileReader();rd.onload=function(){res(rd.result);};rd.onerror=rej;rd.readAsDataURL(file);}); }
   function fmt(iso){ if(!iso) return '—'; var s=String(iso); var d=s.slice(0,10).split('-'); var h=s.slice(11,16); var data=d.length===3?(d[2]+'/'+d[1]+'/'+d[0]):s; return h?(data+' às '+h):data; }
