@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v15-preview -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v16-titulos -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -824,10 +824,49 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     }).join('') || '<tr><td colspan="9" style="text-align:center;color:#888;padding:18px">'+(filtrando?'Nenhum inscrito encontrado para esta busca.':'Nenhum inscrito.')+'</td></tr>';
   }
   async function gerar(id){ if(!confirm('Gerar link de pagamento para este inscrito?'))return; const r=await fetch('/admin/cobranca/'+id,{method:'POST'}); const j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} carregarInscritos(); }
+  var TIT_INSC=0;
   async function verTitulos(id){
-    const { titulos } = await (await fetch('/admin/inscrito/'+id+'/titulos.json')).json();
-    $('modal_corpo').innerHTML = titulos.length ? titulos.map(t=>'<div style="padding:9px 0;border-bottom:1px solid #eee"><b>'+esc(t.tipo||'Título')+'</b><br><a href="/admin/titulo/'+t.id+'" target="_blank">'+esc(t.filename)+'</a> <span style="color:#888">('+Math.round((t.tamanho||0)/1024)+' KB)</span></div>').join('') : '<p>Nenhum título anexado.</p>';
+    TIT_INSC=id;
+    await carregarTitulos(id);
     $('modal').style.display='flex';
+  }
+  async function carregarTitulos(id){
+    var d=await (await fetch('/admin/inscrito/'+id+'/titulos.json')).json();
+    var titulos=d.titulos||[];
+    if(!titulos.length){ $('modal_corpo').innerHTML='<p>Nenhum título anexado.</p>'; return; }
+    var html=titulos.map(function(t){
+      var badge = t.aval_status==='deferido' ? '<span class="tag on">Deferido · '+(Number(t.aval_pontos)||0)+' pts</span>'
+        : t.aval_status==='indeferido' ? '<span class="tag" style="background:#fde2e2;color:#b42318">Indeferido</span>'
+        : '<span class="tag" style="background:#fff3cd;color:#8a6d1b">Não avaliado</span>';
+      var acoes = '<div style="margin-top:6px">'
+        +'<input id="pts_'+t.id+'" type="number" step="0.01" min="0" placeholder="pontos" value="'+(t.aval_pontos!=null?t.aval_pontos:'')+'" style="width:90px;padding:5px;border:1px solid var(--linha);border-radius:6px">'
+        +' <button class="mini" onclick="deferirTit('+t.id+')">Deferir</button>'
+        +' <button class="del" onclick="indeferirTit('+t.id+')">Indeferir</button>'
+        +(t.aval_status?(' <button class="mini" onclick="limparTit('+t.id+')">Limpar</button>'):'')
+        +'</div>'
+        +(t.aval_obs?('<div class="hint" style="margin-top:3px"><b>Obs:</b> '+esc(t.aval_obs)+'</div>'):'');
+      return '<div style="padding:10px 0;border-bottom:1px solid #eee">'
+        +'<div style="display:flex;justify-content:space-between;gap:8px"><b>'+esc(t.tipo||'Título')+'</b> '+badge+'</div>'
+        +'<a href="/admin/titulo/'+t.id+'" target="_blank">'+esc(t.filename)+'</a> <span style="color:#888">('+Math.round((t.tamanho||0)/1024)+' KB)</span>'
+        +acoes+'</div>';
+    }).join('');
+    html+='<div style="margin-top:12px;padding-top:10px;border-top:2px solid var(--navy);font-size:1.05rem"><b>Total de pontos (deferidos): '+(d.total_pontos||0)+'</b></div>';
+    $('modal_corpo').innerHTML=html;
+  }
+  function deferirTit(id){
+    var pts=(document.getElementById('pts_'+id)||{}).value;
+    if(pts===''||pts==null){ alert('Informe a pontuação antes de deferir.'); return; }
+    avaliarTitulo(id, {decisao:'deferir', pontos:pts});
+  }
+  function indeferirTit(id){
+    var o=prompt('Motivo do indeferimento (opcional):'); if(o===null)return;
+    avaliarTitulo(id, {decisao:'indeferir', obs:o});
+  }
+  function limparTit(id){ avaliarTitulo(id, {decisao:'limpar'}); }
+  async function avaliarTitulo(id, body){
+    var r=await fetch('/admin/titulo/'+id+'/avaliar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    carregarTitulos(TIT_INSC);
   }
   function fecharModal(){ $('modal').style.display='none'; }
   function editarInscrito(id){

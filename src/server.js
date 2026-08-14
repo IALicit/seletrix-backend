@@ -184,6 +184,10 @@ async function inicializarBanco() {
   await pool.query(`UPDATE concursos SET titulos_fim_dt = to_char(titulos_fim,'YYYY-MM-DD')||'T23:59' WHERE titulos_fim IS NOT NULL AND (titulos_fim_dt IS NULL OR titulos_fim_dt='')`).catch(() => {});
   // Anexos de títulos enviados pelos candidatos
   await pool.query(`CREATE TABLE IF NOT EXISTS titulos (id SERIAL PRIMARY KEY, candidato_id INT, tipo TEXT, filename TEXT, mime TEXT, dados BYTEA, tamanho INT, criado_em TIMESTAMPTZ DEFAULT now());`);
+  // Avaliação de cada título: deferido/indeferido + pontuação + observação.
+  for (const col of ['aval_status TEXT', 'aval_pontos NUMERIC', 'aval_obs TEXT', 'aval_em TIMESTAMPTZ']) {
+    await pool.query(`ALTER TABLE titulos ADD COLUMN IF NOT EXISTS ${col}`);
+  }
   // Login do candidato (CPF + senha) para a Área do Candidato
   await pool.query(`CREATE TABLE IF NOT EXISTS candidato_login (cpf TEXT PRIMARY KEY, senha_hash TEXT, nome TEXT, criado_em TIMESTAMPTZ DEFAULT now());`);
   // Etapas do concurso + arquivos de cada etapa + documentos avulsos (retificações)
@@ -495,7 +499,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'fix-preview-etapas-v3', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'avaliar-titulos-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -1542,8 +1546,32 @@ app.post('/admin/concurso/:id/edital', exigirSenha, async (req, res) => {
 // Títulos anexados por um candidato (listar + baixar)
 app.get('/admin/inscrito/:id/titulos.json', exigirSenha, async (req, res) => {
   if (!pool) return res.json({ titulos: [] });
-  const { rows } = await pool.query('SELECT id,tipo,filename,mime,tamanho FROM titulos WHERE candidato_id=$1 ORDER BY id', [req.params.id]);
-  res.json({ titulos: rows });
+  const { rows } = await pool.query('SELECT id,tipo,filename,mime,tamanho,aval_status,aval_pontos,aval_obs FROM titulos WHERE candidato_id=$1 ORDER BY id', [req.params.id]);
+  // Soma dos pontos dos títulos deferidos.
+  const total = rows.filter((r) => r.aval_status === 'deferido').reduce((s, r) => s + (Number(r.aval_pontos) || 0), 0);
+  res.json({ titulos: rows, total_pontos: total });
+});
+// Avaliar um título: deferir (com pontos) ou indeferir (com motivo).
+app.post('/admin/titulo/:id/avaliar', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const id = parseInt(req.params.id);
+  const b = req.body || {};
+  const decisao = String(b.decisao || '');
+  if (!['deferir', 'indeferir', 'limpar'].includes(decisao)) return res.status(400).json({ erro: 'Decisão inválida.' });
+  if (decisao === 'limpar') {
+    await pool.query('UPDATE titulos SET aval_status=NULL, aval_pontos=NULL, aval_obs=NULL, aval_em=NULL WHERE id=$1', [id]);
+    return res.json({ ok: true, status: null });
+  }
+  const obs = String(b.obs || '').trim().slice(0, 500);
+  let pontos = null;
+  if (decisao === 'deferir') {
+    pontos = Number(String(b.pontos).replace(',', '.'));
+    if (!isFinite(pontos) || pontos < 0) return res.status(400).json({ erro: 'Informe uma pontuação válida (número ≥ 0).' });
+  }
+  const status = decisao === 'deferir' ? 'deferido' : 'indeferido';
+  await pool.query('UPDATE titulos SET aval_status=$1, aval_pontos=$2, aval_obs=$3, aval_em=now() WHERE id=$4',
+    [status, decisao === 'deferir' ? pontos : null, obs, id]);
+  res.json({ ok: true, status });
 });
 app.get('/admin/titulo/:id', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).send('Indisponível.');
