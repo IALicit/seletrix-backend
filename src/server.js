@@ -495,7 +495,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'fix-preview-login-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'fix-preview-json-v2', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -703,7 +703,8 @@ app.post('/api/candidato/login', async (req, res) => {
   // Prévia do admin: token no lugar de cpf+senha. Resolve o CPF pelo token válido.
   const tk = String((req.body || {}).preview_token || '');
   if (tk) {
-    const t = await pool.query('SELECT cpf FROM preview_tokens WHERE token=$1 AND expira_em > now()', [tk]);
+    await pool.query(`CREATE TABLE IF NOT EXISTS preview_tokens (token TEXT PRIMARY KEY, cpf TEXT, expira_em TIMESTAMPTZ);`).catch(() => {});
+    const t = await pool.query('SELECT cpf FROM preview_tokens WHERE token=$1 AND expira_em > now()', [tk]).catch(() => ({ rows: [] }));
     if (!t.rows.length) return res.status(401).json({ erro: 'Prévia expirada. Gere um novo acesso no painel.' });
     cpf = soDigitos(t.rows[0].cpf);
   } else {
@@ -839,6 +840,8 @@ async function ehPreview(b) {
 // Admin gera um token de prévia para ver a Área de um candidato (10 min, só leitura).
 app.post('/admin/inscrito/:id/preview', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  // Garante a tabela mesmo se a migração do boot não tiver rodado.
+  await pool.query(`CREATE TABLE IF NOT EXISTS preview_tokens (token TEXT PRIMARY KEY, cpf TEXT, expira_em TIMESTAMPTZ);`).catch(() => {});
   const k = await pool.query('SELECT cpf FROM candidatos WHERE id=$1', [parseInt(req.params.id)]);
   if (!k.rows.length) return res.status(404).json({ erro: 'Candidato não encontrado.' });
   const cpf = soDigitos(k.rows[0].cpf);
@@ -3235,6 +3238,17 @@ app.delete('/admin/concurso/:id', exigirSenha, async (req, res) => {
   }
 });
 const PAINEL_HTML = require('./painel.js');
+
+// Rede de segurança: erro não tratado em rota de dados responde JSON, nunca a
+// página HTML de erro (que quebrava o front com "Unexpected token '<'").
+app.use((err, req, res, next) => {
+  console.error('erro nao tratado:', req.path, err && err.message);
+  if (res.headersSent) return next(err);
+  if (req.path.startsWith('/api/') || req.path.startsWith('/admin/')) {
+    return res.status(500).json({ erro: 'Erro interno: ' + (err && err.message ? err.message : 'desconhecido') });
+  }
+  res.status(500).send('Erro interno.');
+});
 
 inicializarBanco().catch((e) => console.error('Falha banco:', e.message))
   .finally(() => app.listen(PORT, () => console.log('🚀 Seletrix na porta ' + PORT + ' | ASAAS: ' + (temAsaas ? ASAAS_BASE : 'não configurado'))));
