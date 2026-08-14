@@ -137,9 +137,9 @@
       try{
         var rp=await fetch('/api/candidato/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({preview_token:PREVIEW_TOKEN,empresa:EMPRESA_SLUG})});
         var jp=await rp.json();
-        if(rp.ok){ if($('form-login')) $('form-login').style.display='none'; render(jp); }
-        else{ faixa.textContent='Prévia expirada ou inválida. Gere um novo acesso no painel.'; }
-      }catch(err){}
+        if(rp.ok){ render(jp); }
+        else{ faixa.textContent='Prévia: '+(jp.erro||'não foi possível abrir')+' (o servidor pode ainda não estar atualizado).'; }
+      }catch(err){ faixa.textContent='Prévia: erro ao carregar ('+err.message+').'; }
     }
   })();
   function toB64(file){ return new Promise(function(res,rej){var rd=new FileReader();rd.onload=function(){res(rd.result);};rd.onerror=rej;rd.readAsDataURL(file);}); }
