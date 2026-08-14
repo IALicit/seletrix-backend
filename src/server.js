@@ -499,7 +499,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'avaliar-titulos-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'aba-titulos-v2', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -1544,6 +1544,23 @@ app.post('/admin/concurso/:id/edital', exigirSenha, async (req, res) => {
 });
 
 // Títulos anexados por um candidato (listar + baixar)
+// Candidatos que entregaram títulos num concurso, com contagem e situação.
+app.get('/admin/concurso/:id/titulos.json', exigirSenha, async (req, res) => {
+  if (!pool) return res.json({ candidatos: [] });
+  const cid = parseInt(req.params.id);
+  const { rows } = await pool.query(`
+    SELECT k.id, k.nome, k.cpf, k.cargo, k.protocolo,
+           COUNT(t.id)::int AS qtd,
+           COUNT(*) FILTER (WHERE t.aval_status='deferido')::int AS deferidos,
+           COUNT(*) FILTER (WHERE t.aval_status='indeferido')::int AS indeferidos,
+           COUNT(*) FILTER (WHERE t.aval_status IS NULL)::int AS pendentes,
+           COALESCE(SUM(t.aval_pontos) FILTER (WHERE t.aval_status='deferido'),0) AS pontos
+    FROM candidatos k JOIN titulos t ON t.candidato_id=k.id
+    WHERE k.concurso_id=$1
+    GROUP BY k.id, k.nome, k.cpf, k.cargo, k.protocolo
+    ORDER BY (COUNT(*) FILTER (WHERE t.aval_status IS NULL)) DESC, k.nome`, [cid]);
+  res.json({ candidatos: rows });
+});
 app.get('/admin/inscrito/:id/titulos.json', exigirSenha, async (req, res) => {
   if (!pool) return res.json({ titulos: [] });
   const { rows } = await pool.query('SELECT id,tipo,filename,mime,tamanho,aval_status,aval_pontos,aval_obs FROM titulos WHERE candidato_id=$1 ORDER BY id', [req.params.id]);

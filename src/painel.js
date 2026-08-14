@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v16-titulos -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v17-abatitulos -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -86,6 +86,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   <div class="tab" data-t="professores">Professores</div>
   <div class="tab" data-t="prova_online">Prova Online</div>
   <div class="tab" data-t="recursos">Recursos</div>
+  <div class="tab" data-t="titulos">Títulos</div>
 </div>
 <div class="wrap">
   <section id="concursos">
@@ -461,6 +462,17 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     </div>
   </section>
 
+  <section id="titulos" style="display:none">
+    <div class="card">
+      <div class="grid2">
+        <div><label>Concurso</label><select id="tit_concurso" onchange="carregarTitulosConcurso()"></select></div>
+      </div>
+      <p class="hint" style="margin:10px 0">Lista apenas os candidatos que <b>entregaram títulos</b>. Clique em "Avaliar" para deferir/indeferir cada título e lançar a pontuação.</p>
+      <div id="tit_resumo" style="margin:8px 0"></div>
+      <div id="tit_lista"></div>
+    </div>
+  </section>
+
   <section id="empresas" style="display:none">
     <div class="card">
       <h2 style="font-size:1.15rem;color:var(--navy);margin-bottom:10px">Empresas</h2>
@@ -656,8 +668,9 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   let CONCURSOS = [], cargosEdit = [], tiposEdit = [], INSCRITOS = [];
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
     document.querySelectorAll('.tab').forEach(x => x.classList.remove('on')); t.classList.add('on');
-    ['concursos','inscritos','relatorios','locacao','alocacao','questoes','prova_online','recursos','empresas','professores'].forEach(s => $(s).style.display = s === t.dataset.t ? 'block' : 'none');
+    ['concursos','inscritos','relatorios','locacao','alocacao','questoes','prova_online','recursos','titulos','empresas','professores'].forEach(s => $(s).style.display = s === t.dataset.t ? 'block' : 'none');
     if (t.dataset.t === 'inscritos') carregarInscritos();
+    if (t.dataset.t === 'titulos') popularTitConcursos();
     if (t.dataset.t === 'relatorios') popularRelConcursos();
     if (t.dataset.t === 'locacao') popularLocConcursos();
     if (t.dataset.t === 'alocacao') popularAlConcursos();
@@ -824,6 +837,38 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     }).join('') || '<tr><td colspan="9" style="text-align:center;color:#888;padding:18px">'+(filtrando?'Nenhum inscrito encontrado para esta busca.':'Nenhum inscrito.')+'</td></tr>';
   }
   async function gerar(id){ if(!confirm('Gerar link de pagamento para este inscrito?'))return; const r=await fetch('/admin/cobranca/'+id,{method:'POST'}); const j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} carregarInscritos(); }
+  function popularTitConcursos(){
+    if($('tit_concurso') && !$('tit_concurso').options.length)
+      $('tit_concurso').innerHTML='<option value="">Selecione o concurso...</option>'+CONCURSOS.map(function(c){return '<option value="'+c.id+'">'+esc(c.titulo)+'</option>';}).join('');
+  }
+  async function carregarTitulosConcurso(){
+    var cid=$('tit_concurso').value;
+    if(!cid){ $('tit_lista').innerHTML=''; $('tit_resumo').innerHTML=''; return; }
+    var d=await (await fetch('/admin/concurso/'+cid+'/titulos.json')).json();
+    var arr=d.candidatos||[];
+    if(!arr.length){ $('tit_lista').innerHTML='<p class="hint">Nenhum candidato entregou títulos neste concurso.</p>'; $('tit_resumo').innerHTML=''; return; }
+    var pend=arr.reduce(function(s,c){return s+(c.pendentes||0);},0);
+    $('tit_resumo').innerHTML='<b>'+arr.length+'</b> candidato(s) com títulos · <b>'+pend+'</b> título(s) ainda por avaliar';
+    $('tit_lista').innerHTML='<table style="width:100%;border-collapse:collapse"><thead><tr>'
+      +'<th style="text-align:left;padding:8px;border-bottom:2px solid var(--navy)">Candidato</th>'
+      +'<th style="text-align:left;padding:8px;border-bottom:2px solid var(--navy)">Cargo</th>'
+      +'<th style="padding:8px;border-bottom:2px solid var(--navy)">Títulos</th>'
+      +'<th style="padding:8px;border-bottom:2px solid var(--navy)">Situação</th>'
+      +'<th style="padding:8px;border-bottom:2px solid var(--navy)">Pontos</th>'
+      +'<th style="border-bottom:2px solid var(--navy)"></th></tr></thead><tbody>'
+      +arr.map(function(c){
+        var sit = c.pendentes>0 ? '<span class="tag" style="background:#fff3cd;color:#8a6d1b">'+c.pendentes+' pendente(s)</span>'
+          : '<span class="tag on">Avaliado</span>';
+        return '<tr>'
+          +'<td style="padding:8px;border-bottom:1px solid #eee">'+esc(c.nome)+'<br><span class="hint">'+esc(c.cpf)+'</span></td>'
+          +'<td style="padding:8px;border-bottom:1px solid #eee">'+esc(c.cargo)+'</td>'
+          +'<td style="padding:8px;border-bottom:1px solid #eee;text-align:center">'+c.qtd+'</td>'
+          +'<td style="padding:8px;border-bottom:1px solid #eee;text-align:center">'+sit+'</td>'
+          +'<td style="padding:8px;border-bottom:1px solid #eee;text-align:center"><b>'+(Number(c.pontos)||0)+'</b></td>'
+          +'<td style="padding:8px;border-bottom:1px solid #eee;text-align:right"><button class="mini" onclick="verTitulos('+c.id+')">Avaliar</button></td>'
+          +'</tr>';
+      }).join('')+'</tbody></table>';
+  }
   var TIT_INSC=0;
   async function verTitulos(id){
     TIT_INSC=id;
@@ -868,7 +913,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
     carregarTitulos(TIT_INSC);
   }
-  function fecharModal(){ $('modal').style.display='none'; }
+  function fecharModal(){ $('modal').style.display='none'; if($('titulos') && $('titulos').style.display!=='none' && $('tit_concurso') && $('tit_concurso').value) carregarTitulosConcurso(); }
   function editarInscrito(id){
     const r = INSCRITOS.find(x=>x.id===id); if(!r)return;
     $('ei_id').value=r.id; $('ei_nome').value=r.nome||''; $('ei_cpf').value=r.cpf||'';
