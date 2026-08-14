@@ -495,7 +495,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'fix-preview-json-v2', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'fix-preview-etapas-v3', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -799,7 +799,13 @@ app.post('/api/candidato/login', async (req, res) => {
       provas_online: provasPorCand[r.id] || [],
     };
   });
-  res.json({ ok: true, nome: lg.rows[0].nome, inscricoes });
+  // Nome: no login normal veio de candidato_login; na prévia, pega do candidato.
+  let nomeCand = '';
+  try {
+    const nq = await pool.query('SELECT nome FROM candidatos WHERE cpf=$1 ORDER BY id DESC LIMIT 1', [cpf]);
+    if (nq.rows.length) nomeCand = nq.rows[0].nome || '';
+  } catch (e) { /* ignora */ }
+  res.json({ ok: true, nome: nomeCand || 'candidato', cpf, inscricoes });
 });
 function calcFase(ab, fe, agora) {
   if (!ab || !fe) return { status: 'indefinido', pode: false };
