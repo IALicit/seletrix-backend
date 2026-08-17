@@ -105,7 +105,8 @@
     if(r.status==='pago') return {badge:'<span class="badge b-pago">Pago ✓</span>', pagar:false};
     if(r.isencao_status==='aprovada' || r.status==='isento') return {badge:'<span class="badge b-pago">Isento ✓</span>', pagar:false};
     if(r.isencao_status==='pendente' || r.status==='isencao_pendente') return {badge:'<span class="badge b-aguard">Isenção em análise</span>', pagar:false};
-    if(r.gratuito) return {badge:'<span class="badge b-insc">Inscrição gratuita</span>', pagar:false};
+    if(r.gratuito) return {badge:'<span class="badge b-pago">Inscrição confirmada ✓</span>', pagar:false};
+    if(r.cobra===false && r.status!=='aguardando_pagamento') return {badge:'<span class="badge b-pago">Inscrição confirmada ✓</span>', pagar:false};
     if(r.status==='aguardando_pagamento') return {badge:'<span class="badge b-aguard">Aguardando pagamento</span>', pagar:true};
     return {badge:'<span class="badge b-insc">Inscrito</span>', pagar:true};
   }
