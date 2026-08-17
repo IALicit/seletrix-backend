@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v18-email -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v19-emailmassa -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -574,6 +574,19 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     <div style="margin-top:16px"><button onclick="salvarPagamento()">Salvar configuração</button></div>
   </div>
 </div>
+<div id="modal_email_massa" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:12px;max-width:640px;width:94%;padding:22px;max-height:90vh;overflow:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <h3>Avisar inscritos por e-mail — <span id="em_titulo"></span></h3><button class="sec" onclick="document.getElementById('modal_email_massa').style.display='none'">Fechar</button>
+    </div>
+    <div id="em_contagem" class="hint" style="margin:8px 0"></div>
+    <div style="margin:10px 0"><label>Assunto</label><input id="em_assunto" placeholder="Ex.: Confirmação da sua inscrição" style="width:100%;padding:9px;border:1px solid var(--linha);border-radius:8px"></div>
+    <div style="margin:10px 0"><label>Mensagem</label><textarea id="em_mensagem" rows="6" placeholder="Escreva o aviso. O nome do candidato, protocolo e cargo são incluídos automaticamente." style="width:100%;padding:9px;border:1px solid var(--linha);border-radius:8px"></textarea></div>
+    <p class="hint">O envio é feito em lotes com pausa (para respeitar o limite do provedor), então leva alguns minutos. Você pode fechar esta janela — o envio continua. O resultado aparece nos Logs do servidor.</p>
+    <button class="tit-btn" id="em_btn" onclick="enviarEmailMassa()">Enviar para os inscritos</button>
+    <div id="em_status" class="hint" style="margin-top:8px"></div>
+  </div>
+</div>
 <div id="modal_cartoes" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
   <div style="background:#fff;border-radius:12px;max-width:820px;width:94%;padding:22px;max-height:90vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -701,7 +714,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
           <div class="meta">\${esc(c.orgao||'')} &middot; \${c.inscritos} inscritos (\${c.pagos} pagos) &middot; taxa \${esc(c.taxa||'-')}</div>
           <div class="meta">Link: <a href="/concurso.html?c=\${esc(c.slug)}" target="_blank">/concurso.html?c=\${esc(c.slug)}</a> <button class="mini" onclick='copiarLink(\${JSON.stringify(c.slug)})'>Copiar link</button></div>
         </div>
-        <div class="row-actions"><button class="mini" onclick='abrirPagamento(\${JSON.stringify(c.id)})'>Pagamento</button><button class="mini" onclick='abrirImport(\${JSON.stringify(c.id)})'>Importar Excel</button><button class="mini" onclick='gerarLogins(\${JSON.stringify(c.id)})'>Gerar acessos</button><button class="mini" onclick='abrirEtapas(\${JSON.stringify(c.id)})'>Etapas / Docs</button><button class="mini" onclick='abrirIsencoes(\${JSON.stringify(c.id)})'>Isenções</button><button class="mini" onclick='abrirPcd(\${JSON.stringify(c.id)})'>PcD / Laudos</button><button class="mini" onclick='abrirCartoes(\${JSON.stringify(c.id)})'>Cartões-resposta</button><button class="mini" onclick='editarConcurso(\${JSON.stringify(c.id)})'>Editar</button><button class="del" onclick='limparCandidatos(\${JSON.stringify(c.id)})'>Excluir candidatos</button><button class="del" onclick='excluirConcurso(\${JSON.stringify(c.id)})'>Excluir</button></div>
+        <div class="row-actions"><button class="mini" onclick='abrirPagamento(\${JSON.stringify(c.id)})'>Pagamento</button><button class="mini" onclick='abrirImport(\${JSON.stringify(c.id)})'>Importar Excel</button><button class="mini" onclick='gerarLogins(\${JSON.stringify(c.id)})'>Gerar acessos</button><button class="mini" onclick='abrirEtapas(\${JSON.stringify(c.id)})'>Etapas / Docs</button><button class="mini" onclick='abrirIsencoes(\${JSON.stringify(c.id)})'>Isenções</button><button class="mini" onclick='abrirPcd(\${JSON.stringify(c.id)})'>PcD / Laudos</button><button class="mini" onclick='abrirCartoes(\${JSON.stringify(c.id)})'>Cartões-resposta</button><button class="mini" onclick='abrirEmailMassa(\${JSON.stringify(c.id)})'>Avisar por e-mail</button><button class="mini" onclick='editarConcurso(\${JSON.stringify(c.id)})'>Editar</button><button class="del" onclick='limparCandidatos(\${JSON.stringify(c.id)})'>Excluir candidatos</button><button class="del" onclick='excluirConcurso(\${JSON.stringify(c.id)})'>Excluir</button></div>
       </div>\`).join('') || '<p class="hint">Nenhum concurso ainda. Clique em "Novo concurso".</p>';
     // popular filtro de inscritos
     $('filtro_concurso').innerHTML = '<option value="">Todos os concursos</option>' + concursos.map(c=>'<option value="'+c.id+'">'+esc(c.titulo)+'</option>').join('');
@@ -978,7 +991,34 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
 
   function toB64(file){ return new Promise(function(res,rej){var r=new FileReader();r.onload=function(){res(r.result);};r.onerror=rej;r.readAsDataURL(file);}); }
   function abrirEtapas(id){ var c=CONCURSOS.find(function(x){return x.id===id;}); $('me_cid').value=id; $('me_titulo').textContent=c?c.titulo:''; $('modal_etapas').style.display='flex'; carregarEtapas(); }
-  var CR_CONC=0;
+  var EM_CONC=0;
+  async function abrirEmailMassa(id){
+    EM_CONC=id;
+    var c=CONCURSOS.find(function(x){return x.id===id;});
+    $('em_titulo').textContent=c?c.titulo:'';
+    $('em_assunto').value=''; $('em_mensagem').value=''; $('em_status').textContent='';
+    $('em_btn').disabled=false;
+    $('em_contagem').textContent='Carregando destinatários...';
+    $('modal_email_massa').style.display='flex';
+    try{
+      var d=await (await fetch('/admin/concurso/'+id+'/email-massa/contagem')).json();
+      if(!d.tem_smtp){ $('em_contagem').innerHTML='<span style="color:#b42318">E-mail não está configurado no servidor. Configure as variáveis SMTP no Render.</span>'; $('em_btn').disabled=true; return; }
+      $('em_contagem').innerHTML='<b>'+d.com_email+'</b> de '+d.total+' inscrito(s) têm e-mail e vão receber. '+(d.total-d.com_email>0?('('+(d.total-d.com_email)+' sem e-mail serão ignorados)'):'');
+      if(d.com_email===0) $('em_btn').disabled=true;
+    }catch(e){ $('em_contagem').textContent='Não foi possível carregar a contagem.'; }
+  }
+  async function enviarEmailMassa(){
+    var assunto=$('em_assunto').value.trim(), mensagem=$('em_mensagem').value.trim();
+    if(!assunto||!mensagem){ alert('Preencha o assunto e a mensagem.'); return; }
+    if(!confirm('Enviar este e-mail para os inscritos com e-mail? O envio leva alguns minutos.')) return;
+    $('em_btn').disabled=true; $('em_status').textContent='Iniciando o envio...';
+    try{
+      var r=await fetch('/admin/concurso/'+EM_CONC+'/email-massa',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({assunto:assunto,mensagem:mensagem})});
+      var j=await r.json();
+      if(!r.ok){ $('em_status').innerHTML='<span style="color:#b42318">'+(j.erro||'Erro ao iniciar')+'</span>'; $('em_btn').disabled=false; return; }
+      $('em_status').innerHTML='<span style="color:#1e7d34">Envio iniciado para '+j.total+' inscrito(s). Está sendo processado em segundo plano — pode fechar esta janela. O resultado final aparece nos Logs do servidor.</span>';
+    }catch(e){ $('em_status').textContent='Erro: '+e.message; $('em_btn').disabled=false; }
+  }
   async function abrirCartoes(id){
     CR_CONC=id;
     var c=CONCURSOS.find(function(x){return x.id===id;});

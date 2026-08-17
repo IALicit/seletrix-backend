@@ -555,7 +555,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'email-confirmacao-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'email-massa-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -1616,7 +1616,67 @@ app.post('/admin/concurso/:id/edital', exigirSenha, async (req, res) => {
 });
 
 // Títulos anexados por um candidato (listar + baixar)
-// Candidatos que entregaram títulos num concurso, com contagem e situação.
+// Quantos inscritos têm e-mail (mostrado antes de disparar o envio em massa).
+app.get('/admin/concurso/:id/email-massa/contagem', exigirSenha, async (req, res) => {
+  if (!pool) return res.json({ com_email: 0, total: 0 });
+  const cid = parseInt(req.params.id);
+  const t = await pool.query('SELECT COUNT(*)::int AS total FROM candidatos WHERE concurso_id=$1', [cid]);
+  const e = await pool.query("SELECT COUNT(*)::int AS com FROM candidatos WHERE concurso_id=$1 AND email IS NOT NULL AND email <> ''", [cid]);
+  res.json({ com_email: e.rows[0].com, total: t.rows[0].total, tem_smtp: temEmail });
+});
+
+// Envio de e-mail em massa aos inscritos de um concurso. Em LOTES com pausa,
+// para não estourar o limite da Locaweb (caixas comuns não são feitas para
+// disparo em massa). Cada e-mail que falha é contado, sem interromper o resto.
+app.post('/admin/concurso/:id/email-massa', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  if (!temEmail) return res.status(400).json({ erro: 'E-mail não configurado no servidor (variáveis SMTP).' });
+  const cid = parseInt(req.params.id);
+  const b = req.body || {};
+  const assunto = String(b.assunto || '').trim();
+  const mensagem = String(b.mensagem || '').trim();
+  if (!assunto || !mensagem) return res.status(400).json({ erro: 'Preencha o assunto e a mensagem.' });
+  if (assunto.length > 200) return res.status(400).json({ erro: 'Assunto muito longo.' });
+
+  // destinatários: inscritos do concurso que têm e-mail
+  const { rows } = await pool.query(
+    "SELECT nome, email, protocolo, cargo FROM candidatos WHERE concurso_id=$1 AND email IS NOT NULL AND email <> '' ORDER BY id", [cid]);
+  if (!rows.length) return res.json({ ok: true, enviados: 0, falhas: 0, total: 0, aviso: 'Nenhum inscrito com e-mail neste concurso.' });
+
+  // nome da empresa (rodapé)
+  let empresaNome = '';
+  try {
+    const en = await pool.query('SELECT e.nome FROM concursos c LEFT JOIN empresas e ON e.id=c.empresa_id WHERE c.id=$1', [cid]);
+    empresaNome = (en.rows[0] && en.rows[0].nome) || '';
+  } catch (e) { /* ignora */ }
+  const ct = await pool.query('SELECT titulo FROM concursos WHERE id=$1', [cid]);
+  const concursoTitulo = (ct.rows[0] && ct.rows[0].titulo) || '';
+
+  // Responde já e processa em segundo plano (200 e-mails levam minutos).
+  res.json({ ok: true, iniciado: true, total: rows.length });
+
+  const LOTE = 20;        // e-mails por lote
+  const PAUSA_MS = 8000;  // pausa entre lotes (8s) — respeita o limite da Locaweb
+  let enviados = 0, falhas = 0;
+  (async () => {
+    for (let i = 0; i < rows.length; i += LOTE) {
+      const lote = rows.slice(i, i + LOTE);
+      for (const c of lote) {
+        const corpoHtml = `<div style="font-family:Arial,sans-serif;max-width:560px;color:#222">`
+          + `<p>Olá, <b>${escapeHtml(c.nome)}</b>!</p>`
+          + mensagem.split('\n').map((l) => `<p>${escapeHtml(l)}</p>`).join('')
+          + `<table style="border-collapse:collapse;margin:12px 0"><tr><td style="padding:4px 10px;color:#555">Protocolo</td><td style="padding:4px 10px"><b>${escapeHtml(c.protocolo || '-')}</b></td></tr>`
+          + `<tr><td style="padding:4px 10px;color:#555">Cargo</td><td style="padding:4px 10px">${escapeHtml(c.cargo || '-')}</td></tr></table>`
+          + `<hr style="border:none;border-top:1px solid #eee;margin:16px 0"><div style="color:#888;font-size:12px">${escapeHtml(empresaNome || 'Seletrix Concursos')}${concursoTitulo ? ' — ' + escapeHtml(concursoTitulo) : ''}</div></div>`;
+        const corpoTexto = `Ola, ${c.nome}!\n\n${mensagem}\n\nProtocolo: ${c.protocolo || '-'} | Cargo: ${c.cargo || '-'}`;
+        const ok = await enviarEmail({ para: c.email, assunto, html: corpoHtml, texto: corpoTexto });
+        if (ok) enviados++; else falhas++;
+      }
+      if (i + LOTE < rows.length) await new Promise((r) => setTimeout(r, PAUSA_MS));
+    }
+    console.log(`email-massa concurso ${cid}: ${enviados} enviados, ${falhas} falhas de ${rows.length}`);
+  })().catch((e) => console.error('email-massa erro:', e.message));
+});
 app.get('/admin/concurso/:id/titulos.json', exigirSenha, async (req, res) => {
   if (!pool) return res.json({ candidatos: [] });
   const cid = parseInt(req.params.id);
