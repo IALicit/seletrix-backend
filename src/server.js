@@ -555,7 +555,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'email-massa-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'confirmada-sem-boleto-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -798,7 +798,7 @@ app.post('/api/candidato/login', async (req, res) => {
   const { rows } = await pool.query(
     `SELECT k.id, k.protocolo, k.cargo, k.status, k.invoice_url, k.criado_em, k.concurso_id,
             k.condicao_especial, (k.laudo_dados IS NOT NULL) AS tem_laudo, k.laudo_nome,
-            c.titulo AS concurso, c.slug, c.gratuito, c.prova, c.pede_laudo, c.laudo_inicio_dt, c.laudo_fim_dt,
+            c.titulo AS concurso, c.slug, c.gratuito, c.taxa_valor, c.pagamento_gateway, c.prova, c.pede_laudo, c.laudo_inicio_dt, c.laudo_fim_dt,
             c.pede_titulos, c.tipos_titulos, c.titulos_inicio_dt, c.titulos_fim_dt,
             k.quer_isencao, k.isencao_status, k.isencao_motivo, k.isencao_obs, (k.isencao_doc_dados IS NOT NULL) AS tem_isencao_doc, k.isencao_doc_nome,
             k.pcd, k.pcd_status, k.pcd_obs, (k.cartao_dados IS NOT NULL) AS tem_cartao,
@@ -857,6 +857,7 @@ app.post('/api/candidato/login', async (req, res) => {
     return {
       id: r.id, protocolo: r.protocolo, cargo: r.cargo, status: r.status, invoice_url: r.invoice_url, criado_em: r.criado_em,
       concurso: r.concurso, slug: r.slug, gratuito: r.gratuito, prova: r.prova,
+      cobra: (!r.gratuito && Number(r.taxa_valor) > 0 && (r.pagamento_gateway === 'bb' || temAsaas)),
       pede_titulos: !!r.pede_titulos, tipos_titulos: tipos, titulos_inicio: ti, titulos_fim: tf,
       titulos_status: tc.status, pode_titulos: tc.pode, titulos: porCand[r.id] || [],
       recurso_fases: fasesPorConc[r.concurso_id] || [], meus_recursos: recursosPorCand[r.id] || [],
