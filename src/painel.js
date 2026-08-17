@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v17-abatitulos -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v18-email -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -135,6 +135,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       <div class="checkline"><input type="checkbox" id="c_aberto"><label for="c_aberto" style="margin:0">Publicar no site (visível para os candidatos)</label></div>
       <div class="checkline"><input type="checkbox" id="c_oculto"><label for="c_oculto" style="margin:0">Concurso oculto (não aparece na vitrine — só quem tem o link se inscreve)</label></div>
       <div class="checkline"><input type="checkbox" id="c_pede_matricula"><label for="c_pede_matricula" style="margin:0">Exigir matrícula funcional na inscrição (ex.: processo interno)</label></div>
+      <div class="checkline"><input type="checkbox" id="c_email_confirmacao"><label for="c_email_confirmacao" style="margin:0">Enviar e-mail de confirmação ao concluir a inscrição</label></div>
       <div class="checkline"><input type="checkbox" id="c_gratuito"><label for="c_gratuito" style="margin:0">Inscrição gratuita (não gera cobrança de taxa)</label></div>
       <div style="margin-top:16px">
         <label>Cargos</label>
@@ -708,7 +709,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   function novoConcurso(){
     $('form_titulo').textContent='Novo concurso'; $('c_id').value='';
     ['c_titulo','c_orgao','c_periodo','c_prova','c_vagas','c_taxa','c_valor','c_dias','c_pdf','c_data_inicio','c_data_fim','c_data_encerramento'].forEach(id=>$(id).value='');
-    $('c_dias').value='5'; $('c_aberto').checked=true; $('c_oculto').checked=false; $('c_pede_matricula').checked=false; cargosEdit=[]; renderCargos();
+    $('c_dias').value='5'; $('c_aberto').checked=true; $('c_oculto').checked=false; $('c_pede_matricula').checked=false; $('c_email_confirmacao').checked=false; cargosEdit=[]; renderCargos();
     $('c_gratuito').checked=false; $('c_pede_titulos').checked=false; $('c_pede_laudo').checked=false; popularEmpresaSel(EMPRESA_ID); $('c_laudo_inicio').value=''; $('c_laudo_fim').value=''; toggleLaudo(); $('c_pede_isencao').checked=false; $('c_isencao_texto').value=''; $('c_isencao_inicio').value=''; $('c_isencao_fim').value=''; toggleIsencao(); tiposEdit=[]; renderTipos(); toggleTitulos();
     $('c_tit_ini_data').value=''; $('c_tit_ini_hora').value=''; $('c_tit_fim_data').value=''; $('c_tit_fim_hora').value='';
     if($('c_brasao_file')) $('c_brasao_file').value='';
@@ -724,7 +725,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('c_prova').value=c.prova||''; $('c_vagas').value=c.vagas||''; $('c_taxa').value=c.taxa||'';
     $('c_valor').value=c.taxa_valor||0; $('c_dias').value=c.dias_vencimento||5; $('c_pdf').value=c.pdf_url||'';
     $('c_data_inicio').value=c.data_inicio||''; $('c_data_fim').value=c.data_fim||''; $('c_data_encerramento').value=c.data_encerramento||'';
-    $('c_aberto').checked=!!c.aberto; $('c_oculto').checked=!!c.oculto; $('c_pede_matricula').checked=!!c.pede_matricula; cargosEdit=(c.cargos||[]).slice(); renderCargos();
+    $('c_aberto').checked=!!c.aberto; $('c_oculto').checked=!!c.oculto; $('c_pede_matricula').checked=!!c.pede_matricula; $('c_email_confirmacao').checked=!!c.email_confirmacao; cargosEdit=(c.cargos||[]).slice(); renderCargos();
     $('c_gratuito').checked=!!c.gratuito; $('c_pede_titulos').checked=!!c.pede_titulos; $('c_pede_laudo').checked=!!c.pede_laudo; popularEmpresaSel(c.empresa_id||EMPRESA_ID); $('c_laudo_inicio').value=c.laudo_inicio||''; $('c_laudo_fim').value=c.laudo_fim||''; toggleLaudo(); $('c_pede_isencao').checked=!!c.pede_isencao; $('c_isencao_texto').value=c.isencao_texto||''; $('c_isencao_inicio').value=c.isencao_inicio||''; $('c_isencao_fim').value=c.isencao_fim||''; toggleIsencao(); tiposEdit=(c.tipos_titulos||[]).slice(); renderTipos(); toggleTitulos();
     var _ti=(c.titulos_inicio||'').split('T'), _tf=(c.titulos_fim||'').split('T');
     $('c_tit_ini_data').value=_ti[0]||''; $('c_tit_ini_hora').value=(_ti[1]||'').slice(0,5);
@@ -749,7 +750,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     const payload={ id:$('c_id').value||undefined, titulo:$('c_titulo').value, orgao:$('c_orgao').value, periodo:$('c_periodo').value,
       prova:$('c_prova').value, vagas:$('c_vagas').value, taxa:$('c_taxa').value, taxa_valor:$('c_valor').value,
       dias_vencimento:$('c_dias').value, pdf_url:$('c_pdf').value, aberto:$('c_aberto').checked,
-      oculto:$('c_oculto').checked, pede_matricula:$('c_pede_matricula').checked,
+      oculto:$('c_oculto').checked, pede_matricula:$('c_pede_matricula').checked, email_confirmacao:$('c_email_confirmacao').checked,
       data_inicio:$('c_data_inicio').value, data_fim:$('c_data_fim').value, data_encerramento:$('c_data_encerramento').value,
       gratuito:$('c_gratuito').checked, pede_titulos:$('c_pede_titulos').checked, pede_laudo:$('c_pede_laudo').checked, laudo_inicio:$('c_laudo_inicio').value, laudo_fim:$('c_laudo_fim').value, pede_isencao:$('c_pede_isencao').checked, isencao_texto:$('c_isencao_texto').value, isencao_inicio:$('c_isencao_inicio').value, isencao_fim:$('c_isencao_fim').value, tipos_titulos:tiposEdit, cargos:cargosEdit, empresa_id:(parseInt($('c_empresa').value)||EMPRESA_ID),
       titulos_inicio: combinaDT($('c_tit_ini_data').value, $('c_tit_ini_hora').value, '00:00'),
