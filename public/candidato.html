@@ -108,11 +108,15 @@
     if(r.gratuito) return {badge:'<span class="badge b-pago">Inscrição confirmada ✓</span>', pagar:false};
     if(r.cobra===false && r.status!=='aguardando_pagamento') return {badge:'<span class="badge b-pago">Inscrição confirmada ✓</span>', pagar:false};
     if(r.status==='aguardando_pagamento'){
-      if(r.pagamento_aberto===false) return {badge:'<span class="badge b-aguard">Prazo de pagamento encerrado</span>', pagar:false};
-      return {badge:'<span class="badge b-aguard">Aguardando pagamento</span>', pagar:true};
+      if(r.pagamento_aberto===false) return {badge:'<span class="badge b-aguard">Inscrito não pago — prazo encerrado</span>', pagar:false};
+      return {badge:'<span class="badge b-aguard">Inscrito não pago</span>', pagar:true};
     }
-    if(r.pagamento_aberto===false) return {badge:'<span class="badge b-insc">Inscrito</span>', pagar:false};
-    return {badge:'<span class="badge b-insc">Inscrito</span>', pagar:true};
+    // Cadastrou mas ainda não pagou (status genérico): também é "não pago".
+    if(r.cobra!==false){
+      if(r.pagamento_aberto===false) return {badge:'<span class="badge b-aguard">Inscrito não pago — prazo encerrado</span>', pagar:false};
+      return {badge:'<span class="badge b-aguard">Inscrito não pago</span>', pagar:true};
+    }
+    return {badge:'<span class="badge b-insc">Inscrito</span>', pagar:false};
   }
   var SESSAO={cpf:'',senha:'',preview_token:''};
   var EMPRESA_SLUG = (new URLSearchParams(location.search)).get('e') || '';
