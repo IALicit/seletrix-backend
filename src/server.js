@@ -173,6 +173,8 @@ async function inicializarBanco() {
   for (const col of ['oculto BOOLEAN DEFAULT FALSE', 'pede_matricula BOOLEAN DEFAULT FALSE', 'email_confirmacao BOOLEAN DEFAULT FALSE']) {
     await pool.query(`ALTER TABLE concursos ADD COLUMN IF NOT EXISTS ${col}`);
   }
+  // Dias extras após o fim das inscrições em que o boleto/2ª via ainda é aceito.
+  await pool.query(`ALTER TABLE concursos ADD COLUMN IF NOT EXISTS dias_pagamento_extra INT DEFAULT 2`);
   await pool.query(`ALTER TABLE candidatos ADD COLUMN IF NOT EXISTS matricula TEXT`);
   // Tokens temporários para o admin pré-visualizar a Área do Candidato (só leitura).
   await pool.query(`CREATE TABLE IF NOT EXISTS preview_tokens (token TEXT PRIMARY KEY, cpf TEXT, expira_em TIMESTAMPTZ);`);
@@ -259,6 +261,18 @@ async function inicializarBanco() {
 
 function hojeBR() { return new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10); }
 function agoraBR() { return new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 16); } // 'YYYY-MM-DDTHH:MM'
+// Prazo de pagamento: aberto até data_fim + dias_extra (fim do dia). Sem data_fim,
+// fica sempre aberto (não bloqueia). Retorna true/false.
+function pagamentoAberto(dataFim, diasExtra) {
+  if (!dataFim) return true;
+  const base = String(dataFim).slice(0, 10); // YYYY-MM-DD
+  const d = new Date(base + 'T00:00:00');
+  if (isNaN(d)) return true;
+  const extra = Number.isFinite(Number(diasExtra)) ? Number(diasExtra) : 2;
+  d.setDate(d.getDate() + extra);
+  const limite = d.toISOString().slice(0, 10) + 'T23:59'; // fim do último dia permitido
+  return agoraBR() <= limite;
+}
 function calcSituacao(di, df, de, hoje) {
   if (de && hoje > de) return 'encerrado';
   if (df && hoje > df) return 'andamento';
@@ -289,6 +303,7 @@ function parseConcurso(r) {
     dias_vencimento: r.dias_vencimento || 5, cargos, aberto: r.aberto,
     gratuito: !!r.gratuito, pede_titulos: !!r.pede_titulos, pede_laudo: !!r.pede_laudo, tipos_titulos: tipos,
     data_inicio: di, data_fim: df, data_encerramento: de,
+    dias_pagamento_extra: (r.dias_pagamento_extra == null ? 2 : Number(r.dias_pagamento_extra)),
     titulos_inicio: ti, titulos_fim: tf, titulos_status: tc.status, pode_titulos: tc.pode,
     laudo_inicio: r.laudo_inicio_dt || null, laudo_fim: r.laudo_fim_dt || null, empresa_id: r.empresa_id || null,
     pede_isencao: !!r.pede_isencao, isencao_texto: r.isencao_texto || '',
@@ -555,7 +570,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'confirmada-sem-boleto-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'prazo-pagamento-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -798,7 +813,7 @@ app.post('/api/candidato/login', async (req, res) => {
   const { rows } = await pool.query(
     `SELECT k.id, k.protocolo, k.cargo, k.status, k.invoice_url, k.criado_em, k.concurso_id,
             k.condicao_especial, (k.laudo_dados IS NOT NULL) AS tem_laudo, k.laudo_nome,
-            c.titulo AS concurso, c.slug, c.gratuito, c.taxa_valor, c.pagamento_gateway, c.prova, c.pede_laudo, c.laudo_inicio_dt, c.laudo_fim_dt,
+            c.titulo AS concurso, c.slug, c.gratuito, c.taxa_valor, c.pagamento_gateway, c.data_fim, c.dias_pagamento_extra, c.prova, c.pede_laudo, c.laudo_inicio_dt, c.laudo_fim_dt,
             c.pede_titulos, c.tipos_titulos, c.titulos_inicio_dt, c.titulos_fim_dt,
             k.quer_isencao, k.isencao_status, k.isencao_motivo, k.isencao_obs, (k.isencao_doc_dados IS NOT NULL) AS tem_isencao_doc, k.isencao_doc_nome,
             k.pcd, k.pcd_status, k.pcd_obs, (k.cartao_dados IS NOT NULL) AS tem_cartao,
@@ -858,6 +873,7 @@ app.post('/api/candidato/login', async (req, res) => {
       id: r.id, protocolo: r.protocolo, cargo: r.cargo, status: r.status, invoice_url: r.invoice_url, criado_em: r.criado_em,
       concurso: r.concurso, slug: r.slug, gratuito: r.gratuito, prova: r.prova,
       cobra: (!r.gratuito && Number(r.taxa_valor) > 0 && (r.pagamento_gateway === 'bb' || temAsaas)),
+      pagamento_aberto: pagamentoAberto(r.data_fim, r.dias_pagamento_extra),
       pede_titulos: !!r.pede_titulos, tipos_titulos: tipos, titulos_inicio: ti, titulos_fim: tf,
       titulos_status: tc.status, pode_titulos: tc.pode, titulos: porCand[r.id] || [],
       recurso_fases: fasesPorConc[r.concurso_id] || [], meus_recursos: recursosPorCand[r.id] || [],
@@ -989,6 +1005,10 @@ app.post('/api/candidato/boleto', async (req, res) => {
   const concurso = await lerConcursoPorChave(String(c.concurso_id));
   if (!concurso) return res.status(404).json({ erro: 'Concurso não encontrado.' });
   if (concurso.gratuito || !(Number(concurso.taxa_valor) > 0)) return res.status(400).json({ erro: 'Esta inscrição é gratuita, não há boleto.' });
+  // Prazo de pagamento encerrado: não gera boleto nem 2ª via.
+  if (!pagamentoAberto(concurso.data_fim, concurso.dias_pagamento_extra)) {
+    return res.status(400).json({ erro: 'O prazo para pagamento da inscrição está encerrado.' });
+  }
   if (c.invoice_url) return res.json({ ok: true, invoice_url: c.invoice_url });
   if (concurso.pagamento_gateway !== 'bb' && !temAsaas) return res.status(400).json({ erro: 'Pagamento indisponível no momento. Tente mais tarde.' });
   try {
@@ -1567,6 +1587,7 @@ app.post('/admin/concurso', exigirSenha, async (req, res) => {
       laudo_inicio_dt: dtnull(b.laudo_inicio), laudo_fim_dt: dtnull(b.laudo_fim),
       empresa_id: parseInt(b.empresa_id) || null,
       data_inicio: dnull(b.data_inicio), data_fim: dnull(b.data_fim), data_encerramento: dnull(b.data_encerramento),
+      dias_pagamento_extra: (b.dias_pagamento_extra === '' || b.dias_pagamento_extra == null ? 2 : Math.max(0, parseInt(b.dias_pagamento_extra) || 0)),
       titulos_inicio_dt: dtnull(b.titulos_inicio), titulos_fim_dt: dtnull(b.titulos_fim),
       pede_isencao: bool(b.pede_isencao), isencao_texto: String(b.isencao_texto || '').trim().slice(0, 2000),
       isencao_inicio_dt: dtnull(b.isencao_inicio), isencao_fim_dt: dtnull(b.isencao_fim),
@@ -1580,12 +1601,12 @@ app.post('/admin/concurso', exigirSenha, async (req, res) => {
       if (!q.rows.length) break; slug = base + '-' + (n++);
     }
     if (b.id) {
-      await pool.query(`UPDATE concursos SET slug=$1,titulo=$2,orgao=$3,periodo=$4,taxa=$5,prova=$6,vagas=$7,pdf_url=$8,taxa_valor=$9,dias_vencimento=$10,cargos=$11,aberto=$12,gratuito=$13,pede_titulos=$14,tipos_titulos=$15,data_inicio=$16,data_fim=$17,data_encerramento=$18,titulos_inicio_dt=$19,titulos_fim_dt=$20,pede_laudo=$21,laudo_inicio_dt=$22,laudo_fim_dt=$23,empresa_id=COALESCE($24,empresa_id),pede_isencao=$25,isencao_texto=$26,isencao_inicio_dt=$27,isencao_fim_dt=$28,oculto=$29,pede_matricula=$30,email_confirmacao=$31 WHERE id=$32`,
-        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), dados.data_inicio, dados.data_fim, dados.data_encerramento, dados.titulos_inicio_dt, dados.titulos_fim_dt, dados.pede_laudo, dados.laudo_inicio_dt, dados.laudo_fim_dt, dados.empresa_id, dados.pede_isencao, dados.isencao_texto, dados.isencao_inicio_dt, dados.isencao_fim_dt, dados.oculto, dados.pede_matricula, dados.email_confirmacao, b.id]);
+      await pool.query(`UPDATE concursos SET slug=$1,titulo=$2,orgao=$3,periodo=$4,taxa=$5,prova=$6,vagas=$7,pdf_url=$8,taxa_valor=$9,dias_vencimento=$10,cargos=$11,aberto=$12,gratuito=$13,pede_titulos=$14,tipos_titulos=$15,data_inicio=$16,data_fim=$17,data_encerramento=$18,titulos_inicio_dt=$19,titulos_fim_dt=$20,pede_laudo=$21,laudo_inicio_dt=$22,laudo_fim_dt=$23,empresa_id=COALESCE($24,empresa_id),pede_isencao=$25,isencao_texto=$26,isencao_inicio_dt=$27,isencao_fim_dt=$28,oculto=$29,pede_matricula=$30,email_confirmacao=$31,dias_pagamento_extra=$32 WHERE id=$33`,
+        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), dados.data_inicio, dados.data_fim, dados.data_encerramento, dados.titulos_inicio_dt, dados.titulos_fim_dt, dados.pede_laudo, dados.laudo_inicio_dt, dados.laudo_fim_dt, dados.empresa_id, dados.pede_isencao, dados.isencao_texto, dados.isencao_inicio_dt, dados.isencao_fim_dt, dados.oculto, dados.pede_matricula, dados.email_confirmacao, dados.dias_pagamento_extra, b.id]);
       return res.json({ ok: true, id: b.id, slug });
     } else {
-      const ins = await pool.query(`INSERT INTO concursos (slug,titulo,orgao,periodo,taxa,prova,vagas,pdf_url,taxa_valor,dias_vencimento,cargos,aberto,gratuito,pede_titulos,tipos_titulos,data_inicio,data_fim,data_encerramento,titulos_inicio_dt,titulos_fim_dt,pede_laudo,laudo_inicio_dt,laudo_fim_dt,empresa_id,pede_isencao,isencao_texto,isencao_inicio_dt,isencao_fim_dt,oculto,pede_matricula,email_confirmacao) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,COALESCE($24,(SELECT id FROM empresas ORDER BY id LIMIT 1)),$25,$26,$27,$28,$29,$30,$31) RETURNING id`,
-        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), dados.data_inicio, dados.data_fim, dados.data_encerramento, dados.titulos_inicio_dt, dados.titulos_fim_dt, dados.pede_laudo, dados.laudo_inicio_dt, dados.laudo_fim_dt, dados.empresa_id, dados.pede_isencao, dados.isencao_texto, dados.isencao_inicio_dt, dados.isencao_fim_dt, dados.oculto, dados.pede_matricula, dados.email_confirmacao]);
+      const ins = await pool.query(`INSERT INTO concursos (slug,titulo,orgao,periodo,taxa,prova,vagas,pdf_url,taxa_valor,dias_vencimento,cargos,aberto,gratuito,pede_titulos,tipos_titulos,data_inicio,data_fim,data_encerramento,titulos_inicio_dt,titulos_fim_dt,pede_laudo,laudo_inicio_dt,laudo_fim_dt,empresa_id,pede_isencao,isencao_texto,isencao_inicio_dt,isencao_fim_dt,oculto,pede_matricula,email_confirmacao,dias_pagamento_extra) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,COALESCE($24,(SELECT id FROM empresas ORDER BY id LIMIT 1)),$25,$26,$27,$28,$29,$30,$31,$32) RETURNING id`,
+        [slug, dados.titulo, dados.orgao, dados.periodo, dados.taxa, dados.prova, dados.vagas, dados.pdf_url, dados.taxa_valor, dados.dias_vencimento, JSON.stringify(cargos), dados.aberto, dados.gratuito, dados.pede_titulos, JSON.stringify(tipos), dados.data_inicio, dados.data_fim, dados.data_encerramento, dados.titulos_inicio_dt, dados.titulos_fim_dt, dados.pede_laudo, dados.laudo_inicio_dt, dados.laudo_fim_dt, dados.empresa_id, dados.pede_isencao, dados.isencao_texto, dados.isencao_inicio_dt, dados.isencao_fim_dt, dados.oculto, dados.pede_matricula, dados.email_confirmacao, dados.dias_pagamento_extra]);
       return res.json({ ok: true, id: ins.rows[0].id, slug });
     }
   } catch (e) { console.error('concurso:', e.message); res.status(500).json({ erro: 'Não foi possível salvar.' }); }
