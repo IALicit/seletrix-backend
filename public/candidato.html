@@ -107,7 +107,11 @@
     if(r.isencao_status==='pendente' || r.status==='isencao_pendente') return {badge:'<span class="badge b-aguard">Isenção em análise</span>', pagar:false};
     if(r.gratuito) return {badge:'<span class="badge b-pago">Inscrição confirmada ✓</span>', pagar:false};
     if(r.cobra===false && r.status!=='aguardando_pagamento') return {badge:'<span class="badge b-pago">Inscrição confirmada ✓</span>', pagar:false};
-    if(r.status==='aguardando_pagamento') return {badge:'<span class="badge b-aguard">Aguardando pagamento</span>', pagar:true};
+    if(r.status==='aguardando_pagamento'){
+      if(r.pagamento_aberto===false) return {badge:'<span class="badge b-aguard">Prazo de pagamento encerrado</span>', pagar:false};
+      return {badge:'<span class="badge b-aguard">Aguardando pagamento</span>', pagar:true};
+    }
+    if(r.pagamento_aberto===false) return {badge:'<span class="badge b-insc">Inscrito</span>', pagar:false};
     return {badge:'<span class="badge b-insc">Inscrito</span>', pagar:true};
   }
   var SESSAO={cpf:'',senha:'',preview_token:''};
