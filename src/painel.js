@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v21-prazopag -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v22-reltitulos -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -864,7 +864,9 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var arr=d.candidatos||[];
     if(!arr.length){ $('tit_lista').innerHTML='<p class="hint">Nenhum candidato entregou títulos neste concurso.</p>'; $('tit_resumo').innerHTML=''; return; }
     var pend=arr.reduce(function(s,c){return s+(c.pendentes||0);},0);
-    $('tit_resumo').innerHTML='<b>'+arr.length+'</b> candidato(s) com títulos · <b>'+pend+'</b> título(s) ainda por avaliar';
+    $('tit_resumo').innerHTML='<b>'+arr.length+'</b> candidato(s) com títulos · <b>'+pend+'</b> título(s) ainda por avaliar'
+      +' &nbsp; <a class="mini" style="text-decoration:none;padding:6px 12px" href="/admin/concurso/'+cid+'/titulos-resumo.csv" target="_blank">⬇ Relatório resumo</a>'
+      +' <a class="mini" style="text-decoration:none;padding:6px 12px" href="/admin/concurso/'+cid+'/titulos-detalhe.csv" target="_blank">⬇ Relatório detalhado</a>';
     $('tit_lista').innerHTML='<table style="width:100%;border-collapse:collapse"><thead><tr>'
       +'<th style="text-align:left;padding:8px;border-bottom:2px solid var(--navy)">Candidato</th>'
       +'<th style="text-align:left;padding:8px;border-bottom:2px solid var(--navy)">Cargo</th>'

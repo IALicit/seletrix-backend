@@ -570,7 +570,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'selo-nao-pago-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'relatorio-titulos-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -1698,6 +1698,56 @@ app.post('/admin/concurso/:id/email-massa', exigirSenha, async (req, res) => {
     }
     console.log(`email-massa concurso ${cid}: ${enviados} enviados, ${falhas} falhas de ${rows.length}`);
   })().catch((e) => console.error('email-massa erro:', e.message));
+});
+// Relatório RESUMO de títulos: uma linha por candidato, com total de pontos.
+app.get('/admin/concurso/:id/titulos-resumo.csv', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  const cid = parseInt(req.params.id);
+  const ct = await pool.query('SELECT titulo FROM concursos WHERE id=$1', [cid]);
+  const titulo = (ct.rows[0] && ct.rows[0].titulo) || 'concurso';
+  const { rows } = await pool.query(`
+    SELECT k.nome, k.cpf, k.cargo, k.protocolo,
+      COUNT(t.id)::int AS qtd,
+      COUNT(*) FILTER (WHERE t.aval_status='deferido')::int AS deferidos,
+      COUNT(*) FILTER (WHERE t.aval_status='indeferido')::int AS indeferidos,
+      COUNT(*) FILTER (WHERE t.aval_status IS NULL)::int AS pendentes,
+      COALESCE(SUM(t.aval_pontos) FILTER (WHERE t.aval_status='deferido'),0) AS pontos
+    FROM candidatos k JOIN titulos t ON t.candidato_id=k.id
+    WHERE k.concurso_id=$1
+    GROUP BY k.id, k.nome, k.cpf, k.cargo, k.protocolo
+    ORDER BY pontos DESC, k.nome`, [cid]);
+  const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+  const num = (v) => String(Number(v) || 0).replace('.', ',');
+  const cab = ['Nome', 'CPF', 'Cargo', 'Protocolo', 'Qtd. títulos', 'Deferidos', 'Indeferidos', 'Pendentes', 'Total de pontos'];
+  const linhas = rows.map((r) => [r.nome, r.cpf, r.cargo, r.protocolo, r.qtd, r.deferidos, r.indeferidos, r.pendentes, num(r.pontos)].map(esc).join(';'));
+  const csv = '\uFEFF' + [cab.map(esc).join(';'), ...linhas].join('\r\n');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="titulos_resumo_' + slugify(titulo) + '.csv"');
+  res.send(csv);
+});
+// Relatório DETALHADO de títulos: uma linha por título, com observação.
+app.get('/admin/concurso/:id/titulos-detalhe.csv', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  const cid = parseInt(req.params.id);
+  const ct = await pool.query('SELECT titulo FROM concursos WHERE id=$1', [cid]);
+  const titulo = (ct.rows[0] && ct.rows[0].titulo) || 'concurso';
+  const { rows } = await pool.query(`
+    SELECT k.nome, k.cpf, k.cargo, k.protocolo,
+      t.tipo, t.filename, t.aval_status, t.aval_pontos, t.aval_obs,
+      to_char(t.aval_em,'DD/MM/YYYY HH24:MI') AS avaliado_em
+    FROM candidatos k JOIN titulos t ON t.candidato_id=k.id
+    WHERE k.concurso_id=$1
+    ORDER BY k.nome, t.id`, [cid]);
+  const statusTxt = (s) => s === 'deferido' ? 'DEFERIDO' : s === 'indeferido' ? 'INDEFERIDO' : 'NÃO AVALIADO';
+  const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+  const num = (v) => v == null ? '' : String(Number(v) || 0).replace('.', ',');
+  const cab = ['Nome', 'CPF', 'Cargo', 'Protocolo', 'Título', 'Arquivo', 'Situação', 'Pontos', 'Observação', 'Avaliado em'];
+  const linhas = rows.map((r) => [r.nome, r.cpf, r.cargo, r.protocolo, r.tipo, r.filename,
+    statusTxt(r.aval_status), num(r.aval_pontos), r.aval_obs, r.avaliado_em].map(esc).join(';'));
+  const csv = '\uFEFF' + [cab.map(esc).join(';'), ...linhas].join('\r\n');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="titulos_detalhe_' + slugify(titulo) + '.csv"');
+  res.send(csv);
 });
 app.get('/admin/concurso/:id/titulos.json', exigirSenha, async (req, res) => {
   if (!pool) return res.json({ candidatos: [] });
