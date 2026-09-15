@@ -200,7 +200,8 @@
     var rot={pendente:'⏳ Em análise',deferido:'✅ Deferido',indeferido:'❌ Indeferido'};
     var meus=(r.meus_recursos||[]).map(function(x){
       var anexo=x.tem_anexo?' · <a href="/api/candidato/recurso/'+x.id+'/anexo?cpf='+encodeURIComponent(SESSAO.cpf)+'&senha='+encodeURIComponent(SESSAO.senha)+'" target="_blank">📎 anexo</a>':'';
-      var resp=x.resposta?('<div class="rec-resp"><b>Resposta da banca:</b> '+esc(x.resposta)+'</div>'):'';
+      var ranexo=x.tem_resp_anexo?('<div style="margin-top:6px"><a href="/api/candidato/recurso/'+x.id+'/resposta-anexo?cpf='+encodeURIComponent(SESSAO.cpf)+'&senha='+encodeURIComponent(SESSAO.senha)+'" target="_blank">📎 '+esc(x.resp_anexo_nome||'documento anexado pela banca')+'</a></div>'):'';
+      var resp=(x.resposta||x.tem_resp_anexo)?('<div class="rec-resp"><b>Resposta da banca:</b> '+esc(x.resposta||'—')+ranexo+'</div>'):'';
       return '<div class="rec-item"><div class="rec-ihead"><span>'+esc(x.fase_nome||'Recurso')+anexo+'</span><span>'+rot[x.status]+'</span></div>'
         +'<div class="rec-texto">'+esc(x.texto)+'</div>'+resp+'</div>';
     }).join('') || '<p class="tit-vazio">Você ainda não interpôs recursos.</p>';
