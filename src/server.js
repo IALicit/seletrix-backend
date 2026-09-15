@@ -217,6 +217,10 @@ async function inicializarBanco() {
   await pool.query(`CREATE TABLE IF NOT EXISTS recurso_fases (id SERIAL PRIMARY KEY, concurso_id INT, nome TEXT, abertura TEXT, fechamento TEXT, criado_em TIMESTAMPTZ DEFAULT now());`);
   await pool.query(`CREATE TABLE IF NOT EXISTS recursos (id SERIAL PRIMARY KEY, concurso_id INT, fase_id INT, candidato_id INT, texto TEXT,
     anexo_mime TEXT, anexo_dados BYTEA, anexo_nome TEXT, status TEXT DEFAULT 'pendente', resposta TEXT, respondido_em TIMESTAMPTZ, criado_em TIMESTAMPTZ DEFAULT now());`);
+  // Anexo que a BANCA junta à resposta (ex.: cartão-resposta do candidato, planilha de pontuação).
+  for (const col of ['resp_anexo_mime TEXT', 'resp_anexo_dados BYTEA', 'resp_anexo_nome TEXT']) {
+    await pool.query(`ALTER TABLE recursos ADD COLUMN IF NOT EXISTS ${col}`);
+  }
   // Multiempresa: empresas + vínculo do concurso
   await pool.query(`CREATE TABLE IF NOT EXISTS empresas (id SERIAL PRIMARY KEY, slug TEXT UNIQUE, nome TEXT, subtitulo TEXT,
     logo_mime TEXT, logo_dados BYTEA, ativa BOOLEAN DEFAULT TRUE, criado_em TIMESTAMPTZ DEFAULT now());`);
@@ -570,7 +574,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'relatorio-titulos-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'recurso-anexo-resposta-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -835,7 +839,8 @@ app.post('/api/candidato/login', async (req, res) => {
   }
   const recursosPorCand = {};
   if (ids.length) {
-    const rc = await pool.query(`SELECT r.id, r.candidato_id, r.texto, r.status, r.resposta, r.criado_em, r.anexo_nome, (r.anexo_dados IS NOT NULL) AS tem_anexo, f.nome AS fase_nome
+    const rc = await pool.query(`SELECT r.id, r.candidato_id, r.texto, r.status, r.resposta, r.criado_em, r.anexo_nome, (r.anexo_dados IS NOT NULL) AS tem_anexo,
+      r.resp_anexo_nome, (r.resp_anexo_dados IS NOT NULL) AS tem_resp_anexo, f.nome AS fase_nome
       FROM recursos r LEFT JOIN recurso_fases f ON f.id=r.fase_id WHERE r.candidato_id = ANY($1::int[]) ORDER BY r.id DESC`, [ids]);
     rc.rows.forEach((x) => { (recursosPorCand[x.candidato_id] = recursosPorCand[x.candidato_id] || []).push(x); });
   }
@@ -1401,6 +1406,16 @@ app.get('/api/candidato/recurso/:id/anexo', async (req, res) => {
   res.setHeader('Content-Disposition', 'inline; filename="' + (rows[0].anexo_nome || 'anexo') + '"');
   res.send(rows[0].anexo_dados);
 });
+app.get('/api/candidato/recurso/:id/resposta-anexo', async (req, res) => {
+  if (!pool) return res.status(503).send('Indisponível.');
+  const cpf = await autenticaCandidato({ cpf: req.query.cpf, senha: req.query.senha });
+  if (!cpf) return res.status(401).send('Sessão inválida.');
+  const { rows } = await pool.query('SELECT r.resp_anexo_mime, r.resp_anexo_dados, r.resp_anexo_nome FROM recursos r JOIN candidatos k ON k.id=r.candidato_id WHERE r.id=$1 AND k.cpf=$2', [parseInt(req.params.id), cpf]);
+  if (!rows.length || !rows[0].resp_anexo_dados) return res.status(404).send('Sem anexo.');
+  res.setHeader('Content-Type', rows[0].resp_anexo_mime || 'application/octet-stream');
+  res.setHeader('Content-Disposition', 'inline; filename="' + (rows[0].resp_anexo_nome || 'anexo') + '"');
+  res.send(rows[0].resp_anexo_dados);
+});
 
 // ---- Recursos: admin (banca) -------------------------------
 app.get('/admin/recurso-fases.json', exigirSenha, async (req, res) => {
@@ -1436,6 +1451,8 @@ app.get('/admin/recursos.json', exigirSenha, async (req, res) => {
   if (req.query.fase) { params.push(parseInt(req.query.fase)); filtro += ' AND r.fase_id=$' + params.length; }
   if (req.query.status) { params.push(req.query.status); filtro += ' AND r.status=$' + params.length; }
   const { rows } = await pool.query(`SELECT r.id, r.texto, r.status, r.resposta, r.criado_em, r.respondido_em, r.anexo_nome, (r.anexo_dados IS NOT NULL) AS tem_anexo,
+      r.resp_anexo_nome, (r.resp_anexo_dados IS NOT NULL) AS tem_resp_anexo,
+      r.candidato_id, (k.cartao_dados IS NOT NULL) AS tem_cartao,
       k.nome AS candidato, k.cpf, k.protocolo, f.nome AS fase_nome
     FROM recursos r JOIN candidatos k ON k.id=r.candidato_id LEFT JOIN recurso_fases f ON f.id=r.fase_id
     WHERE r.concurso_id=$1${filtro} ORDER BY r.id DESC`, params);
@@ -1446,8 +1463,35 @@ app.post('/admin/recurso/:id/responder', exigirSenha, async (req, res) => {
   const b = req.body || {};
   const status = ['deferido', 'indeferido', 'pendente'].includes(b.status) ? b.status : 'pendente';
   const resposta = String(b.resposta || '').trim().slice(0, 5000);
-  await pool.query('UPDATE recursos SET status=$1, resposta=$2, respondido_em=now() WHERE id=$3', [status, resposta, req.params.id]);
+  const id = parseInt(req.params.id);
+  await pool.query('UPDATE recursos SET status=$1, resposta=$2, respondido_em=now() WHERE id=$3', [status, resposta, id]);
+
+  // Anexo da banca (opcional). Três caminhos: remover, puxar o cartão do candidato, ou arquivo enviado.
+  if (b.remover_anexo) {
+    await pool.query('UPDATE recursos SET resp_anexo_mime=NULL, resp_anexo_dados=NULL, resp_anexo_nome=NULL WHERE id=$1', [id]);
+  } else if (b.usar_cartao) {
+    const c = await pool.query(`SELECT k.cartao_mime, k.cartao_dados, k.cpf FROM recursos r JOIN candidatos k ON k.id=r.candidato_id WHERE r.id=$1`, [id]);
+    if (!c.rows.length || !c.rows[0].cartao_dados) return res.status(404).json({ erro: 'Este candidato ainda não tem cartão-resposta no sistema.' });
+    await pool.query('UPDATE recursos SET resp_anexo_mime=$1, resp_anexo_dados=$2, resp_anexo_nome=$3 WHERE id=$4',
+      [c.rows[0].cartao_mime || 'application/pdf', c.rows[0].cartao_dados, 'cartao-resposta-' + (c.rows[0].cpf || '') + '.pdf', id]);
+  } else if (b.dataBase64) {
+    const buf = decodeB64(b.dataBase64);
+    if (!buf) return res.status(400).json({ erro: 'Anexo inválido.' });
+    const mime = mimeDe(buf);
+    if (!mime) return res.status(400).json({ erro: 'Anexo deve ser PDF, JPG ou PNG.' });
+    if (buf.length > 10 * 1024 * 1024) return res.status(400).json({ erro: 'Anexo muito grande (máx. 10 MB).' });
+    await pool.query('UPDATE recursos SET resp_anexo_mime=$1, resp_anexo_dados=$2, resp_anexo_nome=$3 WHERE id=$4',
+      [mime, buf, String(b.filename || 'resposta').slice(0, 200), id]);
+  }
   res.json({ ok: true });
+});
+app.get('/admin/recurso/:id/resposta-anexo', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Indisponível.');
+  const { rows } = await pool.query('SELECT resp_anexo_mime, resp_anexo_dados, resp_anexo_nome FROM recursos WHERE id=$1', [parseInt(req.params.id)]);
+  if (!rows.length || !rows[0].resp_anexo_dados) return res.status(404).send('Sem anexo.');
+  res.setHeader('Content-Type', rows[0].resp_anexo_mime || 'application/octet-stream');
+  res.setHeader('Content-Disposition', 'inline; filename="' + (rows[0].resp_anexo_nome || 'anexo') + '"');
+  res.send(rows[0].resp_anexo_dados);
 });
 app.get('/admin/recurso/:id/anexo', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).send('Indisponível.');

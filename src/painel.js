@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v22-reltitulos -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v23-recurso-anexo -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -1798,9 +1798,43 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
         +'<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><div><b>'+esc(r.candidato)+'</b> <span class="hint">('+esc(r.protocolo||'')+')</span><div class="hint">'+esc(r.fase_nome||'—')+anexo+'</div></div><span class="tag on">'+rot[r.status]+'</span></div>'
         +'<div style="margin:8px 0;white-space:pre-wrap;background:var(--papel,#f4f7f9);padding:10px;border-radius:8px">'+esc(r.texto)+'</div>'
         +'<div class="grid2"><div><label>Resposta da banca</label><textarea id="resp_'+r.id+'" rows="2">'+esc(r.resposta||'')+'</textarea></div></div>'
+        + recAnexoBloco(r)
         +'<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap"><button class="mini" onclick="recDeferir('+r.id+')">Deferir</button><button class="mini" onclick="recIndeferir('+r.id+')">Indeferir</button><button class="sec" onclick="recPendente('+r.id+')">Salvar como pendente</button></div>'
         +'</div>';
     }).join('') : '<p class="hint">Nenhum recurso interposto (com os filtros atuais).</p>';
+  }
+  var REC_STATUS={};
+  function recAnexoBloco(r){
+    REC_STATUS[r.id]=r.status;
+    var atual = r.tem_resp_anexo
+      ? '<span class="tag on">📎 '+esc(r.resp_anexo_nome||'anexo')+'</span> <a href="/admin/recurso/'+r.id+'/resposta-anexo" target="_blank" style="color:var(--azul)">abrir</a> · <a href="#" onclick="recRemoverAnexo('+r.id+');return false" style="color:#b00">remover</a>'
+      : '<span class="hint">Nenhum documento anexado à resposta.</span>';
+    var btnCartao = r.tem_cartao
+      ? '<button class="sec mini" onclick="recAnexarCartao('+r.id+')">Anexar cartão-resposta deste candidato</button>'
+      : '<span class="hint">Este candidato não tem cartão-resposta no sistema.</span>';
+    return '<div style="margin-top:10px;padding:10px;border:1px dashed var(--borda,#cfd8e3);border-radius:8px">'
+      +'<label style="display:block;margin-bottom:6px">Documento anexado à resposta (o candidato vê)</label>'
+      +'<div style="margin-bottom:8px">'+atual+'</div>'
+      +'<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">'
+      + btnCartao
+      +'<input type="file" id="recfile_'+r.id+'" accept=".pdf,.jpg,.jpeg,.png">'
+      +'</div>'
+      +'<p class="hint" style="margin-top:6px">Escolher arquivo é opcional — ele só é enviado quando você clicar em Deferir, Indeferir ou Salvar. PDF, JPG ou PNG, até 10 MB.</p>'
+      +'</div>';
+  }
+  async function recAnexarCartao(id){
+    if(!confirm('Anexar o cartão-resposta deste candidato à resposta da banca?')) return;
+    var resposta=$('resp_'+id)?$('resp_'+id).value:'';
+    var r=await fetch('/admin/recurso/'+id+'/responder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:REC_STATUS[id]||'pendente',resposta:resposta,usar_cartao:true})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    carregarRecursos();
+  }
+  async function recRemoverAnexo(id){
+    if(!confirm('Remover o documento anexado a esta resposta?')) return;
+    var resposta=$('resp_'+id)?$('resp_'+id).value:'';
+    var r=await fetch('/admin/recurso/'+id+'/responder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:REC_STATUS[id]||'pendente',resposta:resposta,remover_anexo:true})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
+    carregarRecursos();
   }
   function recDeferir(id){ responderRec(id,'deferido'); }
   function recIndeferir(id){ responderRec(id,'indeferido'); }
@@ -1808,7 +1842,14 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   async function responderRec(id,status){
     var resposta=$('resp_'+id)?$('resp_'+id).value:'';
     if((status==='deferido'||status==='indeferido') && !resposta.trim()){ if(!confirm('Responder sem justificativa? Recomendo escrever a resposta ao candidato.')) return; }
-    var r=await fetch('/admin/recurso/'+id+'/responder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:status,resposta:resposta})});
+    var corpo={status:status,resposta:resposta};
+    var inp=$('recfile_'+id);
+    if(inp && inp.files && inp.files[0]){
+      var f=inp.files[0];
+      if(f.size>10*1024*1024){ alert('Anexo muito grande (máx. 10 MB).'); return; }
+      corpo.dataBase64=await toB64(f); corpo.filename=f.name;
+    }
+    var r=await fetch('/admin/recurso/'+id+'/responder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(corpo)});
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
     carregarRecursos();
   }
