@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v26-formulario -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v27-opcoes-fix -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -1823,31 +1823,31 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   function editarPergunta(pid){
     var p=MF_PERGS.find(function(x){return x.id===pid;}); if(!p) return;
     $('mf_pid').value=p.id; $('mf_texto').value=p.texto; $('mf_tipo').value=p.tipo;
-    $('mf_opcoes').value=(p.opcoes||[]).join('\\\\n'); $('mf_obrig').checked=!!p.obrigatoria;
+    $('mf_opcoes').value=(p.opcoes||[]).join(String.fromCharCode(10)); $('mf_obrig').checked=!!p.obrigatoria;
     $('mf_form_titulo').textContent='Editando pergunta'; mfToggleTipo(); $('mf_texto').focus();
   }
   async function salvarPergunta(){
     var id=$('mf_cid').value;
     var corpo={ id:$('mf_pid').value||undefined, texto:$('mf_texto').value, tipo:$('mf_tipo').value,
       obrigatoria:$('mf_obrig').checked,
-      opcoes:$('mf_opcoes').value.split('\\\\n').map(function(s){return s.trim();}).filter(Boolean) };
+      opcoes:$('mf_opcoes').value.split(String.fromCharCode(10)).map(function(s){return s.trim();}).filter(Boolean) };
     var r=await fetch('/admin/concurso/'+id+'/form-pergunta',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(corpo)});
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao salvar.');return;}
     limparPergunta(); carregarPerguntas();
   }
   async function excluirPergunta(pid){
-    if(!confirm('Remover esta pergunta?\\\\n\\\\nAs respostas já dadas pelos candidatos a ela também são apagadas.'))return;
+    if(!confirm('Remover esta pergunta?\\n\\nAs respostas já dadas pelos candidatos a ela também são apagadas.'))return;
     var r=await fetch('/admin/form-pergunta/'+pid,{method:'DELETE'}); var j=await r.json();
     if(!r.ok){alert(j.erro||'Erro ao remover.');return;}
     carregarPerguntas();
   }
   async function duplicarConcurso(id){
     var c=CONCURSOS.find(function(x){return x.id===id;}); var nome=c?c.titulo:'';
-    if(!confirm('Duplicar o concurso "'+nome+'"?\\\\n\\\\nA cópia leva toda a configuração (cargos, títulos, taxa, dados de pagamento, etapas, brasão).\\\\nNÃO leva: inscritos, edital, documentos, provas online, locais de prova.\\\\n\\\\nEla nasce FECHADA, OCULTA e SEM DATAS — ninguém vê até você liberar.'))return;
+    if(!confirm('Duplicar o concurso "'+nome+'"?\\n\\nA cópia leva toda a configuração (cargos, títulos, taxa, dados de pagamento, etapas, brasão).\\nNÃO leva: inscritos, edital, documentos, provas online, locais de prova.\\n\\nEla nasce FECHADA, OCULTA e SEM DATAS — ninguém vê até você liberar.'))return;
     var r=await fetch('/admin/concurso/'+id+'/duplicar',{method:'POST'});
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao duplicar.');return;}
     await carregarConcursos();
-    alert('Cópia criada: "'+j.titulo+'".\\\\n\\\\nAgora ajuste o título, o endereço (slug) e as datas. Enquanto estiver oculta e fechada, ela não aparece no site.');
+    alert('Cópia criada: "'+j.titulo+'".\\n\\nAgora ajuste o título, o endereço (slug) e as datas. Enquanto estiver oculta e fechada, ela não aparece no site.');
     editarConcurso(j.id);
   }
   async function excluirConcurso(id){
