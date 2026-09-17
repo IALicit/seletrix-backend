@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v25-duplicar -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v26-formulario -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -660,6 +660,41 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     <div id="imp_result" style="display:none;margin-top:14px;padding:12px;border-radius:8px;background:var(--verde-bg);color:#0f6b41;font-weight:600"></div>
   </div>
 </div>
+<div id="modal_form" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:12px;max-width:700px;width:94%;padding:22px;max-height:88vh;overflow:auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <h3>Formulário de inscrição — <span id="mf_titulo"></span></h3><button class="sec" onclick="fecharForm()">Fechar</button>
+    </div>
+    <input type="hidden" id="mf_cid">
+    <p class="hint">Perguntas que o candidato responde na hora da inscrição. As marcadas como obrigatórias impedem a conclusão da inscrição se ficarem em branco.</p>
+    <div id="mf_lista" style="margin-top:12px"></div>
+    <hr style="margin:18px 0;border:none;border-top:1px solid var(--linha)">
+    <h3 style="font-size:1.05rem" id="mf_form_titulo">Nova pergunta</h3>
+    <input type="hidden" id="mf_pid">
+    <div class="campo"><label>Pergunta</label><input id="mf_texto" placeholder="Ex.: Possui experiência na função?"></div>
+    <div class="grid2">
+      <div><label>Tipo de resposta</label>
+        <select id="mf_tipo" onchange="mfToggleTipo()">
+          <option value="texto">Texto livre — o candidato escreve</option>
+          <option value="escolha">Escolha — o candidato seleciona uma opção</option>
+        </select>
+      </div>
+      <div><label>&nbsp;</label>
+        <label class="hint" style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="mf_obrig" checked> Resposta obrigatória</label>
+      </div>
+    </div>
+    <div id="mf_opcoes_wrap" style="display:none">
+      <label>Opções de resposta (uma por linha)</label>
+      <textarea id="mf_opcoes" rows="4" placeholder="Sim&#10;Não&#10;Não sei informar"></textarea>
+      <p class="hint">Mínimo de 2 opções.</p>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+      <button onclick="salvarPergunta()">Salvar pergunta</button>
+      <button class="sec" onclick="limparPergunta()">Limpar</button>
+      <a id="mf_csv" class="sec" style="padding:10px 16px;border-radius:9px;text-decoration:none;display:inline-block" href="#" target="_blank">Baixar respostas (CSV)</a>
+    </div>
+  </div>
+</div>
 <div id="modal_etapas" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
   <div style="background:#fff;border-radius:12px;max-width:660px;width:94%;padding:22px;max-height:88vh;overflow:auto">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -717,7 +752,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
           <div class="meta">\${esc(c.orgao||'')} &middot; \${c.inscritos} inscritos (\${c.pagos} pagos) &middot; taxa \${esc(c.taxa||'-')}</div>
           <div class="meta">Link: <a href="/concurso.html?c=\${esc(c.slug)}" target="_blank">/concurso.html?c=\${esc(c.slug)}</a> <button class="mini" onclick='copiarLink(\${JSON.stringify(c.slug)})'>Copiar link</button></div>
         </div>
-        <div class="row-actions"><button class="mini" onclick='abrirPagamento(\${JSON.stringify(c.id)})'>Pagamento</button><button class="mini" onclick='abrirImport(\${JSON.stringify(c.id)})'>Importar Excel</button><button class="mini" onclick='gerarLogins(\${JSON.stringify(c.id)})'>Gerar acessos</button><button class="mini" onclick='abrirEtapas(\${JSON.stringify(c.id)})'>Etapas / Docs</button><button class="mini" onclick='abrirIsencoes(\${JSON.stringify(c.id)})'>Isenções</button><button class="mini" onclick='abrirPcd(\${JSON.stringify(c.id)})'>PcD / Laudos</button><button class="mini" onclick='abrirCartoes(\${JSON.stringify(c.id)})'>Cartões-resposta</button><button class="mini" onclick='abrirEmailMassa(\${JSON.stringify(c.id)})'>Avisar por e-mail</button><button class="mini" onclick='editarConcurso(\${JSON.stringify(c.id)})'>Editar</button><button class="mini" onclick='duplicarConcurso(\${JSON.stringify(c.id)})'>Duplicar</button><button class="del" onclick='limparCandidatos(\${JSON.stringify(c.id)})'>Excluir candidatos</button><button class="del" onclick='excluirConcurso(\${JSON.stringify(c.id)})'>Excluir</button></div>
+        <div class="row-actions"><button class="mini" onclick='abrirPagamento(\${JSON.stringify(c.id)})'>Pagamento</button><button class="mini" onclick='abrirImport(\${JSON.stringify(c.id)})'>Importar Excel</button><button class="mini" onclick='gerarLogins(\${JSON.stringify(c.id)})'>Gerar acessos</button><button class="mini" onclick='abrirEtapas(\${JSON.stringify(c.id)})'>Etapas / Docs</button><button class="mini" onclick='abrirFormulario(\${JSON.stringify(c.id)})'>Formulário</button><button class="mini" onclick='abrirIsencoes(\${JSON.stringify(c.id)})'>Isenções</button><button class="mini" onclick='abrirPcd(\${JSON.stringify(c.id)})'>PcD / Laudos</button><button class="mini" onclick='abrirCartoes(\${JSON.stringify(c.id)})'>Cartões-resposta</button><button class="mini" onclick='abrirEmailMassa(\${JSON.stringify(c.id)})'>Avisar por e-mail</button><button class="mini" onclick='editarConcurso(\${JSON.stringify(c.id)})'>Editar</button><button class="mini" onclick='duplicarConcurso(\${JSON.stringify(c.id)})'>Duplicar</button><button class="del" onclick='limparCandidatos(\${JSON.stringify(c.id)})'>Excluir candidatos</button><button class="del" onclick='excluirConcurso(\${JSON.stringify(c.id)})'>Excluir</button></div>
       </div>\`).join('') || '<p class="hint">Nenhum concurso ainda. Clique em "Novo concurso".</p>';
     // popular filtro de inscritos
     $('filtro_concurso').innerHTML = '<option value="">Todos os concursos</option>' + concursos.map(c=>'<option value="'+c.id+'">'+esc(c.titulo)+'</option>').join('');
@@ -1759,6 +1794,52 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var url=location.origin+'/concurso.html?c='+slug;
     if(navigator.clipboard){ navigator.clipboard.writeText(url).then(function(){alert('Link copiado:\\n'+url);},function(){prompt('Copie o link:',url);}); }
     else { prompt('Copie o link:',url); }
+  }
+  function abrirFormulario(id){
+    var c=CONCURSOS.find(function(x){return x.id===id;});
+    $('mf_cid').value=id; $('mf_titulo').textContent=c?c.titulo:'';
+    $('mf_csv').href='/admin/concurso/'+id+'/formulario.csv';
+    $('modal_form').style.display='flex'; limparPergunta(); carregarPerguntas();
+  }
+  function fecharForm(){ $('modal_form').style.display='none'; }
+  function mfToggleTipo(){ $('mf_opcoes_wrap').style.display = ($('mf_tipo').value==='escolha') ? 'block' : 'none'; }
+  function limparPergunta(){
+    $('mf_pid').value=''; $('mf_texto').value=''; $('mf_tipo').value='texto'; $('mf_opcoes').value='';
+    $('mf_obrig').checked=true; $('mf_form_titulo').textContent='Nova pergunta'; mfToggleTipo();
+  }
+  var MF_PERGS=[];
+  async function carregarPerguntas(){
+    var id=$('mf_cid').value;
+    var r=await fetch('/admin/concurso/'+id+'/form.json'); var j=await r.json();
+    MF_PERGS=j.perguntas||[];
+    $('mf_lista').innerHTML = MF_PERGS.length ? MF_PERGS.map(function(p,i){
+      var det = p.tipo==='escolha' ? ('Escolha: '+p.opcoes.map(esc).join(' · ')) : 'Texto livre';
+      return '<div class="cargo-item"><span><b>'+(i+1)+'. '+esc(p.texto)+'</b>'+(p.obrigatoria?' <span class="tag on">obrigatória</span>':'')
+        +'<div class="hint">'+det+'</div></span>'
+        +'<button class="mini" onclick="editarPergunta('+p.id+')">Editar</button>'
+        +'<button class="del" onclick="excluirPergunta('+p.id+')">Remover</button></div>';
+    }).join('') : '<p class="hint">Nenhuma pergunta. O candidato não verá formulário na inscrição.</p>';
+  }
+  function editarPergunta(pid){
+    var p=MF_PERGS.find(function(x){return x.id===pid;}); if(!p) return;
+    $('mf_pid').value=p.id; $('mf_texto').value=p.texto; $('mf_tipo').value=p.tipo;
+    $('mf_opcoes').value=(p.opcoes||[]).join('\\\\n'); $('mf_obrig').checked=!!p.obrigatoria;
+    $('mf_form_titulo').textContent='Editando pergunta'; mfToggleTipo(); $('mf_texto').focus();
+  }
+  async function salvarPergunta(){
+    var id=$('mf_cid').value;
+    var corpo={ id:$('mf_pid').value||undefined, texto:$('mf_texto').value, tipo:$('mf_tipo').value,
+      obrigatoria:$('mf_obrig').checked,
+      opcoes:$('mf_opcoes').value.split('\\\\n').map(function(s){return s.trim();}).filter(Boolean) };
+    var r=await fetch('/admin/concurso/'+id+'/form-pergunta',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(corpo)});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao salvar.');return;}
+    limparPergunta(); carregarPerguntas();
+  }
+  async function excluirPergunta(pid){
+    if(!confirm('Remover esta pergunta?\\\\n\\\\nAs respostas já dadas pelos candidatos a ela também são apagadas.'))return;
+    var r=await fetch('/admin/form-pergunta/'+pid,{method:'DELETE'}); var j=await r.json();
+    if(!r.ok){alert(j.erro||'Erro ao remover.');return;}
+    carregarPerguntas();
   }
   async function duplicarConcurso(id){
     var c=CONCURSOS.find(function(x){return x.id===id;}); var nome=c?c.titulo:'';

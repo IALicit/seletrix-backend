@@ -194,6 +194,13 @@ async function inicializarBanco() {
   await pool.query(`CREATE TABLE IF NOT EXISTS candidato_login (cpf TEXT PRIMARY KEY, senha_hash TEXT, nome TEXT, criado_em TIMESTAMPTZ DEFAULT now());`);
   // Etapas do concurso + arquivos de cada etapa + documentos avulsos (retificações)
   await pool.query(`CREATE TABLE IF NOT EXISTS etapas (id SERIAL PRIMARY KEY, concurso_id INT, nome TEXT, ordem INT DEFAULT 0, criado_em TIMESTAMPTZ DEFAULT now());`);
+  // Formulário de inscrição: perguntas por concurso + respostas por candidato.
+  // tipo: 'texto' (resposta livre) ou 'escolha' (o candidato escolhe uma das opcoes).
+  await pool.query(`CREATE TABLE IF NOT EXISTS form_perguntas (id SERIAL PRIMARY KEY, concurso_id INT, texto TEXT,
+    tipo TEXT DEFAULT 'texto', opcoes TEXT DEFAULT '[]', obrigatoria BOOLEAN DEFAULT TRUE, ordem INT DEFAULT 0,
+    criado_em TIMESTAMPTZ DEFAULT now());`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS form_respostas (id SERIAL PRIMARY KEY, candidato_id INT, pergunta_id INT,
+    resposta TEXT, criado_em TIMESTAMPTZ DEFAULT now(), UNIQUE(candidato_id, pergunta_id));`);
   await pool.query(`CREATE TABLE IF NOT EXISTS etapa_arquivos (id SERIAL PRIMARY KEY, etapa_id INT, filename TEXT, mime TEXT, dados BYTEA, tamanho INT, criado_em TIMESTAMPTZ DEFAULT now());`);
   await pool.query(`CREATE TABLE IF NOT EXISTS documentos (id SERIAL PRIMARY KEY, concurso_id INT, titulo TEXT, filename TEXT, mime TEXT, dados BYTEA, tamanho INT, criado_em TIMESTAMPTZ DEFAULT now());`);
   // Locação: escolas e salas por concurso
@@ -585,7 +592,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'duplicar-concurso-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'formulario-inscricao-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -627,7 +634,15 @@ app.get('/api/concurso/:chave', async (req, res) => {
     const e = await pool.query('SELECT id, slug, nome, subtitulo, (logo_dados IS NOT NULL) AS tem_logo FROM empresas WHERE id=$1', [c.empresa_id]);
     empresa = e.rows[0] || null;
   }
-  res.json({ ...c, empresa });
+  let formulario = [];
+  if (pool) {
+    const f = await pool.query('SELECT id, texto, tipo, opcoes, obrigatoria FROM form_perguntas WHERE concurso_id=$1 ORDER BY ordem, id', [c.id]);
+    formulario = f.rows.map((p) => {
+      let ops = []; try { ops = JSON.parse(p.opcoes || '[]'); } catch {}
+      return { id: p.id, texto: p.texto, tipo: p.tipo, opcoes: Array.isArray(ops) ? ops : [], obrigatoria: !!p.obrigatoria };
+    });
+  }
+  res.json({ ...c, empresa, formulario });
 });
 
 // Serve o PDF do edital (guardado no banco)
@@ -726,6 +741,26 @@ app.post('/api/inscricao', async (req, res) => {
       }
     }
 
+    // Formulário de inscrição: confere as respostas antes de gravar o candidato.
+    const perguntas = (await pool.query('SELECT id, texto, tipo, opcoes, obrigatoria FROM form_perguntas WHERE concurso_id=$1 ORDER BY ordem, id', [concurso.id])).rows;
+    const respEnviadas = (b.formulario && typeof b.formulario === 'object') ? b.formulario : {};
+    const respValidas = [];
+    if (perguntas.length) {
+      const semResposta = [];
+      for (const p of perguntas) {
+        let v = String(respEnviadas[p.id] == null ? '' : respEnviadas[p.id]).trim().slice(0, 2000);
+        if (p.tipo === 'escolha' && v) {
+          let ops = []; try { ops = JSON.parse(p.opcoes || '[]'); } catch {}
+          if (!ops.includes(v)) v = ''; // resposta fora das opções oferecidas
+        }
+        if (!v) { if (p.obrigatoria) semResposta.push(p.texto); continue; }
+        respValidas.push([p.id, v]);
+      }
+      if (semResposta.length) {
+        return res.status(400).json({ erro: 'Responda as perguntas obrigatórias do formulário: ' + semResposta.join(' | ') });
+      }
+    }
+
     const dup = await pool.query('SELECT protocolo FROM candidatos WHERE cpf=$1 AND concurso_id=$2 LIMIT 1', [cpf, concurso.id]);
     if (dup.rows.length) return res.status(409).json({ erro: 'Este CPF já possui inscrição neste concurso. Protocolo: ' + dup.rows[0].protocolo });
 
@@ -770,6 +805,11 @@ app.post('/api/inscricao', async (req, res) => {
     if (querIsencao) {
       await pool.query("UPDATE candidatos SET quer_isencao=TRUE, isencao_status='pendente', isencao_motivo=$1, status='isencao_pendente' WHERE id=$2",
         [String(b.isencao_motivo || '').trim().slice(0, 300) || null, id]);
+    }
+
+    // Respostas do formulário (já conferidas acima).
+    for (const [pid, valor] of respValidas) {
+      await pool.query('INSERT INTO form_respostas (candidato_id,pergunta_id,resposta) VALUES ($1,$2,$3) ON CONFLICT (candidato_id,pergunta_id) DO UPDATE SET resposta=EXCLUDED.resposta', [id, pid, valor]);
     }
 
     // Anexos de títulos (se o concurso pedir)
@@ -1736,6 +1776,9 @@ app.post('/admin/concurso/:id/duplicar', exigirSenha, async (req, res) => {
     // Etapas do concurso e fases de recurso: vem a estrutura, sem os prazos.
     await pool.query('INSERT INTO etapas (concurso_id,nome,ordem) SELECT $1,nome,ordem FROM etapas WHERE concurso_id=$2', [novoId, origem]);
     await pool.query('INSERT INTO recurso_fases (concurso_id,nome,abertura,fechamento) SELECT $1,nome,NULL,NULL FROM recurso_fases WHERE concurso_id=$2', [novoId, origem]);
+    // Formulário de inscrição: as perguntas vêm junto (é configuração), sem as respostas.
+    await pool.query(`INSERT INTO form_perguntas (concurso_id,texto,tipo,opcoes,obrigatoria,ordem)
+      SELECT $1,texto,tipo,opcoes,obrigatoria,ordem FROM form_perguntas WHERE concurso_id=$2`, [novoId, origem]);
 
     res.json({ ok: true, id: novoId, slug, titulo });
   } catch (e) {
@@ -2070,6 +2113,63 @@ app.post('/admin/cobranca/:id', exigirSenha, async (req, res) => {
     await persistirPagamento(c.id, pay);
     res.json({ ok: true, invoiceUrl: pay.invoiceUrl });
   } catch (e) { console.error('cobranca:', e.message); res.status(500).json({ erro: e.message }); }
+});
+
+// ---- Formulário de inscrição (admin) -----------------------
+app.get('/admin/concurso/:id/form.json', exigirSenha, async (req, res) => {
+  if (!pool) return res.json({ perguntas: [] });
+  const { rows } = await pool.query('SELECT id, texto, tipo, opcoes, obrigatoria, ordem FROM form_perguntas WHERE concurso_id=$1 ORDER BY ordem, id', [parseInt(req.params.id)]);
+  res.json({ perguntas: rows.map((p) => { let o = []; try { o = JSON.parse(p.opcoes || '[]'); } catch {} return { ...p, opcoes: Array.isArray(o) ? o : [] }; }) });
+});
+app.post('/admin/concurso/:id/form-pergunta', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Sem banco.' });
+  const b = req.body || {};
+  const cid = parseInt(req.params.id);
+  const texto = String(b.texto || '').trim().slice(0, 500);
+  if (!texto) return res.status(400).json({ erro: 'Escreva a pergunta.' });
+  const tipo = b.tipo === 'escolha' ? 'escolha' : 'texto';
+  const opcoes = (Array.isArray(b.opcoes) ? b.opcoes : []).map((o) => String(o).trim().slice(0, 200)).filter(Boolean).slice(0, 30);
+  if (tipo === 'escolha' && opcoes.length < 2) return res.status(400).json({ erro: 'Uma pergunta de escolha precisa de pelo menos 2 opções.' });
+  const obrig = !(b.obrigatoria === false || b.obrigatoria === 'false');
+  const ordem = parseInt(b.ordem) || 0;
+  if (b.id) {
+    await pool.query('UPDATE form_perguntas SET texto=$1,tipo=$2,opcoes=$3,obrigatoria=$4,ordem=$5 WHERE id=$6 AND concurso_id=$7',
+      [texto, tipo, JSON.stringify(opcoes), obrig, ordem, parseInt(b.id), cid]);
+    return res.json({ ok: true, id: parseInt(b.id) });
+  }
+  const prox = await pool.query('SELECT COALESCE(MAX(ordem),0)+1 AS n FROM form_perguntas WHERE concurso_id=$1', [cid]);
+  const r = await pool.query('INSERT INTO form_perguntas (concurso_id,texto,tipo,opcoes,obrigatoria,ordem) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id',
+    [cid, texto, tipo, JSON.stringify(opcoes), obrig, ordem || prox.rows[0].n]);
+  res.json({ ok: true, id: r.rows[0].id });
+});
+app.delete('/admin/form-pergunta/:id', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Sem banco.' });
+  const id = parseInt(req.params.id);
+  await pool.query('DELETE FROM form_respostas WHERE pergunta_id=$1', [id]);
+  await pool.query('DELETE FROM form_perguntas WHERE id=$1', [id]);
+  res.json({ ok: true });
+});
+// Relatório: uma linha por candidato, uma coluna por pergunta.
+app.get('/admin/concurso/:id/formulario.csv', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  const cid = parseInt(req.params.id);
+  const ct = await pool.query('SELECT titulo FROM concursos WHERE id=$1', [cid]);
+  const titulo = (ct.rows[0] && ct.rows[0].titulo) || 'concurso';
+  const perg = (await pool.query('SELECT id, texto FROM form_perguntas WHERE concurso_id=$1 ORDER BY ordem, id', [cid])).rows;
+  if (!perg.length) return res.status(400).send('Este concurso não tem formulário cadastrado.');
+  const cands = (await pool.query('SELECT id, nome, cpf, cargo, protocolo FROM candidatos WHERE concurso_id=$1 ORDER BY nome', [cid])).rows;
+  const resp = (await pool.query(`SELECT r.candidato_id, r.pergunta_id, r.resposta FROM form_respostas r
+    JOIN candidatos k ON k.id=r.candidato_id WHERE k.concurso_id=$1`, [cid])).rows;
+  const mapa = {};
+  resp.forEach((r) => { (mapa[r.candidato_id] = mapa[r.candidato_id] || {})[r.pergunta_id] = r.resposta; });
+  const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+  const cab = ['Nome', 'CPF', 'Cargo', 'Protocolo', ...perg.map((p) => p.texto)];
+  const linhas = cands.map((k) => [k.nome, k.cpf, k.cargo, k.protocolo,
+    ...perg.map((p) => (mapa[k.id] || {})[p.id] || '')].map(esc).join(';'));
+  const csv = '\uFEFF' + [cab.map(esc).join(';'), ...linhas].join('\r\n');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="formulario_' + slugify(titulo) + '.csv"');
+  res.send(csv);
 });
 
 // ---- Etapas / Documentos (admin) ---------------------------
