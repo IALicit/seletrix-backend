@@ -130,6 +130,7 @@
           <p class="aviso" style="margin-top:6px">Ao enviar, sua inscrição fica <b>sem boleto</b> e aguardando análise. Você deverá enviar a comprovação na <b>Área do Candidato</b> dentro do prazo. Se a isenção for negada, o boleto será liberado para pagamento.</p>
         </div>
       </div>
+      <div id="form_wrap" style="display:none;margin-top:12px"></div>
       <div id="titulos_wrap" style="display:none;flex-direction:column;gap:6px;margin-top:12px"></div>
       <button type="submit" id="enviar">Enviar inscrição</button>
       <p class="aviso">Ao enviar, você concorda com os termos do edital. Seus dados são usados apenas para fins deste processo seletivo.</p>
@@ -204,6 +205,7 @@
       const sel=document.getElementById('cargo');
       (c.cargos||[]).forEach(function(cg){ const o=document.createElement('option'); o.value=cg; o.textContent=cg; sel.appendChild(o); });
       PEDE = !!c.pede_titulos; TIPOS = c.tipos_titulos || []; montarTitulos();
+      FORM = c.formulario || []; montarFormulario();
       if(!c.pode_inscrever){
         btn.disabled=true;
         function fdt(iso){ if(!iso) return ''; var p=String(iso).slice(0,10).split('-'); return p.length===3?(p[2]+'/'+p[1]+'/'+p[0]):iso; }
@@ -268,6 +270,38 @@
       : 'Anexe o laudo médico que comprova a condição.';
   }
   function toB64file(file){ return new Promise(function(res,rej){var rd=new FileReader();rd.onload=function(){res(rd.result);};rd.onerror=rej;rd.readAsDataURL(file);}); }
+  let FORM=[];
+  function montarFormulario(){
+    const wrap=document.getElementById('form_wrap');
+    if(!wrap) return;
+    if(!FORM.length){ wrap.style.display='none'; wrap.innerHTML=''; return; }
+    let html='<h3 style="font-size:1rem;margin:6px 0 2px">Questionário</h3>'
+      +'<p class="aviso" style="margin-bottom:8px">Responda as perguntas abaixo. As marcadas com <b>*</b> são obrigatórias.</p>';
+    FORM.forEach(function(p){
+      const req=p.obrigatoria?' <span style="color:#a12626">*</span>':'';
+      html+='<div class="campo" data-pid="'+p.id+'" style="margin-bottom:10px"><label>'+escp2(p.texto)+req+'</label>';
+      if(p.tipo==='escolha'){
+        html+='<select class="fp"><option value="">Selecione...</option>'
+          +(p.opcoes||[]).map(function(o){return '<option>'+escp2(o)+'</option>';}).join('')+'</select>';
+      } else {
+        html+='<textarea class="fp" rows="2" maxlength="2000"></textarea>';
+      }
+      html+='</div>';
+    });
+    wrap.innerHTML=html; wrap.style.display='block';
+  }
+  function coletarFormulario(){
+    const out={}; const faltando=[];
+    document.querySelectorAll('#form_wrap [data-pid]').forEach(function(div){
+      const pid=div.getAttribute('data-pid');
+      const p=FORM.find(function(x){return String(x.id)===String(pid);});
+      const v=(div.querySelector('.fp').value||'').trim();
+      if(!v){ if(p&&p.obrigatoria) faltando.push(p.texto); return; }
+      out[pid]=v;
+    });
+    if(faltando.length) throw new Error('Responda as perguntas obrigatórias: '+faltando.join(' | '));
+    return out;
+  }
   async function coletarTitulos(){
     const out=[];
     const faltando=[];
@@ -303,6 +337,7 @@
     }
     var qi=document.getElementById('quer_isencao');
     if(qi && qi.checked){ dados.quer_isencao = true; dados.isencao_motivo = (document.getElementById('isencao_motivo')||{}).value || ''; }
+    try{ dados.formulario = coletarFormulario(); }catch(err){ erro.textContent=err.message; erro.style.display='block'; return; }
     if(PEDE){ try{ dados.titulos = await coletarTitulos(); }catch(err){ erro.textContent=err.message; erro.style.display='block'; return; } }
     btn.disabled=true; btn.textContent='Enviando...';
     try{
