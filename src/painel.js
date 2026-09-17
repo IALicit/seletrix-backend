@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v24-titulo-obrigatorio -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v25-duplicar -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -717,7 +717,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
           <div class="meta">\${esc(c.orgao||'')} &middot; \${c.inscritos} inscritos (\${c.pagos} pagos) &middot; taxa \${esc(c.taxa||'-')}</div>
           <div class="meta">Link: <a href="/concurso.html?c=\${esc(c.slug)}" target="_blank">/concurso.html?c=\${esc(c.slug)}</a> <button class="mini" onclick='copiarLink(\${JSON.stringify(c.slug)})'>Copiar link</button></div>
         </div>
-        <div class="row-actions"><button class="mini" onclick='abrirPagamento(\${JSON.stringify(c.id)})'>Pagamento</button><button class="mini" onclick='abrirImport(\${JSON.stringify(c.id)})'>Importar Excel</button><button class="mini" onclick='gerarLogins(\${JSON.stringify(c.id)})'>Gerar acessos</button><button class="mini" onclick='abrirEtapas(\${JSON.stringify(c.id)})'>Etapas / Docs</button><button class="mini" onclick='abrirIsencoes(\${JSON.stringify(c.id)})'>Isenções</button><button class="mini" onclick='abrirPcd(\${JSON.stringify(c.id)})'>PcD / Laudos</button><button class="mini" onclick='abrirCartoes(\${JSON.stringify(c.id)})'>Cartões-resposta</button><button class="mini" onclick='abrirEmailMassa(\${JSON.stringify(c.id)})'>Avisar por e-mail</button><button class="mini" onclick='editarConcurso(\${JSON.stringify(c.id)})'>Editar</button><button class="del" onclick='limparCandidatos(\${JSON.stringify(c.id)})'>Excluir candidatos</button><button class="del" onclick='excluirConcurso(\${JSON.stringify(c.id)})'>Excluir</button></div>
+        <div class="row-actions"><button class="mini" onclick='abrirPagamento(\${JSON.stringify(c.id)})'>Pagamento</button><button class="mini" onclick='abrirImport(\${JSON.stringify(c.id)})'>Importar Excel</button><button class="mini" onclick='gerarLogins(\${JSON.stringify(c.id)})'>Gerar acessos</button><button class="mini" onclick='abrirEtapas(\${JSON.stringify(c.id)})'>Etapas / Docs</button><button class="mini" onclick='abrirIsencoes(\${JSON.stringify(c.id)})'>Isenções</button><button class="mini" onclick='abrirPcd(\${JSON.stringify(c.id)})'>PcD / Laudos</button><button class="mini" onclick='abrirCartoes(\${JSON.stringify(c.id)})'>Cartões-resposta</button><button class="mini" onclick='abrirEmailMassa(\${JSON.stringify(c.id)})'>Avisar por e-mail</button><button class="mini" onclick='editarConcurso(\${JSON.stringify(c.id)})'>Editar</button><button class="mini" onclick='duplicarConcurso(\${JSON.stringify(c.id)})'>Duplicar</button><button class="del" onclick='limparCandidatos(\${JSON.stringify(c.id)})'>Excluir candidatos</button><button class="del" onclick='excluirConcurso(\${JSON.stringify(c.id)})'>Excluir</button></div>
       </div>\`).join('') || '<p class="hint">Nenhum concurso ainda. Clique em "Novo concurso".</p>';
     // popular filtro de inscritos
     $('filtro_concurso').innerHTML = '<option value="">Todos os concursos</option>' + concursos.map(c=>'<option value="'+c.id+'">'+esc(c.titulo)+'</option>').join('');
@@ -1759,6 +1759,15 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var url=location.origin+'/concurso.html?c='+slug;
     if(navigator.clipboard){ navigator.clipboard.writeText(url).then(function(){alert('Link copiado:\\n'+url);},function(){prompt('Copie o link:',url);}); }
     else { prompt('Copie o link:',url); }
+  }
+  async function duplicarConcurso(id){
+    var c=CONCURSOS.find(function(x){return x.id===id;}); var nome=c?c.titulo:'';
+    if(!confirm('Duplicar o concurso "'+nome+'"?\\\\n\\\\nA cópia leva toda a configuração (cargos, títulos, taxa, dados de pagamento, etapas, brasão).\\\\nNÃO leva: inscritos, edital, documentos, provas online, locais de prova.\\\\n\\\\nEla nasce FECHADA, OCULTA e SEM DATAS — ninguém vê até você liberar.'))return;
+    var r=await fetch('/admin/concurso/'+id+'/duplicar',{method:'POST'});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao duplicar.');return;}
+    await carregarConcursos();
+    alert('Cópia criada: "'+j.titulo+'".\\\\n\\\\nAgora ajuste o título, o endereço (slug) e as datas. Enquanto estiver oculta e fechada, ela não aparece no site.');
+    editarConcurso(j.id);
   }
   async function excluirConcurso(id){
     var c=CONCURSOS.find(function(x){return x.id===id;}); var nome=c?c.titulo:'';

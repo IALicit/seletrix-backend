@@ -585,7 +585,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'titulo-obrigatorio-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'duplicar-concurso-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -684,6 +684,7 @@ app.post('/api/inscricao', async (req, res) => {
     const b = req.body || {};
     const concurso = await lerConcursoPorChave(b.concurso || '');
     if (!concurso) return res.status(400).json({ erro: 'Concurso inválido.' });
+    if (!concurso.aberto) return res.status(400).json({ erro: 'As inscrições para este concurso estão encerradas.' });
     if (!concurso.pode_inscrever) {
       const msg = concurso.situacao === 'em_breve' ? 'As inscrições para este concurso ainda não começaram.'
         : (concurso.situacao === 'encerrado' ? 'Este processo seletivo foi encerrado.'
@@ -1695,6 +1696,53 @@ app.post('/admin/concurso', exigirSenha, async (req, res) => {
 });
 
 // Upload do PDF do edital (base64) -> guarda no banco e aponta o pdf_url do concurso
+app.post('/admin/concurso/:id/duplicar', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Sem banco.' });
+  const origem = parseInt(req.params.id);
+  try {
+    const orig = await pool.query('SELECT * FROM concursos WHERE id=$1', [origem]);
+    if (!orig.rows.length) return res.status(404).json({ erro: 'Concurso não encontrado.' });
+    const o = orig.rows[0];
+
+    // Copia todas as colunas de configuração automaticamente. Lendo do próprio banco,
+    // qualquer campo novo criado no futuro já entra na cópia sem precisar mexer aqui.
+    const cols = (await pool.query(
+      `SELECT column_name FROM information_schema.columns WHERE table_name='concursos' ORDER BY ordinal_position`
+    )).rows.map((r) => r.column_name);
+
+    // Nunca copiados: identidade, datas (a cópia nasce sem prazos) e o que põe no ar.
+    const fora = new Set(['id', 'criado_em', 'slug', 'titulo', 'aberto', 'oculto',
+      'data_inicio', 'data_fim', 'data_encerramento',
+      'titulos_inicio_dt', 'titulos_fim_dt', 'laudo_inicio_dt', 'laudo_fim_dt',
+      'isencao_inicio_dt', 'isencao_fim_dt']);
+    const copiar = cols.filter((c) => !fora.has(c));
+
+    // Slug novo e único: base-copia, base-copia-2, base-copia-3...
+    const base = String(o.slug || 'concurso').slice(0, 80) + '-copia';
+    let slug = base, n = 1;
+    while ((await pool.query('SELECT 1 FROM concursos WHERE slug=$1', [slug])).rows.length) { n++; slug = base + '-' + n; }
+
+    const titulo = String(o.titulo || 'Concurso').slice(0, 250) + ' (cópia)';
+    const campos = ['slug', 'titulo', 'aberto', 'oculto', ...copiar];
+    const valores = [slug, titulo, false, true, ...copiar.map((c) => o[c])];
+    const ph = valores.map((_, i) => '$' + (i + 1)).join(',');
+    const novo = await pool.query(
+      `INSERT INTO concursos (${campos.map((c) => '"' + c + '"').join(',')}) VALUES (${ph}) RETURNING id`, valores);
+    const novoId = novo.rows[0].id;
+
+    // Brasão do órgão (a imagem não muda entre edições).
+    await pool.query(`INSERT INTO brasao (concurso_id,mime,dados,tamanho)
+      SELECT $1,mime,dados,tamanho FROM brasao WHERE concurso_id=$2`, [novoId, origem]);
+    // Etapas do concurso e fases de recurso: vem a estrutura, sem os prazos.
+    await pool.query('INSERT INTO etapas (concurso_id,nome,ordem) SELECT $1,nome,ordem FROM etapas WHERE concurso_id=$2', [novoId, origem]);
+    await pool.query('INSERT INTO recurso_fases (concurso_id,nome,abertura,fechamento) SELECT $1,nome,NULL,NULL FROM recurso_fases WHERE concurso_id=$2', [novoId, origem]);
+
+    res.json({ ok: true, id: novoId, slug, titulo });
+  } catch (e) {
+    console.error('duplicar concurso:', e.message);
+    res.status(500).json({ erro: 'Não foi possível duplicar: ' + e.message });
+  }
+});
 app.post('/admin/concurso/:id/edital', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
   try {
