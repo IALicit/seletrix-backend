@@ -203,6 +203,7 @@
       if(c.pdf_url){ const a=document.getElementById('ed-pdf'); a.href=c.pdf_url; a.style.display='block'; }
       const sel=document.getElementById('cargo');
       (c.cargos||[]).forEach(function(cg){ const o=document.createElement('option'); o.value=cg; o.textContent=cg; sel.appendChild(o); });
+      PEDE = !!c.pede_titulos; TIPOS = c.tipos_titulos || []; montarTitulos();
       if(!c.pode_inscrever){
         btn.disabled=true;
         function fdt(iso){ if(!iso) return ''; var p=String(iso).slice(0,10).split('-'); return p.length===3?(p[2]+'/'+p[1]+'/'+p[0]):iso; }
@@ -215,12 +216,43 @@
     }catch(e){ document.getElementById('ed-titulo').textContent='Concurso não encontrado'; btn.disabled=true; }
   })();
 
+  function nomeTipo(t){ return (t && typeof t==='object') ? (t.nome||'') : String(t||''); }
+  function ehObrigatorio(t){ return !!(t && typeof t==='object' && t.obrigatorio); }
+  function escp2(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function montarTitulos(){
+    const wrap=document.getElementById('titulos_wrap');
+    if(!PEDE || !TIPOS.length){ wrap.style.display='none'; wrap.innerHTML=''; return; }
+    const obrig=TIPOS.filter(ehObrigatorio), opc=TIPOS.filter(function(t){return !ehObrigatorio(t);});
+    let html='<h3 style="font-size:1rem;margin:6px 0 2px">Títulos</h3>';
+    if(obrig.length){
+      html+='<p class="aviso" style="margin-bottom:6px">Os títulos marcados com <b>*</b> são obrigatórios. Sem eles a inscrição não pode ser concluída.</p>';
+      html+='<div id="titulos_obrig">'+obrig.map(function(t){
+        const n=nomeTipo(t);
+        return '<div class="titulo-obrig" data-tipo="'+escp2(n)+'" style="display:flex;gap:8px;margin-bottom:8px;align-items:center;flex-wrap:wrap">'
+          +'<span style="flex:1;min-width:150px"><b>'+escp2(n)+'</b> <span style="color:#a12626">*</span></span>'
+          +'<input type="file" accept=".pdf,.jpg,.jpeg,.png">'
+          +'</div>';
+      }).join('')+'</div>';
+    }
+    if(opc.length){
+      html+='<div id="titulos_lista"></div>'
+        +'<button type="button" id="add_titulo" style="width:auto;margin:0 0 6px;padding:9px 13px">Adicionar título</button>';
+    } else {
+      html+='<div id="titulos_lista" style="display:none"></div>';
+    }
+    html+='<p class="aviso">Cada arquivo deve ter no máximo 5 MB (PDF, JPG ou PNG).</p>';
+    wrap.innerHTML=html; wrap.style.display='flex';
+    const add=document.getElementById('add_titulo');
+    if(add) add.addEventListener('click', addTituloRow);
+  }
   function addTituloRow(){
     const lista=document.getElementById('titulos_lista');
-    if(lista.querySelectorAll('.titulo-row').length>=5){ alert('Máximo de 5 títulos.'); return; }
+    const opc=TIPOS.filter(function(t){return !ehObrigatorio(t);});
+    if(!opc.length) return;
+    if(lista.querySelectorAll('.titulo-row').length>=10){ alert('Máximo de 10 títulos adicionais.'); return; }
     const div=document.createElement('div'); div.className='titulo-row';
     div.style.cssText='display:flex;gap:8px;margin-bottom:8px;align-items:center;flex-wrap:wrap';
-    div.innerHTML='<select style="flex:1;min-width:150px">'+TIPOS.map(function(t){return '<option>'+String(t).replace(/</g,'&lt;')+'</option>';}).join('')+'</select>'
+    div.innerHTML='<select style="flex:1;min-width:150px">'+opc.map(function(t){return '<option>'+escp2(nomeTipo(t))+'</option>';}).join('')+'</select>'
       +'<input type="file" accept=".pdf,.jpg,.jpeg,.png">'
       +'<button type="button" class="rm" style="width:auto;margin:0;padding:9px 13px;background:#fdecec;color:#a12626">Remover</button>';
     div.querySelector('.rm').addEventListener('click', function(){ div.remove(); });
@@ -237,8 +269,17 @@
   }
   function toB64file(file){ return new Promise(function(res,rej){var rd=new FileReader();rd.onload=function(){res(rd.result);};rd.onerror=rej;rd.readAsDataURL(file);}); }
   async function coletarTitulos(){
-    const rows=document.querySelectorAll('#titulos_lista .titulo-row'); const out=[];
-    for(const row of rows){
+    const out=[];
+    const faltando=[];
+    for(const row of document.querySelectorAll('#titulos_obrig .titulo-obrig')){
+      const tipo=row.getAttribute('data-tipo'); const file=row.querySelector('input[type=file]').files[0];
+      if(!file){ faltando.push(tipo); continue; }
+      if(file.size>5*1024*1024){ throw new Error('O título "'+tipo+'" deve ter no máximo 5 MB.'); }
+      const b64=await new Promise(function(res,rej){var rd=new FileReader();rd.onload=function(){res(rd.result);};rd.onerror=rej;rd.readAsDataURL(file);});
+      out.push({ tipo:tipo, filename:file.name, dataBase64:b64 });
+    }
+    if(faltando.length){ throw new Error('Anexe os títulos obrigatórios para concluir a inscrição: '+faltando.join(', ')+'.'); }
+    for(const row of document.querySelectorAll('#titulos_lista .titulo-row')){
       const tipo=row.querySelector('select').value; const file=row.querySelector('input[type=file]').files[0];
       if(!file) continue;
       if(!tipo){ throw new Error('Selecione o tipo de cada título anexado.'); }

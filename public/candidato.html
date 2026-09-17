@@ -172,7 +172,7 @@
     var acao;
     if(r.pode_titulos){
       acao = '<div class="tit-add">'
-        + '<select id="tt_'+r.id+'">'+ (r.tipos_titulos||[]).map(function(x){return '<option>'+esc(x)+'</option>';}).join('') +'</select>'
+        + '<select id="tt_'+r.id+'">'+ (r.tipos_titulos||[]).map(function(x){var n=(x&&typeof x==='object')?(x.nome||''):String(x||'');return '<option>'+esc(n)+'</option>';}).join('') +'</select>'
         + '<input type="file" id="tf_'+r.id+'" accept=".pdf,.jpg,.jpeg,.png">'
         + '<button class="tit-btn" onclick="enviarTitulo('+r.id+')">Enviar título</button></div>'
         + '<p class="tit-hint">Escolha o tipo e o arquivo (PDF, JPG ou PNG · até 5 MB).</p>';
