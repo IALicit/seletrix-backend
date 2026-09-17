@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v23-recurso-anexo -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v24-titulo-obrigatorio -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -170,6 +170,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
         <div id="bloco_titulos" style="display:none;margin-top:10px">
           <label>Tipos de título aceitos</label>
           <div id="lista_tipos"></div>
+          <p class="hint" style="margin:6px 0 0">Marcando <b>Obrigatório</b>, o tipo aparece fixo no formulário de inscrição e o candidato não consegue concluir sem anexar o arquivo.</p>
           <div style="display:flex;gap:8px;margin-top:8px">
             <input id="novo_tipo" placeholder="Ex.: Pós-graduação" onkeydown="if(event.key==='Enter'){event.preventDefault();addTipo()}">
             <button class="sec" type="button" onclick="addTipo()">Adicionar</button>
@@ -758,8 +759,17 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   function toggleLaudo(){ $('bloco_laudo').style.display = $('c_pede_laudo').checked ? 'block' : 'none'; }
   function toggleTitulos(){ $('bloco_titulos').style.display = $('c_pede_titulos').checked ? 'block' : 'none'; }
   function toggleIsencao(){ $('bloco_isencao').style.display = $('c_pede_isencao').checked ? 'block' : 'none'; }
-  function renderTipos(){ $('lista_tipos').innerHTML = tiposEdit.map((t,i)=>'<div class="cargo-item"><span>'+esc(t)+'</span><button class="del" onclick="removeTipo('+i+')">Remover</button></div>').join('')||'<p class="hint">Nenhum tipo cadastrado.</p>'; }
-  function addTipo(){ const v=$('novo_tipo').value.trim(); if(!v)return; tiposEdit.push(v); $('novo_tipo').value=''; renderTipos(); }
+  function nomeTipo(t){ return (t && typeof t==='object') ? (t.nome||'') : String(t||''); }
+  function renderTipos(){
+    $('lista_tipos').innerHTML = tiposEdit.map(function(t,i){
+      var nome=nomeTipo(t), obr=(t && typeof t==='object') ? !!t.obrigatorio : false;
+      return '<div class="cargo-item"><span>'+esc(nome)+(obr?' <span class="tag on">obrigatório</span>':'')+'</span>'
+        +'<label class="hint" style="display:flex;align-items:center;gap:5px;margin:0 10px"><input type="checkbox" '+(obr?'checked':'')+' onchange="marcarObrigatorio('+i+',this.checked)"> Obrigatório</label>'
+        +'<button class="del" onclick="removeTipo('+i+')">Remover</button></div>';
+    }).join('')||'<p class="hint">Nenhum tipo cadastrado.</p>';
+  }
+  function marcarObrigatorio(i,v){ var nome=nomeTipo(tiposEdit[i]); tiposEdit[i]={nome:nome,obrigatorio:!!v}; renderTipos(); }
+  function addTipo(){ const v=$('novo_tipo').value.trim(); if(!v)return; tiposEdit.push({nome:v,obrigatorio:false}); $('novo_tipo').value=''; renderTipos(); }
   function removeTipo(i){ tiposEdit.splice(i,1); renderTipos(); }
   async function salvarConcurso(){
     const payload={ id:$('c_id').value||undefined, titulo:$('c_titulo').value, orgao:$('c_orgao').value, periodo:$('c_periodo').value,

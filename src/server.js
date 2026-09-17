@@ -294,9 +294,20 @@ function calcTitulos(pede, ti, tf, hoje) {
   if (tf && hoje > tf) return { status: 'depois', pode: false };
   return { status: 'aberto', pode: true };
 }
+// Tipos de título: formato antigo era uma lista de textos; o novo é {nome, obrigatorio}.
+// Esta função aceita os dois e sempre devolve objetos, para nada quebrar nos concursos antigos.
+function normTipos(raw) {
+  let lista = [];
+  try { lista = JSON.parse(raw || '[]'); } catch {}
+  if (!Array.isArray(lista)) lista = [];
+  return lista.map((t) => {
+    if (t && typeof t === 'object') return { nome: String(t.nome || '').trim(), obrigatorio: !!t.obrigatorio };
+    return { nome: String(t || '').trim(), obrigatorio: false };
+  }).filter((t) => t.nome);
+}
 function parseConcurso(r) {
   let cargos = []; try { cargos = JSON.parse(r.cargos || '[]'); } catch {}
-  let tipos = []; try { tipos = JSON.parse(r.tipos_titulos || '[]'); } catch {}
+  const tipos = normTipos(r.tipos_titulos);
   const di = r.data_inicio || null, df = r.data_fim || null, de = r.data_encerramento || null;
   const ti = r.titulos_inicio_dt || null, tf = r.titulos_fim_dt || null;
   const hoje = hojeBR();
@@ -574,7 +585,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'recurso-anexo-resposta-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'titulo-obrigatorio-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -691,6 +702,29 @@ app.post('/api/inscricao', async (req, res) => {
     const matricula = String(b.matricula || '').trim().slice(0, 60);
     if (concurso.pede_matricula && !matricula) return res.status(400).json({ erro: 'Informe sua matrícula funcional.' });
 
+    // Títulos obrigatórios: a inscrição não é criada se faltar algum.
+    // Conferido aqui, antes de gravar o candidato, para não deixar inscrição pela metade.
+    const obrigatorios = (concurso.pede_titulos ? (concurso.tipos_titulos || []) : []).filter((t) => t.obrigatorio);
+    if (obrigatorios.length) {
+      const enviados = Array.isArray(b.titulos) ? b.titulos : [];
+      const temArquivoValido = (nome) => enviados.some((t) => {
+        if (String(t && t.tipo || '').trim() !== nome) return false;
+        let d = String(t.dataBase64 || ''); const v = d.indexOf(',');
+        if (v > -1 && d.slice(0, v).includes('base64')) d = d.slice(v + 1);
+        if (!d) return false;
+        try {
+          const buf = Buffer.from(d, 'base64');
+          if (!buf.length || buf.length > 5 * 1024 * 1024) return false;
+          return buf.slice(0, 4).toString('latin1') === '%PDF'
+            || (buf[0] === 0xFF && buf[1] === 0xD8) || (buf[0] === 0x89 && buf[1] === 0x50);
+        } catch { return false; }
+      });
+      const faltando = obrigatorios.map((t) => t.nome).filter((nome) => !temArquivoValido(nome));
+      if (faltando.length) {
+        return res.status(400).json({ erro: 'Para concluir a inscrição, anexe os títulos obrigatórios: ' + faltando.join(', ') + '.' });
+      }
+    }
+
     const dup = await pool.query('SELECT protocolo FROM candidatos WHERE cpf=$1 AND concurso_id=$2 LIMIT 1', [cpf, concurso.id]);
     if (dup.rows.length) return res.status(409).json({ erro: 'Este CPF já possui inscrição neste concurso. Protocolo: ' + dup.rows[0].protocolo });
 
@@ -739,7 +773,7 @@ app.post('/api/inscricao', async (req, res) => {
 
     // Anexos de títulos (se o concurso pedir)
     if (concurso.pede_titulos && Array.isArray(b.titulos)) {
-      for (const t of b.titulos.slice(0, 5)) {
+      for (const t of b.titulos.slice(0, 10)) {
         try {
           let d = String(t.dataBase64 || ''); const v = d.indexOf(','); if (v > -1 && d.slice(0, v).includes('base64')) d = d.slice(v + 1);
           if (!d) continue;
@@ -871,7 +905,7 @@ app.post('/api/candidato/login', async (req, res) => {
     });
   }
   const inscricoes = rows.map((r) => {
-    let tipos = []; try { tipos = JSON.parse(r.tipos_titulos || '[]'); } catch {}
+    const tipos = normTipos(r.tipos_titulos);
     const ti = r.titulos_inicio_dt || null, tf = r.titulos_fim_dt || null;
     const tc = calcTitulos(!!r.pede_titulos, ti, tf, agora);
     return {
@@ -1616,7 +1650,11 @@ app.post('/admin/concurso', exigirSenha, async (req, res) => {
     const b = req.body || {};
     const lim = (v) => String(v == null ? '' : v).trim().slice(0, 300);
     let cargos = (Array.isArray(b.cargos) ? b.cargos : []).map((c) => String(c).trim()).filter(Boolean).slice(0, 100);
-    let tipos = (Array.isArray(b.tipos_titulos) ? b.tipos_titulos : []).map((t) => String(t).trim()).filter(Boolean).slice(0, 50);
+    let tipos = (Array.isArray(b.tipos_titulos) ? b.tipos_titulos : []).map((t) => (
+      (t && typeof t === 'object')
+        ? { nome: String(t.nome || '').trim(), obrigatorio: !!t.obrigatorio }
+        : { nome: String(t || '').trim(), obrigatorio: false }
+    )).filter((t) => t.nome).slice(0, 50);
     if (!lim(b.titulo)) return res.status(400).json({ erro: 'Informe o título do concurso.' });
     if (!cargos.length) return res.status(400).json({ erro: 'Cadastre pelo menos um cargo.' });
     const bool = (v) => v === true || v === 'true' || v === 'on';
