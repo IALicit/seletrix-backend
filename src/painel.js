@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v27-opcoes-fix -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v28-ensalamento -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -322,10 +322,33 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
 
   <section id="alocacao" style="display:none">
     <div class="card">
+      <label>Concurso</label><select id="al_concurso" onchange="alInit()"></select>
+    </div>
+    <div class="card" id="en_card" style="display:none">
+      <h3 style="font-size:1.1rem;color:var(--navy);margin-bottom:4px">Ensalamento geral</h3>
+      <p class="hint" style="margin-bottom:14px">Marque as salas e os cargos e escolha a ordem. O sistema enche uma sala de cada vez, na ordem em que as salas foram cadastradas. Você vê a prévia antes de gravar.</p>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><label style="margin:0">1. Salas</label><span><button class="mini" onclick="enMarcar('ensala',true)">Marcar todas</button> <button class="mini" onclick="enMarcar('ensala',false)">Desmarcar</button></span></div>
+      <div id="en_salas" class="scroll" style="max-height:280px;border:1px solid #e3e7ee;border-radius:8px;padding:8px 12px;margin:6px 0 14px"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><label style="margin:0">2. Cargos</label><span><button class="mini" onclick="enMarcar('encargo',true)">Marcar todos</button> <button class="mini" onclick="enMarcar('encargo',false)">Desmarcar</button></span></div>
+      <div id="en_cargos" style="border:1px solid #e3e7ee;border-radius:8px;padding:8px 12px;margin:6px 0 14px"></div>
       <div class="grid2">
-        <div><label>Concurso</label><select id="al_concurso" onchange="alInit()"></select></div>
-        <div><label>Sala destino</label><select id="al_sala"></select></div>
+        <div><label>3. Ordem</label><select id="en_ordem" onchange="enLimpar()"><option value="alfabetica">Ordem alfabética</option><option value="inscricao">Número de inscrição</option><option value="cargo">Por cargo (cada cargo em salas próprias)</option></select></div>
+        <div><label>Quem ensalar</label><select id="en_modo" onchange="enLimpar()"><option value="nao_alocados">Só quem ainda não tem sala</option><option value="refazer">Refazer: reensalar também quem já tem sala</option></select></div>
+        <div><label>Candidatos</label><select id="en_pag" onchange="enLimpar()"><option value="confirmados">Só pagos e isentos</option><option value="todos">Todos os inscritos</option></select></div>
+        <div style="display:flex;align-items:flex-end"><label style="display:inline-flex;align-items:center;gap:8px;font-weight:600;margin-bottom:10px"><input type="checkbox" id="en_separar" style="width:auto" onchange="enLimpar()"> Não misturar cargos na mesma sala</label></div>
       </div>
+      <label style="margin-top:6px">Faixa de número de inscrição <span class="hint">(opcional: use para mandar uma faixa de inscrições para uma sala específica)</span></label>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <span>de</span><input id="en_de" placeholder="ex.: 0020700" style="max-width:200px" oninput="enLimpar()">
+        <span>até</span><input id="en_ate" placeholder="ex.: 0020750" style="max-width:200px" oninput="enLimpar()">
+      </div>
+      <div style="margin-top:14px"><button onclick="enSimular()">Ver prévia do ensalamento</button></div>
+      <div id="en_previa" style="margin-top:14px"></div>
+    </div>
+    <div class="card">
+      <h3 style="font-size:1.1rem;color:var(--navy);margin-bottom:4px">Alocação manual (sala por sala)</h3>
+      <p class="hint" style="margin-bottom:10px">Para ajustes: marque os candidatos na lista abaixo e escolha a sala.</p>
+      <div><label>Sala destino</label><select id="al_sala"></select></div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
         <button onclick="alocar()">Alocar selecionados na sala</button>
         <button class="sec" onclick="desalocar()">Remover alocação dos selecionados</button>
@@ -339,13 +362,13 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
         <div><label>PcD</label><select id="al_pcd" onchange="alBuscar()"><option value="todos">Todos</option><option value="sim">Só PcD</option><option value="nao">Exceto PcD</option></select></div>
       </div>
       <div style="display:flex;gap:10px;margin-top:10px;align-items:center;flex-wrap:wrap">
-        <input id="al_busca" placeholder="Buscar por nome" style="flex:1;min-width:180px" onkeydown="if(event.key==='Enter')alBuscar()">
+        <input id="al_busca" placeholder="Buscar por nome ou nº de inscrição" style="flex:1;min-width:180px" onkeydown="if(event.key==='Enter')alBuscar()">
         <button class="sec" onclick="alBuscar()">Filtrar</button>
       </div>
       <p style="margin:12px 0" id="al_resumo"></p>
       <p><label style="display:inline-flex;align-items:center;gap:8px;font-weight:600"><input type="checkbox" id="al_todos" onclick="alMarcarTodos()" style="width:auto"> Selecionar todos os listados</label></p>
       <div class="scroll" style="max-height:55vh"><table>
-        <thead><tr><th></th><th>Nome</th><th>CPF</th><th>Cargo</th><th>Sala atual</th></tr></thead>
+        <thead><tr><th></th><th>Inscrição</th><th>Nome</th><th>CPF</th><th>Cargo</th><th>Sala atual</th></tr></thead>
         <tbody id="al_linhas"></tbody></table></div>
     </div>
   </section>
@@ -1362,20 +1385,23 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var d=await (await fetch('/admin/concurso/'+id+'/escolas.json')).json();
     ESCOLAS=d.escolas;
     var falta=d.inscritos-d.capacidade_total;
-    var resumo='<b>Inscritos:</b> '+d.inscritos+' &nbsp; <b>Capacidade cadastrada:</b> '+d.capacidade_total+' lugares';
-    if(d.capacidade_total>0||d.inscritos>0) resumo += falta>0 ? ' &nbsp; <span style="color:#a12626;font-weight:700">(faltam '+falta+' lugares)</span>' : ' &nbsp; <span style="color:#0f6b41;font-weight:700">(capacidade suficiente)</span>';
+    function caixa(rot,val,cor){ return '<div style="flex:1;min-width:120px;background:#f6f8fb;border:1px solid #e3e7ee;border-radius:10px;padding:10px 12px"><div style="font-size:.75rem;color:var(--suave);text-transform:uppercase;letter-spacing:.03em">'+rot+'</div><div style="font-size:1.5rem;font-weight:800;color:'+(cor||'var(--navy)')+'">'+val+'</div></div>'; }
+    var resumo='<div style="display:flex;gap:10px;flex-wrap:wrap">'
+      + caixa('Escolas', d.escolas.length) + caixa('Salas', d.salas_total||0)
+      + caixa('Lugares cadastrados', d.capacidade_total) + caixa('Ocupados', d.ocupados_total||0)
+      + caixa('Livres', d.capacidade_total-(d.ocupados_total||0), '#0f6b41') + caixa('Inscritos', d.inscritos)
+      + '</div>';
+    if(d.capacidade_total>0||d.inscritos>0) resumo += falta>0 ? '<p style="color:#a12626;font-weight:700;margin-top:8px">Faltam '+falta+' lugares para caber todos os inscritos.</p>' : '<p style="color:#0f6b41;font-weight:700;margin-top:8px">Capacidade suficiente para todos os inscritos.</p>';
     $('loc_resumo').innerHTML=resumo;
     $('loc_lista').innerHTML = d.escolas.length ? d.escolas.map(escolaCard).join('') : '<p class="hint" style="margin:10px 0">Nenhuma escola cadastrada ainda.</p>';
   }
   function escolaCard(e){
-    var salas = e.salas.length ? e.salas.map(function(s){
-      return '<div class="arq-item"><span><b>'+esc(s.nome)+'</b> — '+s.capacidade+' lugares'+(s.obs?(' · '+esc(s.obs)):'')+'</span><button class="del" onclick="delSala('+s.id+')">Excluir</button></div>';
-    }).join('') : '<p class="hint">Nenhuma sala cadastrada.</p>';
+    var salas = e.salas.length ? e.salas.map(salaLinha).join('') : '<p class="hint">Nenhuma sala cadastrada.</p>';
     return '<div class="card">'
       + '<div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">'
       +   '<div><h3 style="color:var(--navy);font-size:1.05rem">'+esc(e.nome)+'</h3>'
       +     '<div style="color:var(--suave);font-size:.85rem">'+esc(e.endereco||'')+'</div>'
-      +     '<div style="color:var(--suave);font-size:.85rem">'+e.salas.length+' sala(s) · '+e.capacidade+' lugares</div></div>'
+      +     '<div style="color:var(--suave);font-size:.85rem">'+e.salas.length+' sala(s) · <b>'+e.capacidade+' lugares</b> · '+(e.ocupacao||0)+' ocupados · '+(e.capacidade-(e.ocupacao||0))+' livres</div></div>'
       +   '<div class="row-actions"><button class="mini" onclick="editEscola('+e.id+')">Editar</button><button class="del" onclick="delEscola('+e.id+')">Excluir</button></div>'
       + '</div>'
       + '<div style="margin-top:12px">'+salas+'</div>'
@@ -1385,6 +1411,27 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       +   '<input id="so_'+e.id+'" placeholder="Andar / observação" style="max-width:190px">'
       +   '<button class="sec" onclick="addSala('+e.id+')">+ Sala</button>'
       + '</div></div>';
+  }
+  function salaLinha(s){
+    return '<div class="arq-item" id="salalin_'+s.id+'"><span><b>'+esc(s.nome)+'</b> — '+s.capacidade+' lugares · '+(s.ocupacao||0)+' ocupados'+(s.obs?(' · '+esc(s.obs)):'')+'</span>'
+      + '<span class="row-actions"><button class="mini" onclick="editSala('+s.id+')">Editar</button><button class="del" onclick="delSala('+s.id+')">Excluir</button></span></div>';
+  }
+  function acharSala(id){ for(var i=0;i<ESCOLAS.length;i++){ var s=ESCOLAS[i].salas.find(function(x){return x.id===id;}); if(s) return s; } return null; }
+  function editSala(id){
+    var s=acharSala(id); if(!s) return;
+    $('salalin_'+id).innerHTML='<span style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;flex:1">'
+      + '<input id="es_n_'+id+'" value="'+esc(s.nome)+'" placeholder="Sala" style="max-width:160px">'
+      + '<input id="es_c_'+id+'" type="number" min="1" value="'+s.capacidade+'" placeholder="Capacidade" style="max-width:110px">'
+      + '<input id="es_o_'+id+'" value="'+esc(s.obs||'')+'" placeholder="Andar / observação" style="max-width:190px"></span>'
+      + '<span class="row-actions"><button class="mini" onclick="salvarSala('+id+')">Salvar</button><button class="sec mini" onclick="carregarEscolas()">Cancelar</button></span>';
+    $('es_n_'+id).focus();
+  }
+  async function salvarSala(id){
+    var nome=$('es_n_'+id).value.trim(), cap=$('es_c_'+id).value, obs=$('es_o_'+id).value;
+    if(!nome){alert('Informe o nome da sala.');return;}
+    if(!parseInt(cap)||parseInt(cap)<=0){alert('Informe a capacidade da sala.');return;}
+    var r=await fetch('/admin/sala/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nome:nome,capacidade:cap,obs:obs})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} carregarEscolas();
   }
   async function addEscola(){
     var id=$('loc_concurso').value; if(!id){alert('Selecione o concurso.');return;}
@@ -1401,7 +1448,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} carregarEscolas();
   }
   async function delEscola(id){
-    if(!confirm('Excluir esta escola e todas as suas salas?'))return;
+    if(!confirm('Excluir esta escola e todas as suas salas? Os candidatos alocados nelas ficarão sem sala.'))return;
     var r=await fetch('/admin/escola/'+id,{method:'DELETE'}); var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} carregarEscolas();
   }
   async function addSala(escolaId){
@@ -1412,7 +1459,9 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} carregarEscolas();
   }
   async function delSala(id){
-    if(!confirm('Excluir esta sala?'))return;
+    var s=acharSala(id);
+    var msg='Excluir esta sala?'+((s&&s.ocupacao)?(' Os '+s.ocupacao+' candidato(s) alocados nela ficarão sem sala.'):'');
+    if(!confirm(msg))return;
     var r=await fetch('/admin/sala/'+id,{method:'DELETE'}); var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} carregarEscolas();
   }
 
@@ -1421,13 +1470,14 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('al_concurso').innerHTML='<option value="">Selecione o concurso...</option>'+CONCURSOS.map(function(c){return '<option value="'+c.id+'">'+esc(c.titulo)+'</option>';}).join('');
     $('al_sala').innerHTML=''; $('al_linhas').innerHTML=''; $('al_resumo').textContent='';
     $('al_cargo').innerHTML='<option value="">Todos</option>';
+    $('en_card').style.display='none'; $('en_previa').innerHTML='';
   }
   async function alInit(){
     var id=$('al_concurso').value;
-    if(!id){ $('al_sala').innerHTML=''; $('al_linhas').innerHTML=''; $('al_resumo').textContent=''; return; }
+    if(!id){ $('al_sala').innerHTML=''; $('al_linhas').innerHTML=''; $('al_resumo').textContent=''; $('en_card').style.display='none'; return; }
     var c=CONCURSOS.find(function(x){return String(x.id)===String(id);});
     $('al_cargo').innerHTML='<option value="">Todos</option>'+((c&&c.cargos||[]).map(function(cg){return '<option>'+esc(cg)+'</option>';}).join(''));
-    await alCarregarSalas(); alBuscar();
+    await alCarregarSalas(); alBuscar(); enCarregar();
   }
   async function alCarregarSalas(){
     var id=$('al_concurso').value; if(!id)return;
@@ -1442,8 +1492,8 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('al_resumo').innerHTML='<b>'+d.candidatos.length+'</b> candidato(s) listado(s) com os filtros atuais.';
     $('al_linhas').innerHTML = d.candidatos.length ? d.candidatos.map(function(k){
       var sala = k.sala_id ? (esc(k.escola_nome||'')+' / '+esc(k.sala_nome||'')) : '<span style="color:#aaa">—</span>';
-      return '<tr><td><input type="checkbox" class="alchk" value="'+k.id+'"></td><td>'+esc(k.nome)+'</td><td>'+esc(k.cpf)+'</td><td>'+esc(k.cargo)+'</td><td>'+sala+'</td></tr>';
-    }).join('') : '<tr><td colspan="5" style="text-align:center;color:#888;padding:16px">Nenhum candidato com esses filtros.</td></tr>';
+      return '<tr><td><input type="checkbox" class="alchk" value="'+k.id+'"></td><td>'+esc(k.inscricao||'')+'</td><td>'+esc(k.nome)+'</td><td>'+esc(k.cpf)+'</td><td>'+esc(k.cargo)+'</td><td>'+sala+'</td></tr>';
+    }).join('') : '<tr><td colspan="6" style="text-align:center;color:#888;padding:16px">Nenhum candidato com esses filtros.</td></tr>';
   }
   function alMarcarTodos(){ var on=$('al_todos').checked; document.querySelectorAll('.alchk').forEach(function(c){c.checked=on;}); }
   function alSelecionados(){ return Array.from(document.querySelectorAll('.alchk:checked')).map(function(c){return parseInt(c.value);}); }
@@ -1452,14 +1502,90 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var ids=alSelecionados(); if(!ids.length){alert('Selecione ao menos um candidato (marque as caixas).');return;}
     var r=await fetch('/admin/alocar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sala_id:sala,candidato_ids:ids})});
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao alocar');return;}
-    await alCarregarSalas(); alBuscar();
+    await alCarregarSalas(); alBuscar(); enCarregar();
   }
   async function desalocar(){
     var ids=alSelecionados(); if(!ids.length){alert('Selecione ao menos um candidato.');return;}
     if(!confirm('Remover a alocação dos '+ids.length+' candidato(s) selecionado(s)?'))return;
     var r=await fetch('/admin/desalocar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({candidato_ids:ids})});
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
-    await alCarregarSalas(); alBuscar();
+    await alCarregarSalas(); alBuscar(); enCarregar();
+  }
+
+  // ---- Ensalamento geral
+  var EN_ULTIMO=null;
+  async function enCarregar(){
+    var id=$('al_concurso').value; if(!id){ $('en_card').style.display='none'; return; }
+    var marcadas={}; document.querySelectorAll('.ensala:checked').forEach(function(c){marcadas[c.value]=1;});
+    var primeira=!document.querySelector('.ensala');
+    var d=await (await fetch('/admin/concurso/'+id+'/escolas.json')).json();
+    $('en_card').style.display='block';
+    $('en_salas').innerHTML = d.escolas.length ? d.escolas.map(function(e){
+      if(!e.salas.length) return '';
+      return '<div style="margin:6px 0 10px"><label style="display:inline-flex;align-items:center;gap:8px;font-weight:700;color:var(--navy);margin:0"><input type="checkbox" style="width:auto" onclick="enEscola('+e.id+',this.checked)"> '+esc(e.nome)+' <span class="hint" style="font-weight:400">('+e.ocupacao+'/'+e.capacidade+' ocupados)</span></label>'
+        + '<div style="display:flex;flex-wrap:wrap;gap:6px 18px;margin:6px 0 0 26px">'
+        + e.salas.map(function(s){
+            var livres=s.capacidade-s.ocupacao;
+            var chk=(primeira||marcadas[s.id])?' checked':'';
+            return '<label style="display:inline-flex;align-items:center;gap:6px;font-weight:400;margin:0"><input type="checkbox" class="ensala esc'+e.id+'" value="'+s.id+'" style="width:auto" onchange="enLimpar()"'+chk+'> '+esc(s.nome)+' <span class="hint">('+(livres>0?livres+' livres':'lotada')+')</span></label>';
+          }).join('')
+        + '</div></div>';
+    }).join('') : '<p class="hint">Nenhuma sala cadastrada. Cadastre na aba Locação.</p>';
+    var c=CONCURSOS.find(function(x){return String(x.id)===String(id);});
+    var cargos=(c&&c.cargos)||[];
+    var cm={}; document.querySelectorAll('.encargo:checked').forEach(function(x){cm[x.value]=1;});
+    var primeiraC=!document.querySelector('.encargo');
+    $('en_cargos').innerHTML = cargos.length ? '<div style="display:flex;flex-wrap:wrap;gap:6px 18px">'+cargos.map(function(cg){
+      var chk=(primeiraC||cm[cg])?' checked':'';
+      return '<label style="display:inline-flex;align-items:center;gap:6px;font-weight:400;margin:0"><input type="checkbox" class="encargo" value="'+esc(cg)+'" style="width:auto" onchange="enLimpar()"'+chk+'> '+esc(cg)+'</label>';
+    }).join('')+'</div>' : '<p class="hint">Este concurso não tem cargos cadastrados; todos os candidatos entram.</p>';
+    enLimpar();
+  }
+  function enEscola(eid,on){ document.querySelectorAll('.esc'+eid).forEach(function(c){c.checked=on;}); enLimpar(); }
+  function enMarcar(cls,on){ document.querySelectorAll('.'+cls).forEach(function(c){c.checked=on;}); enLimpar(); }
+  function enLimpar(){ EN_ULTIMO=null; if($('en_previa')) $('en_previa').innerHTML=''; }
+  function enParams(){
+    var cargosTodos=document.querySelectorAll('.encargo').length, marcados=Array.from(document.querySelectorAll('.encargo:checked')).map(function(c){return c.value;});
+    return {
+      sala_ids: Array.from(document.querySelectorAll('.ensala:checked')).map(function(c){return parseInt(c.value);}),
+      cargos: (cargosTodos && marcados.length<cargosTodos) ? marcados : [],
+      ordem: $('en_ordem').value, modo: $('en_modo').value, pagamento: $('en_pag').value,
+      separar_cargos: $('en_separar').checked,
+      inscricao_de: $('en_de').value.trim(), inscricao_ate: $('en_ate').value.trim()
+    };
+  }
+  function enPessoa(p){ return p ? ((p.inscricao?'<b>'+esc(p.inscricao)+'</b> · ':'')+esc(p.nome)) : ''; }
+  async function enSimular(){
+    var id=$('al_concurso').value; if(!id){alert('Selecione o concurso.');return;}
+    var p=enParams();
+    if(!p.sala_ids.length){alert('Marque ao menos uma sala.');return;}
+    if(document.querySelectorAll('.encargo').length && !document.querySelectorAll('.encargo:checked').length){alert('Marque ao menos um cargo.');return;}
+    $('en_previa').innerHTML='<p class="hint">Montando a prévia...</p>';
+    var body=JSON.parse(JSON.stringify(p)); body.simular=true;
+    var r=await fetch('/admin/concurso/'+id+'/ensalar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var j=await r.json(); if(!r.ok){ $('en_previa').innerHTML=''; alert(j.erro||'Erro'); return; }
+    EN_ULTIMO=p;
+    if(!j.total){ $('en_previa').innerHTML='<p style="color:#a12626;font-weight:700">Nenhum candidato encontrado com essas opções.</p><p class="hint">Confira os cargos, a faixa de inscrição e se a opção "Só pagos e isentos" não está deixando alguém de fora.</p>'; EN_ULTIMO=null; return; }
+    var linhas=j.plano.filter(function(x){return x.entram>0;}).map(function(x){
+      return '<tr><td>'+esc(x.escola)+'</td><td><b>'+esc(x.sala)+'</b></td><td style="text-align:center">'+x.ja_ocupadas+'</td><td style="text-align:center;font-weight:700">'+x.entram+'</td><td style="text-align:center">'+x.livres_depois+'</td><td>'+esc(x.cargos.join(', '))+'</td><td style="font-size:.85rem">'+enPessoa(x.primeiro)+'<br>'+(x.entram>1?'até '+enPessoa(x.ultimo):'')+'</td></tr>';
+    }).join('');
+    var aviso = j.sem_lugar>0
+      ? '<p style="color:#a12626;font-weight:700;margin:10px 0">Atenção: '+j.sem_lugar+' candidato(s) ficaram sem lugar nas salas marcadas.</p><p class="hint">Exemplos: '+j.sem_lugar_exemplos.map(function(k){return esc(k.nome)+(k.inscricao?' ('+esc(k.inscricao)+')':'');}).join('; ')+'. Marque mais salas ou aumente a capacidade na aba Locação.</p>'
+      : '<p style="color:#0f6b41;font-weight:700;margin:10px 0">Todos os '+j.total+' candidato(s) cabem nas salas marcadas.</p>';
+    $('en_previa').innerHTML='<div style="background:#f6f8fb;border:1px solid #e3e7ee;border-radius:10px;padding:14px">'
+      + '<h4 style="color:var(--navy);margin-bottom:6px">Prévia: '+j.alocados+' de '+j.total+' candidato(s) serão ensalados</h4>'+aviso
+      + '<div class="scroll" style="max-height:50vh"><table><thead><tr><th>Escola</th><th>Sala</th><th>Já na sala</th><th>Entram</th><th>Livres depois</th><th>Cargos</th><th>Do primeiro ao último</th></tr></thead><tbody>'+linhas+'</tbody></table></div>'
+      + '<div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap"><button onclick="enConfirmar()">Confirmar e gravar o ensalamento</button><button class="sec" onclick="enLimpar()">Cancelar</button></div>'
+      + '<p class="hint" style="margin-top:8px">Nada foi gravado ainda. Se mudar qualquer opção acima, a prévia some e é preciso gerar de novo.</p></div>';
+  }
+  async function enConfirmar(){
+    var id=$('al_concurso').value; if(!id||!EN_ULTIMO){alert('Gere a prévia de novo antes de confirmar.');return;}
+    if(EN_ULTIMO.modo==='refazer' && !confirm('Modo REFAZER: os candidatos desses cargos que já têm sala vão ser reensalados do zero. Continuar?')) return;
+    var body=JSON.parse(JSON.stringify(EN_ULTIMO)); body.simular=false;
+    var r=await fetch('/admin/concurso/'+id+'/ensalar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao gravar');return;}
+    alert('Ensalamento gravado: '+j.alocados+' candidato(s) distribuídos'+(j.sem_lugar?(' e '+j.sem_lugar+' ficaram sem lugar.'):'.'));
+    await alCarregarSalas(); alBuscar(); await enCarregar();
   }
 
   var QALTS=[], QCORRETA=0, QTEMIMG=false, QUESTOES=[];

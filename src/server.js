@@ -117,7 +117,8 @@ async function inicializarBanco() {
     'bb_nosso_numero TEXT', 'bb_linha_digitavel TEXT', 'bb_codigo_barras TEXT', 'bb_qrcode_pix TEXT',
     'cep TEXT', 'endereco TEXT', 'bairro TEXT',
     'condicao_especial TEXT', 'laudo_mime TEXT', 'laudo_dados BYTEA', 'laudo_nome TEXT',
-    'pcd_status TEXT', 'pcd_obs TEXT', 'pcd_analise_em TIMESTAMPTZ'
+    'pcd_status TEXT', 'pcd_obs TEXT', 'pcd_analise_em TIMESTAMPTZ',
+    'inscricao_ext TEXT' // número de inscrição do órgão contratante (ex.: Pedro II); se vazio, vale o protocolo
   ]) {
     await pool.query(`ALTER TABLE candidatos ADD COLUMN IF NOT EXISTS ${col}`);
   }
@@ -592,7 +593,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'formulario-inscricao-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'ensalamento-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -2346,19 +2347,22 @@ app.get('/admin/relatorio/inscritos.html', exigirSenha, async (req, res) => {
 
 // ---- Locação: escolas e salas (admin) ----------------------
 app.get('/admin/concurso/:id/escolas.json', exigirSenha, async (req, res) => {
-  if (!pool) return res.json({ escolas: [], inscritos: 0, capacidade_total: 0 });
+  if (!pool) return res.json({ escolas: [], inscritos: 0, capacidade_total: 0, ocupados_total: 0, salas_total: 0 });
   const cid = parseInt(req.params.id);
   const es = await pool.query('SELECT id,nome,endereco FROM escolas WHERE concurso_id=$1 ORDER BY id', [cid]);
-  const sl = await pool.query('SELECT s.id,s.escola_id,s.nome,s.capacidade,s.obs FROM salas s JOIN escolas e ON e.id=s.escola_id WHERE e.concurso_id=$1 ORDER BY s.id', [cid]);
+  const sl = await pool.query(`SELECT s.id,s.escola_id,s.nome,s.capacidade,s.obs,
+    (SELECT COUNT(*)::int FROM candidatos k WHERE k.sala_id=s.id) AS ocupacao
+    FROM salas s JOIN escolas e ON e.id=s.escola_id WHERE e.concurso_id=$1 ORDER BY s.id`, [cid]);
   const ins = await pool.query('SELECT COUNT(*)::int n FROM candidatos WHERE concurso_id=$1', [cid]);
-  let capTotal = 0;
+  let capTotal = 0, ocupTotal = 0;
   const escolas = es.rows.map((e) => {
     const salas = sl.rows.filter((s) => s.escola_id === e.id);
     const cap = salas.reduce((a, s) => a + (s.capacidade || 0), 0);
-    capTotal += cap;
-    return { id: e.id, nome: e.nome, endereco: e.endereco, salas, capacidade: cap };
+    const ocup = salas.reduce((a, s) => a + (s.ocupacao || 0), 0);
+    capTotal += cap; ocupTotal += ocup;
+    return { id: e.id, nome: e.nome, endereco: e.endereco, salas, capacidade: cap, ocupacao: ocup };
   });
-  res.json({ escolas, inscritos: ins.rows[0].n, capacidade_total: capTotal });
+  res.json({ escolas, inscritos: ins.rows[0].n, capacidade_total: capTotal, ocupados_total: ocupTotal, salas_total: sl.rows.length });
 });
 app.post('/admin/concurso/:id/escola', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
@@ -2379,6 +2383,7 @@ app.post('/admin/escola/:id', exigirSenha, async (req, res) => {
 app.delete('/admin/escola/:id', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
   const id = parseInt(req.params.id);
+  await pool.query('UPDATE candidatos SET sala_id=NULL WHERE sala_id IN (SELECT id FROM salas WHERE escola_id=$1)', [id]);
   await pool.query('DELETE FROM salas WHERE escola_id=$1', [id]);
   await pool.query('DELETE FROM escolas WHERE id=$1', [id]);
   res.json({ ok: true });
@@ -2399,11 +2404,14 @@ app.post('/admin/sala/:id', exigirSenha, async (req, res) => {
   const cap = Math.max(0, parseInt((req.body || {}).capacidade) || 0);
   const obs = String((req.body || {}).obs || '').trim().slice(0, 200);
   if (!nome || cap <= 0) return res.status(400).json({ erro: 'Nome e capacidade são obrigatórios.' });
+  const oc = await pool.query('SELECT COUNT(*)::int n FROM candidatos WHERE sala_id=$1', [parseInt(req.params.id)]);
+  if (cap < oc.rows[0].n) return res.status(400).json({ erro: 'Esta sala já tem ' + oc.rows[0].n + ' candidato(s) alocado(s). A capacidade não pode ficar menor que ' + oc.rows[0].n + '. Remova a alocação de alguns antes, na aba Alocação.' });
   await pool.query('UPDATE salas SET nome=$1,capacidade=$2,obs=$3 WHERE id=$4', [nome, cap, obs, req.params.id]);
   res.json({ ok: true });
 });
 app.delete('/admin/sala/:id', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  await pool.query('UPDATE candidatos SET sala_id=NULL WHERE sala_id=$1', [req.params.id]);
   await pool.query('DELETE FROM salas WHERE id=$1', [req.params.id]);
   res.json({ ok: true });
 });
@@ -2425,8 +2433,9 @@ app.get('/admin/concurso/:id/candidatos.json', exigirSenha, async (req, res) => 
   if (q.pagamento === 'pagos') where.push("k.status='pago'"); else if (q.pagamento === 'naopagos') where.push("k.status<>'pago'");
   if (q.pcd === 'sim') where.push('k.pcd=TRUE'); else if (q.pcd === 'nao') where.push('k.pcd=FALSE');
   if (q.aloc === 'nao') where.push('k.sala_id IS NULL'); else if (q.aloc === 'sim') where.push('k.sala_id IS NOT NULL');
-  if (q.busca) { params.push('%' + String(q.busca).trim() + '%'); where.push('k.nome ILIKE $' + params.length); }
-  const { rows } = await pool.query(`SELECT k.id,k.nome,k.cpf,k.cargo,k.pcd,k.status,k.sala_id, s.nome AS sala_nome, e.nome AS escola_nome
+  if (q.busca) { params.push('%' + String(q.busca).trim() + '%'); where.push("(k.nome ILIKE $" + params.length + " OR COALESCE(NULLIF(k.inscricao_ext,''), k.protocolo, '') ILIKE $" + params.length + ')'); }
+  const { rows } = await pool.query(`SELECT k.id,k.nome,k.cpf,k.cargo,k.pcd,k.status,k.sala_id, s.nome AS sala_nome, e.nome AS escola_nome,
+    COALESCE(NULLIF(k.inscricao_ext,''), k.protocolo, '') AS inscricao
     FROM candidatos k LEFT JOIN salas s ON s.id=k.sala_id LEFT JOIN escolas e ON e.id=s.escola_id
     WHERE ${where.join(' AND ')} ORDER BY k.nome LIMIT 2000`, params);
   res.json({ candidatos: rows });
@@ -2448,6 +2457,126 @@ app.post('/admin/alocar', exigirSenha, async (req, res) => {
   await pool.query('UPDATE candidatos SET sala_id=$1 WHERE id = ANY($2::int[]) AND concurso_id=$3', [salaId, ids, concursoId]);
   res.json({ ok: true, alocados: ids.length });
 });
+// ---- Ensalamento geral ------------------------------------
+// Distribui automaticamente os candidatos nas salas escolhidas, na ordem escolhida.
+// body: { sala_ids:[...], cargos:[...] (vazio = todos), ordem:'alfabetica'|'inscricao'|'cargo',
+//         separar_cargos:bool, modo:'nao_alocados'|'refazer', pagamento:'confirmados'|'todos',
+//         inscricao_de, inscricao_ate, simular:bool }
+const cmpNatural = (a, b) => String(a || '').localeCompare(String(b || ''), 'pt-BR', { numeric: true, sensitivity: 'base' });
+async function planejarEnsalamento(cid, b) {
+  const salaIds = (Array.isArray(b.sala_ids) ? b.sala_ids : []).map((x) => parseInt(x)).filter(Boolean);
+  if (!salaIds.length) return { erro: 'Selecione ao menos uma sala.' };
+  const cargos = (Array.isArray(b.cargos) ? b.cargos : []).map(String).filter(Boolean);
+  const ordem = ['alfabetica', 'inscricao', 'cargo'].includes(b.ordem) ? b.ordem : 'alfabetica';
+  const refazer = b.modo === 'refazer';
+  const de = String(b.inscricao_de || '').trim(), ate = String(b.inscricao_ate || '').trim();
+
+  // salas escolhidas, na ordem do cadastro (escola, depois sala)
+  const sr = await pool.query(`SELECT s.id, s.nome, s.capacidade, e.nome AS escola, e.id AS escola_id
+    FROM salas s JOIN escolas e ON e.id=s.escola_id WHERE e.concurso_id=$1 AND s.id = ANY($2::int[]) ORDER BY e.id, s.id`, [cid, salaIds]);
+  if (!sr.rows.length) return { erro: 'Nenhuma das salas escolhidas pertence a este concurso.' };
+
+  // candidatos que entram no ensalamento
+  const where = ['k.concurso_id=$1']; const params = [cid];
+  if (cargos.length) { params.push(cargos); where.push('k.cargo = ANY($' + params.length + '::text[])'); }
+  if (b.pagamento !== 'todos') where.push("k.status IN ('pago','isento')");
+  if (!refazer) where.push('k.sala_id IS NULL');
+  const kr = await pool.query(`SELECT k.id, k.nome, k.cargo, k.sala_id, COALESCE(NULLIF(k.inscricao_ext,''), k.protocolo, '') AS inscricao
+    FROM candidatos k WHERE ${where.join(' AND ')}`, params);
+  let cands = kr.rows;
+  if (de) cands = cands.filter((k) => cmpNatural(k.inscricao, de) >= 0);
+  if (ate) cands = cands.filter((k) => cmpNatural(k.inscricao, ate) <= 0);
+  const movidos = new Set(cands.map((k) => k.id));
+
+  // ocupação atual das salas, sem contar quem vai ser reensalado
+  const oc = await pool.query('SELECT id, sala_id, cargo FROM candidatos WHERE sala_id = ANY($1::int[])', [salaIds]);
+  const salas = sr.rows.map((s) => {
+    const fica = oc.rows.filter((k) => k.sala_id === s.id && !movidos.has(k.id));
+    return { id: s.id, nome: s.nome, escola: s.escola, capacidade: s.capacidade,
+      ocupadas: fica.length, cargos_existentes: new Set(fica.map((k) => k.cargo)), entram: [] };
+  });
+
+  // ordenação
+  const porNome = (a, b2) => cmpNatural(a.nome, b2.nome);
+  const porInsc = (a, b2) => cmpNatural(a.inscricao, b2.inscricao) || porNome(a, b2);
+  const ordemCargo = cargos.length ? cargos : [...new Set(cands.map((k) => k.cargo))].sort(cmpNatural);
+  const idxCargo = (c) => { const i = ordemCargo.indexOf(c); return i < 0 ? 999 : i; };
+  const interno = ordem === 'inscricao' ? porInsc : porNome;
+  const separar = !!b.separar_cargos || ordem === 'cargo';
+  cands.sort((a, b2) => (separar ? idxCargo(a.cargo) - idxCargo(b2.cargo) : 0) || interno(a, b2));
+
+  // distribuição: enche uma sala e passa para a próxima.
+  // "não misturar cargos": cada cargo começa numa sala nova e não entra em sala que já tem outro cargo.
+  let i = 0, semLugar = [];
+  const grupos = separar ? ordemCargo.map((c) => cands.filter((k) => k.cargo === c)).filter((g) => g.length) : [cands];
+  for (const g of grupos) {
+    let j = 0;
+    for (const s of salas) {
+      if (j >= g.length) break;
+      if (separar) {
+        const cg = g[0].cargo;
+        const outros = [...s.cargos_existentes].some((c) => c !== cg) || s.entram.some((k) => k.cargo !== cg);
+        if (outros) continue;
+      }
+      while (j < g.length && s.ocupadas + s.entram.length < s.capacidade) s.entram.push(g[j++]);
+      if (separar && s.entram.length) s.cargos_existentes.add(g[0].cargo);
+    }
+    semLugar = semLugar.concat(g.slice(j));
+    i += g.length;
+  }
+
+  const plano = salas.map((s) => ({
+    sala_id: s.id, sala: s.nome, escola: s.escola, capacidade: s.capacidade, ja_ocupadas: s.ocupadas,
+    entram: s.entram.length, livres_depois: s.capacidade - s.ocupadas - s.entram.length,
+    cargos: [...new Set(s.entram.map((k) => k.cargo))],
+    primeiro: s.entram[0] ? { nome: s.entram[0].nome, inscricao: s.entram[0].inscricao } : null,
+    ultimo: s.entram.length ? { nome: s.entram[s.entram.length - 1].nome, inscricao: s.entram[s.entram.length - 1].inscricao } : null,
+    _ids: s.entram.map((k) => k.id),
+  }));
+  return { plano, total: cands.length, alocados: cands.length - semLugar.length, sem_lugar: semLugar.length,
+    sem_lugar_exemplos: semLugar.slice(0, 5).map((k) => ({ nome: k.nome, inscricao: k.inscricao, cargo: k.cargo })) };
+}
+app.post('/admin/concurso/:id/ensalar', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const cid = parseInt(req.params.id); const b = req.body || {};
+  let r;
+  try { r = await planejarEnsalamento(cid, b); } catch (e) { console.error('ensalar', e); return res.status(500).json({ erro: 'Erro ao montar o ensalamento.' }); }
+  if (r.erro) return res.status(400).json({ erro: r.erro });
+  const publico = { ...r, plano: r.plano.map(({ _ids, ...p }) => p) };
+  if (b.simular) return res.json({ simulacao: true, ...publico });
+
+  const ids = [], salasDe = [];
+  r.plano.forEach((p) => p._ids.forEach((id) => { ids.push(id); salasDe.push(p.sala_id); }));
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    if (b.modo === 'refazer') {
+      // quem entrou no filtro mas ficou sem lugar também perde a sala antiga (reensalar = recomeçar)
+      const todos = await planejarIdsFiltrados(client, cid, b);
+      if (todos.length) await client.query('UPDATE candidatos SET sala_id=NULL WHERE id = ANY($1::int[])', [todos]);
+    }
+    if (ids.length) {
+      await client.query(`UPDATE candidatos k SET sala_id=v.sala FROM (SELECT unnest($1::int[]) AS id, unnest($2::int[]) AS sala) v
+        WHERE k.id=v.id AND k.concurso_id=$3`, [ids, salasDe, cid]);
+    }
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('ensalar', e);
+    return res.status(500).json({ erro: 'Erro ao gravar o ensalamento. Nada foi alterado.' });
+  } finally { client.release(); }
+  res.json({ ok: true, ...publico });
+});
+async function planejarIdsFiltrados(client, cid, b) {
+  const cargos = (Array.isArray(b.cargos) ? b.cargos : []).map(String).filter(Boolean);
+  const where = ['k.concurso_id=$1']; const params = [cid];
+  if (cargos.length) { params.push(cargos); where.push('k.cargo = ANY($' + params.length + '::text[])'); }
+  if (b.pagamento !== 'todos') where.push("k.status IN ('pago','isento')");
+  const kr = await client.query(`SELECT k.id, COALESCE(NULLIF(k.inscricao_ext,''), k.protocolo, '') AS inscricao FROM candidatos k WHERE ${where.join(' AND ')}`, params);
+  const de = String(b.inscricao_de || '').trim(), ate = String(b.inscricao_ate || '').trim();
+  return kr.rows.filter((k) => (!de || cmpNatural(k.inscricao, de) >= 0) && (!ate || cmpNatural(k.inscricao, ate) <= 0)).map((k) => k.id);
+}
+
 app.post('/admin/desalocar', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
   const ids = (Array.isArray((req.body || {}).candidato_ids) ? req.body.candidato_ids : []).map((x) => parseInt(x)).filter(Boolean);
