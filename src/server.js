@@ -246,6 +246,16 @@ async function inicializarBanco() {
   for (const col of ['professor_id INT', 'empresa_id INT', 'concurso_id INT', "cargos TEXT DEFAULT '[]'"]) {
     await pool.query(`ALTER TABLE questoes ADD COLUMN IF NOT EXISTS ${col}`);
   }
+  // Correção de redações: banca (tópicos, regras), textos (imagens) e correções (1ª, 2ª e 3ª).
+  await pool.query(`CREATE TABLE IF NOT EXISTS red_bancas (id SERIAL PRIMARY KEY, empresa_id INT, titulo TEXT,
+    nota_max NUMERIC DEFAULT 10, discrepancia NUMERIC DEFAULT 2, topicos TEXT DEFAULT '[]', motivos_zero TEXT DEFAULT '[]',
+    professores TEXT DEFAULT '[]', encerrada BOOLEAN DEFAULT FALSE, criado_em TIMESTAMPTZ DEFAULT now());`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS red_textos (id SERIAL PRIMARY KEY, banca_id INT, codigo TEXT, seq INT,
+    mime TEXT, imagem BYTEA, tamanho INT, criado_em TIMESTAMPTZ DEFAULT now(), UNIQUE(banca_id, codigo));`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS red_correcoes (id SERIAL PRIMARY KEY, texto_id INT, banca_id INT, professor_id INT,
+    ordem INT, notas TEXT DEFAULT '{}', zero_motivo TEXT, total NUMERIC, status TEXT DEFAULT 'pendente',
+    corrigido_em TIMESTAMPTZ, criado_em TIMESTAMPTZ DEFAULT now(), UNIQUE(texto_id, ordem));`);
+  await pool.query('CREATE INDEX IF NOT EXISTS red_corr_prof ON red_correcoes (banca_id, professor_id, status)');
   {
     const pri = await pool.query('SELECT id FROM empresas ORDER BY id LIMIT 1');
     if (pri.rows.length) await pool.query('UPDATE questoes SET empresa_id=$1 WHERE empresa_id IS NULL', [pri.rows[0].id]);
@@ -593,7 +603,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'ensalamento-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'redacoes-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -3621,6 +3631,415 @@ app.get('/boleto/:protocolo', async (req, res) => {
   res.send(html);
 });
 
+
+// =================== CORREÇÃO DE REDAÇÕES ===================
+// Regras: cada texto tem 2 correções independentes (um professor não vê a nota do outro).
+// Se |nota1 - nota2| > discrepancia, abre-se a 3ª correção (atribuída automaticamente).
+// Nota final: média das duas; com 3ª correção, média da 3ª com a nota mais próxima dela
+// (empate: a maior das médias possíveis). Nota zero com motivo zera o total.
+const RED_MOTIVOS_PADRAO = [
+  'Fuga ao tema (não atendimento ao tema proposto)',
+  'Ausência de texto (em branco)',
+  'Texto ilegível',
+  'Texto abaixo do número mínimo de linhas',
+  'Identificação em local indevido',
+  'Texto grafado por outro meio que não o determinado',
+];
+const red2 = (n) => Math.round(Number(n) * 100) / 100;
+function redParseBanca(r) {
+  const j = (t, d) => { try { const v = JSON.parse(t || ''); return Array.isArray(v) ? v : d; } catch { return d; } };
+  return { id: r.id, empresa_id: r.empresa_id, titulo: r.titulo, nota_max: Number(r.nota_max), discrepancia: Number(r.discrepancia),
+    topicos: j(r.topicos, []), motivos_zero: j(r.motivos_zero, RED_MOTIVOS_PADRAO), professores: j(r.professores, []).map(Number),
+    encerrada: !!r.encerrada };
+}
+async function redBanca(id) {
+  const { rows } = await pool.query('SELECT * FROM red_bancas WHERE id=$1', [parseInt(id) || 0]);
+  return rows.length ? redParseBanca(rows[0]) : null;
+}
+// Situação/nota final de um texto a partir das correções feitas.
+function redFinal(corrs, disc) {
+  const f = (o) => corrs.find((c) => c.ordem === o && c.status === 'feita');
+  const c1 = f(1), c2 = f(2), c3 = f(3);
+  if (!c1 || !c2) return { situacao: 'em_correcao', final: null, precisa3: false };
+  const t1 = Number(c1.total), t2 = Number(c2.total);
+  if (Math.abs(t1 - t2) <= disc + 1e-9) return { situacao: 'concluida', final: red2((t1 + t2) / 2), precisa3: false };
+  if (!c3) return { situacao: 'aguardando_3a', final: null, precisa3: true };
+  const t3 = Number(c3.total);
+  const d1 = Math.abs(t3 - t1), d2 = Math.abs(t3 - t2);
+  const viz = d1 < d2 ? t1 : (d2 < d1 ? t2 : Math.max(t1, t2));
+  return { situacao: 'concluida', final: red2((t3 + viz) / 2), precisa3: true };
+}
+// Carga pendente de cada professor na banca (para distribuir de forma equilibrada).
+async function redCargas(bancaId, profIds) {
+  const { rows } = await pool.query(`SELECT professor_id, COUNT(*)::int n FROM red_correcoes
+    WHERE banca_id=$1 GROUP BY professor_id`, [bancaId]);
+  const carga = {}; profIds.forEach((p) => { carga[p] = 0; });
+  rows.forEach((r) => { if (r.professor_id in carga) carga[r.professor_id] = r.n; });
+  return carga;
+}
+function redMenosCarregado(carga, excluir) {
+  const cands = Object.keys(carga).map(Number).filter((p) => !excluir.includes(p));
+  if (!cands.length) return null;
+  const min = Math.min(...cands.map((p) => carga[p]));
+  const empatados = cands.filter((p) => carga[p] === min);
+  return empatados[Math.floor(Math.random() * empatados.length)];
+}
+// Depois de salvar uma correção: abre/atribui ou desfaz a 3ª correção conforme a discrepância.
+async function redVerificar3a(texto_id, banca) {
+  const { rows } = await pool.query('SELECT * FROM red_correcoes WHERE texto_id=$1', [texto_id]);
+  const r = redFinal(rows, banca.discrepancia);
+  const c3 = rows.find((c) => c.ordem === 3);
+  if (r.precisa3 && !c3) {
+    const carga = await redCargas(banca.id, banca.professores);
+    const excl = rows.filter((c) => c.ordem !== 3).map((c) => c.professor_id);
+    const prof = redMenosCarregado(carga, excl);
+    await pool.query('INSERT INTO red_correcoes (texto_id,banca_id,professor_id,ordem) VALUES ($1,$2,$3,3) ON CONFLICT (texto_id,ordem) DO NOTHING',
+      [texto_id, banca.id, prof]);
+  } else if (!r.precisa3 && c3 && c3.status === 'pendente') {
+    await pool.query('DELETE FROM red_correcoes WHERE id=$1', [c3.id]);
+  }
+}
+function redValidarNotas(banca, notas, zeroMotivo) {
+  if (zeroMotivo) {
+    if (!banca.motivos_zero.includes(zeroMotivo)) return { erro: 'Motivo de nota zero inválido.' };
+    return { notas: {}, total: 0, zero: zeroMotivo };
+  }
+  const out = {}; let total = 0;
+  for (let i = 0; i < banca.topicos.length; i++) {
+    const t = banca.topicos[i];
+    const bruto = notas ? notas[i] : undefined;
+    if (bruto === undefined || bruto === null || String(bruto).trim() === '') return { erro: 'Preencha a nota do tópico "' + t.nome + '".' };
+    const v = Number(String(bruto).replace(',', '.'));
+    if (!Number.isFinite(v) || v < 0 || v > Number(t.max) + 1e-9) return { erro: 'A nota de "' + t.nome + '" deve estar entre 0 e ' + t.max + '.' };
+    out[i] = red2(v); total += v;
+  }
+  return { notas: out, total: red2(total), zero: null };
+}
+
+// ---- Admin
+app.get('/admin/redacao/bancas.json', exigirSenha, async (req, res) => {
+  if (!pool) return res.json({ bancas: [] });
+  const emp = parseInt(req.query.empresa) || 0;
+  const { rows } = await pool.query(`SELECT b.*, (SELECT COUNT(*)::int FROM red_textos t WHERE t.banca_id=b.id) AS textos
+    FROM red_bancas b ${emp ? 'WHERE b.empresa_id=$1' : ''} ORDER BY b.id DESC`, emp ? [emp] : []);
+  res.json({ bancas: rows.map((r) => ({ ...redParseBanca(r), textos: r.textos })) });
+});
+app.post('/admin/redacao/banca', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const b = req.body || {};
+  const titulo = String(b.titulo || '').trim().slice(0, 160);
+  if (!titulo) return res.status(400).json({ erro: 'Informe o nome da correção.' });
+  const notaMax = Number(String(b.nota_max == null ? 10 : b.nota_max).replace(',', '.'));
+  const disc = Number(String(b.discrepancia == null ? 2 : b.discrepancia).replace(',', '.'));
+  if (!(notaMax > 0)) return res.status(400).json({ erro: 'Nota máxima inválida.' });
+  if (!(disc >= 0)) return res.status(400).json({ erro: 'Diferença para 3ª correção inválida.' });
+  const topicos = (Array.isArray(b.topicos) ? b.topicos : []).map((t) => ({
+    nome: String(t && t.nome || '').trim().slice(0, 200), max: red2(Number(String(t && t.max || '').replace(',', '.'))),
+  })).filter((t) => t.nome);
+  if (!topicos.length) return res.status(400).json({ erro: 'Cadastre ao menos um tópico.' });
+  if (topicos.some((t) => !(t.max > 0))) return res.status(400).json({ erro: 'Cada tópico precisa de uma pontuação máxima maior que zero.' });
+  const soma = red2(topicos.reduce((a, t) => a + t.max, 0));
+  if (Math.abs(soma - notaMax) > 1e-9) return res.status(400).json({ erro: 'A soma dos tópicos (' + soma + ') precisa ser igual à nota máxima (' + red2(notaMax) + ').' });
+  const motivos = (Array.isArray(b.motivos_zero) && b.motivos_zero.length ? b.motivos_zero : RED_MOTIVOS_PADRAO)
+    .map((m) => String(m || '').trim().slice(0, 200)).filter(Boolean);
+  const emp = parseInt(b.empresa_id) || null;
+  if (b.id) {
+    const atual = await redBanca(b.id);
+    if (!atual) return res.status(404).json({ erro: 'Correção não encontrada.' });
+    const feitas = (await pool.query("SELECT COUNT(*)::int n FROM red_correcoes WHERE banca_id=$1 AND status='feita'", [atual.id])).rows[0].n;
+    const mudouTopicos = JSON.stringify(atual.topicos) !== JSON.stringify(topicos);
+    if (feitas && mudouTopicos) return res.status(400).json({ erro: 'Já existem ' + feitas + ' correção(ões) feitas. Os tópicos não podem mais ser alterados.' });
+    await pool.query('UPDATE red_bancas SET titulo=$1,nota_max=$2,discrepancia=$3,topicos=$4,motivos_zero=$5 WHERE id=$6',
+      [titulo, notaMax, disc, JSON.stringify(topicos), JSON.stringify(motivos), atual.id]);
+    return res.json({ ok: true, id: atual.id });
+  }
+  const r = await pool.query('INSERT INTO red_bancas (empresa_id,titulo,nota_max,discrepancia,topicos,motivos_zero) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id',
+    [emp, titulo, notaMax, disc, JSON.stringify(topicos), JSON.stringify(motivos)]);
+  res.json({ ok: true, id: r.rows[0].id });
+});
+app.delete('/admin/redacao/banca/:id', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const id = parseInt(req.params.id);
+  await pool.query('DELETE FROM red_correcoes WHERE banca_id=$1', [id]);
+  await pool.query('DELETE FROM red_textos WHERE banca_id=$1', [id]);
+  await pool.query('DELETE FROM red_bancas WHERE id=$1', [id]);
+  res.json({ ok: true });
+});
+// Envio de uma imagem de redação. O código vem do nome do arquivo (nº de inscrição; "_" vira "/").
+app.post('/admin/redacao/banca/:id/texto', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const banca = await redBanca(req.params.id);
+  if (!banca) return res.status(404).json({ erro: 'Correção não encontrada.' });
+  const b = req.body || {};
+  const codigo = String(b.codigo || '').trim().replace(/\.(jpe?g|png)$/i, '').replace(/_/g, '/').slice(0, 80);
+  if (!codigo) return res.status(400).json({ erro: 'Arquivo sem nome (o nome deve ser o nº de inscrição).' });
+  let d = String(b.dataBase64 || ''); const v = d.indexOf(','); if (v > -1) d = d.slice(v + 1);
+  let buf; try { buf = Buffer.from(d, 'base64'); } catch { buf = null; }
+  if (!buf || !buf.length) return res.status(400).json({ erro: 'Arquivo vazio.' });
+  if (buf.length > 4 * 1024 * 1024) return res.status(400).json({ erro: 'Imagem acima de 4 MB.' });
+  const mime = mimeDe(buf);
+  if (mime !== 'image/jpeg' && mime !== 'image/png') return res.status(400).json({ erro: 'Envie imagens JPG ou PNG.' });
+  const ex = await pool.query('SELECT id FROM red_textos WHERE banca_id=$1 AND codigo=$2', [banca.id, codigo]);
+  if (ex.rows.length) {
+    await pool.query('UPDATE red_textos SET imagem=$1,mime=$2,tamanho=$3 WHERE id=$4', [buf, mime, buf.length, ex.rows[0].id]);
+    return res.json({ ok: true, substituido: true });
+  }
+  await pool.query(`INSERT INTO red_textos (banca_id,codigo,seq,mime,imagem,tamanho)
+    VALUES ($1,$2,(SELECT COALESCE(MAX(seq),0)+1 FROM red_textos WHERE banca_id=$1),$3,$4,$5)`, [banca.id, codigo, mime, buf, buf.length]);
+  res.json({ ok: true });
+});
+app.get('/admin/redacao/texto/:id/imagem', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Indisponível.');
+  const { rows } = await pool.query('SELECT mime,imagem FROM red_textos WHERE id=$1', [req.params.id]);
+  if (!rows.length) return res.status(404).send('Não encontrado.');
+  res.setHeader('Content-Type', rows[0].mime || 'image/jpeg'); res.send(rows[0].imagem);
+});
+app.get('/admin/redacao/banca/:id/resumo.json', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const banca = await redBanca(req.params.id);
+  if (!banca) return res.status(404).json({ erro: 'Correção não encontrada.' });
+  const tx = await pool.query('SELECT id FROM red_textos WHERE banca_id=$1', [banca.id]);
+  const cs = await pool.query('SELECT texto_id,professor_id,ordem,status,total FROM red_correcoes WHERE banca_id=$1', [banca.id]);
+  const porTexto = {}; cs.rows.forEach((c) => { (porTexto[c.texto_id] = porTexto[c.texto_id] || []).push(c); });
+  let concluidas = 0, aguard3 = 0, semDistrib = 0;
+  tx.rows.forEach((t) => {
+    const l = porTexto[t.id] || [];
+    if (!l.some((c) => c.ordem === 1) || !l.some((c) => c.ordem === 2)) semDistrib++;
+    const r = redFinal(l, banca.discrepancia);
+    if (r.situacao === 'concluida') concluidas++;
+    if (l.some((c) => c.ordem === 3)) aguard3 += (r.situacao === 'concluida' ? 0 : 1);
+  });
+  const profs = (await pool.query('SELECT id,nome,email,ativo FROM professores WHERE empresa_id=$1 OR id = ANY($2::int[]) ORDER BY nome',
+    [banca.empresa_id, banca.professores])).rows;
+  const por = profs.map((p) => {
+    const m = cs.rows.filter((c) => c.professor_id === p.id);
+    return { id: p.id, nome: p.nome, email: p.email, ativo: p.ativo, na_banca: banca.professores.includes(p.id),
+      total: m.length, feitas: m.filter((c) => c.status === 'feita').length, pendentes: m.filter((c) => c.status !== 'feita').length,
+      terceiras: m.filter((c) => c.ordem === 3).length };
+  });
+  const semProf = cs.rows.filter((c) => !c.professor_id).length;
+  res.json({ banca, textos: tx.rows.length, concluidas, aguardando_3a: aguard3, sem_distribuir: semDistrib, sem_professor: semProf, professores: por });
+});
+// Distribuição: cada texto ganha 1ª e 2ª correção com professores diferentes, sempre o menos carregado.
+app.post('/admin/redacao/banca/:id/distribuir', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const banca = await redBanca(req.params.id);
+  if (!banca) return res.status(404).json({ erro: 'Correção não encontrada.' });
+  const ids = [...new Set((Array.isArray((req.body || {}).professor_ids) ? req.body.professor_ids : []).map((x) => parseInt(x)).filter(Boolean))];
+  if (ids.length < 2) return res.status(400).json({ erro: 'Marque pelo menos 2 professores (cada redação é corrigida por dois).' });
+  const ok = await pool.query('SELECT id FROM professores WHERE id = ANY($1::int[]) AND ativo=TRUE', [ids]);
+  if (ok.rows.length !== ids.length) return res.status(400).json({ erro: 'Algum professor marcado está inativo ou não existe.' });
+  await pool.query('UPDATE red_bancas SET professores=$1 WHERE id=$2', [JSON.stringify(ids), banca.id]);
+  banca.professores = ids;
+  const tx = await pool.query('SELECT id FROM red_textos WHERE banca_id=$1 ORDER BY random()', [banca.id]);
+  const cs = await pool.query('SELECT texto_id,professor_id,ordem FROM red_correcoes WHERE banca_id=$1', [banca.id]);
+  const carga = await redCargas(banca.id, ids);
+  const client = await pool.connect(); let novas = 0;
+  try {
+    await client.query('BEGIN');
+    for (const t of tx.rows) {
+      const ja = cs.rows.filter((c) => c.texto_id === t.id);
+      for (const ordem of [1, 2]) {
+        if (ja.some((c) => c.ordem === ordem)) continue;
+        const prof = redMenosCarregado(carga, ja.map((c) => c.professor_id));
+        if (!prof) continue;
+        await client.query('INSERT INTO red_correcoes (texto_id,banca_id,professor_id,ordem) VALUES ($1,$2,$3,$4)', [t.id, banca.id, prof, ordem]);
+        ja.push({ texto_id: t.id, professor_id: prof, ordem }); carga[prof]++; novas++;
+      }
+    }
+    // correções sem professor (3ª sem professor disponível, ou professor excluído) ganham um professor agora
+    const orf = await client.query('SELECT c.id,c.texto_id FROM red_correcoes c WHERE c.banca_id=$1 AND c.professor_id IS NULL AND c.status=$2', [banca.id, 'pendente']);
+    for (const o of orf.rows) {
+      const excl = cs.rows.filter((c) => c.texto_id === o.texto_id).map((c) => c.professor_id);
+      const prof = redMenosCarregado(carga, excl);
+      if (prof) { await client.query('UPDATE red_correcoes SET professor_id=$1 WHERE id=$2', [prof, o.id]); carga[prof]++; novas++; }
+    }
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {}); console.error('distribuir', e);
+    return res.status(500).json({ erro: 'Erro ao distribuir. Nada foi alterado.' });
+  } finally { client.release(); }
+  res.json({ ok: true, atribuídas: novas, novas });
+});
+// Lista de redações da correção, com quem corrige cada uma (para conferência e ajuste manual).
+app.get('/admin/redacao/banca/:id/textos.json', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const banca = await redBanca(req.params.id);
+  if (!banca) return res.status(404).json({ erro: 'Correção não encontrada.' });
+  const tx = await pool.query('SELECT id,codigo,seq FROM red_textos WHERE banca_id=$1 ORDER BY codigo', [banca.id]);
+  const cs = await pool.query(`SELECT c.id,c.texto_id,c.professor_id,c.ordem,c.status,c.total,c.zero_motivo,p.nome AS prof
+    FROM red_correcoes c LEFT JOIN professores p ON p.id=c.professor_id WHERE c.banca_id=$1 ORDER BY c.ordem`, [banca.id]);
+  res.json({ textos: tx.rows.map((t) => {
+    const l = cs.rows.filter((c) => c.texto_id === t.id);
+    const r = redFinal(l, banca.discrepancia);
+    return { id: t.id, codigo: t.codigo, seq: t.seq, situacao: r.situacao, final: r.final,
+      correcoes: l.map((c) => ({ id: c.id, ordem: c.ordem, professor_id: c.professor_id, prof: c.prof, status: c.status,
+        total: c.total == null ? null : Number(c.total), zero_motivo: c.zero_motivo })) };
+  }) });
+});
+// Ajuste manual de uma correção específica: troca o professor (só se ainda estiver pendente).
+app.post('/admin/redacao/correcao/:id/professor', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const para = parseInt((req.body || {}).professor_id) || 0;
+  const { rows } = await pool.query('SELECT * FROM red_correcoes WHERE id=$1', [parseInt(req.params.id) || 0]);
+  if (!rows.length) return res.status(404).json({ erro: 'Correção não encontrada.' });
+  const c = rows[0];
+  if (c.status === 'feita') return res.status(400).json({ erro: 'Esta correção já foi feita e não pode mudar de professor.' });
+  const pe = await pool.query('SELECT id FROM professores WHERE id=$1 AND ativo=TRUE', [para]);
+  if (!pe.rows.length) return res.status(400).json({ erro: 'Escolha um professor ativo.' });
+  const outro = await pool.query('SELECT 1 FROM red_correcoes WHERE texto_id=$1 AND professor_id=$2 AND id<>$3', [c.texto_id, para, c.id]);
+  if (outro.rows.length) return res.status(400).json({ erro: 'Este professor já corrige esta mesma redação. Cada correção precisa ser de um professor diferente.' });
+  await pool.query('UPDATE red_correcoes SET professor_id=$1 WHERE id=$2', [para, c.id]);
+  const banca = await redBanca(c.banca_id);
+  if (banca && !banca.professores.includes(para)) {
+    banca.professores.push(para);
+    await pool.query('UPDATE red_bancas SET professores=$1 WHERE id=$2', [JSON.stringify(banca.professores), banca.id]);
+  }
+  res.json({ ok: true });
+});
+// Remanejar: passa correções PENDENTES de um professor para outro (nunca para quem já corrige o mesmo texto).
+app.post('/admin/redacao/banca/:id/remanejar', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const banca = await redBanca(req.params.id);
+  if (!banca) return res.status(404).json({ erro: 'Correção não encontrada.' });
+  const b = req.body || {}; const de = parseInt(b.de), para = parseInt(b.para);
+  const qtd = Math.max(0, parseInt(b.quantidade) || 0);
+  if (!de || !para || de === para) return res.status(400).json({ erro: 'Escolha dois professores diferentes.' });
+  if (!qtd) return res.status(400).json({ erro: 'Informe a quantidade.' });
+  const pe = await pool.query('SELECT id FROM professores WHERE id=$1 AND ativo=TRUE', [para]);
+  if (!pe.rows.length) return res.status(400).json({ erro: 'O professor de destino está inativo.' });
+  const cand = await pool.query(`SELECT c.id FROM red_correcoes c WHERE c.banca_id=$1 AND c.professor_id=$2 AND c.status='pendente'
+    AND NOT EXISTS (SELECT 1 FROM red_correcoes o WHERE o.texto_id=c.texto_id AND o.professor_id=$3)
+    ORDER BY c.ordem DESC, c.id DESC LIMIT $4`, [banca.id, de, para, qtd]);
+  if (cand.rows.length) await pool.query('UPDATE red_correcoes SET professor_id=$1 WHERE id = ANY($2::int[])', [para, cand.rows.map((r) => r.id)]);
+  if (!banca.professores.includes(para)) {
+    banca.professores.push(para);
+    await pool.query('UPDATE red_bancas SET professores=$1 WHERE id=$2', [JSON.stringify(banca.professores), banca.id]);
+  }
+  res.json({ ok: true, movidas: cand.rows.length });
+});
+app.post('/admin/redacao/banca/:id/encerrar', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const encerrar = !!(req.body || {}).encerrar;
+  await pool.query('UPDATE red_bancas SET encerrada=$1 WHERE id=$2', [encerrar, parseInt(req.params.id)]);
+  res.json({ ok: true });
+});
+app.get('/admin/redacao/banca/:id/resultado.csv', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  const banca = await redBanca(req.params.id);
+  if (!banca) return res.status(404).send('Correção não encontrada.');
+  const tx = await pool.query('SELECT id,codigo,seq FROM red_textos WHERE banca_id=$1 ORDER BY codigo', [banca.id]);
+  const cs = await pool.query('SELECT c.*,p.nome AS prof FROM red_correcoes c LEFT JOIN professores p ON p.id=c.professor_id WHERE c.banca_id=$1', [banca.id]);
+  const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+  const num = (v) => (v == null || v === '' ? '' : String(red2(v)).replace('.', ','));
+  const cab = ['Inscrição', 'Nº redação'];
+  for (const o of [1, 2, 3]) {
+    cab.push(o + 'ª correção - professor');
+    banca.topicos.forEach((t) => cab.push(o + 'ª - ' + t.nome));
+    cab.push(o + 'ª - nota zero (motivo)', o + 'ª - total');
+  }
+  cab.push('Nota final', 'Situação');
+  const linhas = [cab.map(esc).join(';')];
+  const SIT = { concluida: 'Concluída', aguardando_3a: 'Aguardando 3ª correção', em_correcao: 'Em correção' };
+  for (const t of tx.rows) {
+    const l = cs.rows.filter((c) => c.texto_id === t.id);
+    const row = [t.codigo, t.seq];
+    for (const o of [1, 2, 3]) {
+      const c = l.find((x) => x.ordem === o);
+      let n = {}; try { n = JSON.parse((c && c.notas) || '{}'); } catch {}
+      const feita = c && c.status === 'feita';
+      row.push(c ? (c.prof || '(sem professor)') : '');
+      banca.topicos.forEach((_, i) => row.push(feita && !c.zero_motivo ? num(n[i]) : ''));
+      row.push(feita ? (c.zero_motivo || '') : '', feita ? num(c.total) : '');
+    }
+    const r = redFinal(l, banca.discrepancia);
+    row.push(r.final == null ? '' : num(r.final), SIT[r.situacao] + (r.final === 0 ? ' — NOTA ZERO' : ''));
+    linhas.push(row.map((v, i) => (typeof v === 'number' ? v : esc(v))).join(';'));
+  }
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="resultado-redacoes-' + banca.id + '.csv"');
+  res.send('﻿' + linhas.join('\r\n'));
+});
+
+// ---- Professor (mesmo login da Área do Professor)
+async function redProfCorrecao(p, id) {
+  const { rows } = await pool.query(`SELECT c.*, t.seq, t.codigo FROM red_correcoes c JOIN red_textos t ON t.id=c.texto_id
+    WHERE c.id=$1 AND c.professor_id=$2`, [parseInt(id) || 0, p.id]);
+  return rows[0] || null;
+}
+async function redPayload(c, banca, p) {
+  const img = await pool.query('SELECT mime,imagem FROM red_textos WHERE id=$1', [c.texto_id]);
+  const prog = await pool.query(`SELECT COUNT(*)::int total, COUNT(*) FILTER (WHERE status='feita')::int feitas
+    FROM red_correcoes WHERE banca_id=$1 AND professor_id=$2`, [banca.id, p.id]);
+  let notas = {}; try { notas = JSON.parse(c.notas || '{}'); } catch {}
+  return {
+    correcao_id: c.id, numero: c.seq, status: c.status, notas, zero_motivo: c.zero_motivo || '',
+    total: c.total == null ? null : Number(c.total), terceira: c.ordem === 3,
+    imagem: img.rows.length ? ('data:' + (img.rows[0].mime || 'image/jpeg') + ';base64,' + img.rows[0].imagem.toString('base64')) : null,
+    banca: { id: banca.id, titulo: banca.titulo, nota_max: banca.nota_max, topicos: banca.topicos, motivos_zero: banca.motivos_zero, encerrada: banca.encerrada },
+    progresso: prog.rows[0],
+  };
+}
+app.post('/api/redacao/bancas', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const p = await autenticaProfessor(req.body);
+  if (!p) return res.status(401).json({ erro: 'E-mail ou senha inválidos.' });
+  const { rows } = await pool.query(`SELECT b.id,b.titulo,b.encerrada,
+    COUNT(c.id)::int total, COUNT(c.id) FILTER (WHERE c.status='feita')::int feitas
+    FROM red_bancas b JOIN red_correcoes c ON c.banca_id=b.id AND c.professor_id=$1
+    GROUP BY b.id ORDER BY b.id DESC`, [p.id]);
+  res.json({ nome: p.nome, bancas: rows });
+});
+app.post('/api/redacao/proxima', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const p = await autenticaProfessor(req.body);
+  if (!p) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
+  const banca = await redBanca((req.body || {}).banca_id);
+  if (!banca) return res.status(404).json({ erro: 'Correção não encontrada.' });
+  const { rows } = await pool.query(`SELECT c.*, t.seq FROM red_correcoes c JOIN red_textos t ON t.id=c.texto_id
+    WHERE c.banca_id=$1 AND c.professor_id=$2 AND c.status='pendente' ORDER BY c.ordem DESC, t.seq LIMIT 1`, [banca.id, p.id]);
+  if (!rows.length) {
+    const prog = await pool.query(`SELECT COUNT(*)::int total, COUNT(*) FILTER (WHERE status='feita')::int feitas
+      FROM red_correcoes WHERE banca_id=$1 AND professor_id=$2`, [banca.id, p.id]);
+    return res.json({ fim: true, progresso: prog.rows[0], banca: { id: banca.id, titulo: banca.titulo } });
+  }
+  res.json(await redPayload(rows[0], banca, p));
+});
+app.post('/api/redacao/abrir', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const p = await autenticaProfessor(req.body);
+  if (!p) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
+  const c = await redProfCorrecao(p, (req.body || {}).correcao_id);
+  if (!c) return res.status(404).json({ erro: 'Redação não encontrada.' });
+  const banca = await redBanca(c.banca_id);
+  res.json(await redPayload(c, banca, p));
+});
+app.post('/api/redacao/minhas', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const p = await autenticaProfessor(req.body);
+  if (!p) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
+  const { rows } = await pool.query(`SELECT c.id, t.seq, c.status, c.total, c.zero_motivo, c.ordem, c.corrigido_em
+    FROM red_correcoes c JOIN red_textos t ON t.id=c.texto_id WHERE c.banca_id=$1 AND c.professor_id=$2 ORDER BY t.seq`,
+    [parseInt((req.body || {}).banca_id) || 0, p.id]);
+  res.json({ correcoes: rows.map((r) => ({ ...r, total: r.total == null ? null : Number(r.total), terceira: r.ordem === 3 })) });
+});
+app.post('/api/redacao/salvar', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const p = await autenticaProfessor(req.body);
+  if (!p) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
+  const b = req.body || {};
+  const c = await redProfCorrecao(p, b.correcao_id);
+  if (!c) return res.status(404).json({ erro: 'Redação não encontrada.' });
+  const banca = await redBanca(c.banca_id);
+  if (banca.encerrada) return res.status(400).json({ erro: 'Esta correção foi encerrada pela coordenação. Não é mais possível alterar notas.' });
+  const v = redValidarNotas(banca, b.notas, String(b.zero_motivo || '').trim() || null);
+  if (v.erro) return res.status(400).json({ erro: v.erro });
+  await pool.query("UPDATE red_correcoes SET notas=$1,zero_motivo=$2,total=$3,status='feita',corrigido_em=now() WHERE id=$4",
+    [JSON.stringify(v.notas), v.zero, v.total, c.id]);
+  await redVerificar3a(c.texto_id, banca);
+  res.json({ ok: true, total: v.total });
+});
+
 app.get('/e/:slug', (req, res) => res.sendFile(path.join(__dirname, '..', 'public', 'index.html')));
 
 // ---- Professores: admin ------------------------------------
@@ -3659,6 +4078,9 @@ app.post('/admin/professor', exigirSenha, async (req, res) => {
 });
 app.delete('/admin/professor/:id', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const rf = await pool.query("SELECT COUNT(*)::int n FROM red_correcoes WHERE professor_id=$1 AND status='feita'", [req.params.id]);
+  if (rf.rows[0].n) return res.status(400).json({ erro: 'Este professor já corrigiu ' + rf.rows[0].n + ' redação(ões). Em vez de excluir, desmarque "Ativo" para bloquear o acesso.' });
+  await pool.query('UPDATE red_correcoes SET professor_id=NULL WHERE professor_id=$1', [req.params.id]);
   await pool.query('UPDATE questoes SET professor_id=NULL WHERE professor_id=$1', [req.params.id]);
   await pool.query('DELETE FROM professores WHERE id=$1', [req.params.id]);
   res.json({ ok: true });

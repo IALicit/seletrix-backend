@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v28-ensalamento -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v29-redacoes -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -84,6 +84,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   <div class="tab" data-t="alocacao">Alocação</div>
   <div class="tab" data-t="questoes">Questões</div>
   <div class="tab" data-t="professores">Professores</div>
+  <div class="tab" data-t="redacoes">Redações</div>
   <div class="tab" data-t="prova_online">Prova Online</div>
   <div class="tab" data-t="recursos">Recursos</div>
   <div class="tab" data-t="titulos">Títulos</div>
@@ -534,6 +535,78 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     </div>
     <div class="card"><div id="pf_lista"></div></div>
   </section>
+  <section id="redacoes" style="display:none">
+    <div class="card">
+      <h2 style="font-size:1.15rem;color:var(--navy);margin-bottom:6px">Correção de redações</h2>
+      <p class="hint" style="margin-bottom:12px">Os professores (cadastrados na aba Professores) entram em <b id="rd_link">/redacao.html</b> com o mesmo e-mail e senha. Cada redação é corrigida por <b>dois professores</b>, e um não vê a nota do outro. Se a diferença entre as duas notas passar do limite, o sistema abre sozinho a <b>3ª correção</b>.</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end">
+        <div style="flex:1;min-width:240px"><label>Correção</label><select id="rd_sel" onchange="rdSelecionar()"></select></div>
+        <button class="sec" onclick="rdNova()">+ Nova correção</button>
+      </div>
+    </div>
+    <div class="card" id="rd_form_card">
+      <h3 style="color:var(--navy);margin-bottom:10px" id="rd_form_tit">Nova correção</h3>
+      <input type="hidden" id="rd_id">
+      <div class="grid2">
+        <div><label>Nome da correção</label><input id="rd_titulo" placeholder="Ex.: Pedro II — Redação 6º ano"></div>
+        <div><label>Nota máxima</label><input id="rd_max" value="10" inputmode="decimal" oninput="rdSoma()"></div>
+        <div><label>Diferença que abre a 3ª correção (maior que)</label><input id="rd_disc" value="2" inputmode="decimal"></div>
+      </div>
+      <label style="margin-top:14px;display:block">Tópicos de avaliação (a soma das pontuações máximas deve ser igual à nota máxima)</label>
+      <div id="rd_topicos"></div>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:8px"><button class="mini" onclick="rdAddTopico()">+ Tópico</button><span class="hint" id="rd_soma"></span></div>
+      <label style="margin-top:14px;display:block">Motivos de nota zero (um por linha)</label>
+      <textarea id="rd_motivos" rows="6" style="width:100%"></textarea>
+      <div style="margin-top:14px;display:flex;gap:10px"><button onclick="rdSalvar()">Salvar correção</button></div>
+    </div>
+    <div id="rd_painel" style="display:none">
+      <div class="card">
+        <h3 style="color:var(--navy);margin-bottom:10px">Andamento</h3>
+        <div id="rd_resumo"></div>
+        <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+          <button class="sec" onclick="rdResumo()">Atualizar</button>
+          <button class="sec" onclick="rdCsv()">Baixar resultado (planilha)</button>
+          <button class="sec" id="rd_btn_enc" onclick="rdEncerrar()">Encerrar correção</button>
+          <button class="del" onclick="rdExcluir()">Excluir correção</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--navy);margin-bottom:6px">1. Enviar as redações</h3>
+        <p class="hint" style="margin-bottom:10px">Imagens JPG ou PNG, uma por candidato. O nome do arquivo é o número de inscrição, trocando a barra por sublinhado (ex.: <b>CE.6A.00755_27.jpg</b>). Enviar de novo um arquivo com o mesmo nome substitui a imagem. Os professores veem só um número sequencial, nunca a inscrição.</p>
+        <input type="file" id="rd_arquivos" multiple accept="image/jpeg,image/png">
+        <div style="margin-top:10px"><button onclick="rdEnviar()">Enviar imagens</button> <span class="hint" id="rd_env_status"></span></div>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--navy);margin-bottom:6px">2. Escolher os professores e distribuir</h3>
+        <p class="hint" style="margin-bottom:10px">Marque quem vai corrigir (mínimo 2). O sistema divide as redações por igual, sorteando. Pode distribuir de novo quando enviar mais imagens ou incluir professores: o que já foi distribuído não muda.</p>
+        <div id="rd_profs"></div>
+        <div style="margin-top:10px"><button onclick="rdDistribuir()">Distribuir redações</button></div>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--navy);margin-bottom:6px">3. Ajustes (remanejar)</h3>
+        <p class="hint" style="margin-bottom:10px">Passa redações <b>ainda não corrigidas</b> de um professor para outro. Para trocar uma redação específica, use a lista abaixo.</p>
+        <div class="grid2">
+          <div><label>De</label><select id="rd_de"></select></div>
+          <div><label>Para</label><select id="rd_para"></select></div>
+          <div><label>Quantidade</label><input id="rd_qtd" inputmode="numeric" placeholder="Ex.: 20"></div>
+        </div>
+        <div style="margin-top:10px"><button onclick="rdRemanejar()">Remanejar</button></div>
+      </div>
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:end;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+          <h3 style="color:var(--navy)">Redações</h3>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input id="rd_busca" placeholder="Buscar inscrição" oninput="rdDesenharTextos()" style="width:180px">
+            <select id="rd_filtro" onchange="rdDesenharTextos()" style="width:200px">
+              <option value="">Todas</option><option value="em_correcao">Em correção</option>
+              <option value="aguardando_3a">Aguardando 3ª correção</option><option value="concluida">Concluídas</option>
+            </select>
+          </div>
+        </div>
+        <div class="scroll" id="rd_textos"></div>
+      </div>
+    </div>
+  </section>
 </div>
 <div id="modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center">
   <div style="background:#fff;border-radius:12px;max-width:520px;width:92%;padding:20px;max-height:80vh;overflow:auto">
@@ -743,7 +816,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   let CONCURSOS = [], cargosEdit = [], tiposEdit = [], INSCRITOS = [];
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
     document.querySelectorAll('.tab').forEach(x => x.classList.remove('on')); t.classList.add('on');
-    ['concursos','inscritos','relatorios','locacao','alocacao','questoes','prova_online','recursos','titulos','empresas','professores'].forEach(s => $(s).style.display = s === t.dataset.t ? 'block' : 'none');
+    ['concursos','inscritos','relatorios','locacao','alocacao','questoes','prova_online','recursos','titulos','empresas','professores','redacoes'].forEach(s => $(s).style.display = s === t.dataset.t ? 'block' : 'none');
     if (t.dataset.t === 'inscritos') carregarInscritos();
     if (t.dataset.t === 'titulos') popularTitConcursos();
     if (t.dataset.t === 'relatorios') popularRelConcursos();
@@ -754,6 +827,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     if (t.dataset.t === 'recursos') { popularRecursos(); }
     if (t.dataset.t === 'empresas') { carregarEmpresas(); }
     if (t.dataset.t === 'professores') { carregarProfessores(); }
+    if (t.dataset.t === 'redacoes') { carregarRedacoes(); }
   });
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
   function combinaDT(data, hora, horaPadrao){ if(!data) return ''; return data+'T'+((hora||horaPadrao)).slice(0,5); }
@@ -2111,6 +2185,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     try{ localStorage.setItem('seletrix_empresa', EMPRESA_ID); }catch(e){}
     aplicarIdentidade();
     carregarConcursos();
+    if($('redacoes') && $('redacoes').style.display==='block'){ RD_BANCA=null; carregarRedacoes(); }
   }
   function aplicarIdentidade(){
     var e = EMPRESAS.find(function(x){return x.id===EMPRESA_ID;});
@@ -2206,6 +2281,173 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var r=await fetch('/admin/professor/'+id,{method:'DELETE'}); var j=await r.json();
     if(!r.ok){alert(j.erro||'Erro');return;}
     carregarProfessores();
+  }
+
+  // ===== Correção de redações =====
+  var RD_BANCAS=[], RD_BANCA=null, RD_RESUMO=null, RD_TEXTOS=[];
+  var RD_MOTIVOS_PADRAO=['Fuga ao tema (não atendimento ao tema proposto)','Ausência de texto (em branco)','Texto ilegível','Texto abaixo do número mínimo de linhas','Identificação em local indevido','Texto grafado por outro meio que não o determinado'];
+  var RD_NL=String.fromCharCode(10);
+  function rdNum(v){ return Number(String(v==null?'':v).replace(',','.')); }
+  function rdFmt(v){ return v==null?'—':String(Math.round(Number(v)*100)/100).replace('.',','); }
+  async function rdJson(r){ var j={}; try{ j=await r.json(); }catch(e){} if(!r.ok) throw new Error(j.erro||'Erro'); return j; }
+  async function carregarRedacoes(sel){
+    if($('rd_link')) $('rd_link').textContent = location.origin + '/redacao.html';
+    var d=await (await fetch('/admin/redacao/bancas.json?empresa='+EMPRESA_ID)).json();
+    RD_BANCAS=d.bancas||[];
+    var atual = sel || (RD_BANCA && RD_BANCA.id) || (RD_BANCAS[0] && RD_BANCAS[0].id) || '';
+    $('rd_sel').innerHTML = RD_BANCAS.length ? RD_BANCAS.map(function(b){ return '<option value="'+b.id+'">'+esc(b.titulo)+' ('+b.textos+' redações)'+(b.encerrada?' — encerrada':'')+'</option>'; }).join('') : '<option value="">Nenhuma correção cadastrada</option>';
+    if(atual) $('rd_sel').value=String(atual);
+    rdSelecionar();
+  }
+  function rdSelecionar(){
+    var id=parseInt($('rd_sel').value)||0;
+    RD_BANCA = RD_BANCAS.find(function(b){return b.id===id;}) || null;
+    if(!RD_BANCA){ rdNova(); $('rd_painel').style.display='none'; return; }
+    $('rd_form_tit').textContent='Configuração da correção';
+    $('rd_id').value=RD_BANCA.id; $('rd_titulo').value=RD_BANCA.titulo; $('rd_max').value=rdFmt(RD_BANCA.nota_max); $('rd_disc').value=rdFmt(RD_BANCA.discrepancia);
+    rdTopicosForm(RD_BANCA.topicos); $('rd_motivos').value=RD_BANCA.motivos_zero.join(RD_NL);
+    $('rd_painel').style.display='block';
+    $('rd_btn_enc').textContent = RD_BANCA.encerrada ? 'Reabrir correção' : 'Encerrar correção';
+    rdResumo();
+  }
+  function rdNova(){
+    RD_BANCA=null; $('rd_form_tit').textContent='Nova correção'; $('rd_id').value=''; $('rd_titulo').value=''; $('rd_max').value='10'; $('rd_disc').value='2';
+    rdTopicosForm([{nome:'',max:2},{nome:'',max:2},{nome:'',max:2},{nome:'',max:2},{nome:'',max:2}]);
+    $('rd_motivos').value=RD_MOTIVOS_PADRAO.join(RD_NL); $('rd_painel').style.display='none';
+  }
+  function rdTopicosForm(lista){
+    $('rd_topicos').innerHTML = lista.map(function(t,i){
+      return '<div class="rd-top" style="display:flex;gap:8px;margin-top:6px;align-items:center"><b style="width:22px">'+(i+1)+'.</b>'
+        +'<input class="rd-tn" placeholder="Nome do tópico (ex.: Adequação ao tema)" value="'+esc(t.nome)+'" style="flex:1">'
+        +'<input class="rd-tm" placeholder="Máx." value="'+esc(rdFmt(t.max))+'" oninput="rdSoma()" style="width:80px" inputmode="decimal">'
+        +'<button class="del" onclick="rdRemTopico('+i+')">×</button></div>';
+    }).join('');
+    rdSoma();
+  }
+  function rdLerTopicos(){
+    return Array.prototype.map.call(document.querySelectorAll('#rd_topicos .rd-top'), function(d){
+      return { nome: d.querySelector('.rd-tn').value.trim(), max: d.querySelector('.rd-tm').value.trim() };
+    });
+  }
+  function rdAddTopico(){ var l=rdLerTopicos(); l.push({nome:'',max:''}); rdTopicosForm(l); }
+  function rdRemTopico(i){ var l=rdLerTopicos(); l.splice(i,1); rdTopicosForm(l); }
+  function rdSoma(){
+    var s=0; rdLerTopicos().forEach(function(t){ var v=rdNum(t.max); if(isFinite(v)) s+=v; });
+    s=Math.round(s*100)/100; var m=rdNum($('rd_max').value);
+    $('rd_soma').innerHTML='Soma dos tópicos: <b>'+rdFmt(s)+'</b> de '+rdFmt(m)+(Math.abs(s-m)<1e-9?' ✓':' <span style="color:#b91c1c">(precisa ser igual)</span>');
+  }
+  async function rdSalvar(){
+    var motivos=$('rd_motivos').value.split(RD_NL).map(function(x){return x.trim();}).filter(Boolean);
+    var body={ id:$('rd_id').value||undefined, empresa_id:EMPRESA_ID, titulo:$('rd_titulo').value, nota_max:$('rd_max').value, discrepancia:$('rd_disc').value,
+      topicos: rdLerTopicos().filter(function(t){return t.nome;}), motivos_zero: motivos };
+    try{
+      var j=await rdJson(await fetch('/admin/redacao/banca',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}));
+      alert('Correção salva!'); carregarRedacoes(j.id);
+    }catch(e){ alert(e.message); }
+  }
+  async function rdResumo(){
+    if(!RD_BANCA) return;
+    var d=await (await fetch('/admin/redacao/banca/'+RD_BANCA.id+'/resumo.json')).json();
+    RD_RESUMO=d;
+    var pct = d.textos ? Math.round(d.concluidas*100/d.textos) : 0;
+    var h='<div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:12px">'
+      +'<div><div class="meta">Redações enviadas</div><b style="font-size:1.3rem">'+d.textos+'</b></div>'
+      +'<div><div class="meta">Concluídas</div><b style="font-size:1.3rem">'+d.concluidas+'</b> <span class="meta">('+pct+'%)</span></div>'
+      +'<div><div class="meta">Aguardando 3ª correção</div><b style="font-size:1.3rem">'+d.aguardando_3a+'</b></div>'
+      +'<div><div class="meta">Sem distribuir</div><b style="font-size:1.3rem;color:'+(d.sem_distribuir?'#b45309':'inherit')+'">'+d.sem_distribuir+'</b></div>'
+      +(d.sem_professor?'<div><div class="meta">Sem professor</div><b style="font-size:1.3rem;color:#b91c1c">'+d.sem_professor+'</b></div>':'')
+      +'</div>';
+    if(d.sem_professor) h+='<p class="hint" style="color:#b91c1c;margin-bottom:8px">Há correções sem professor (ex.: 3ª correção sem um terceiro professor disponível). Marque mais professores abaixo e clique em Distribuir.</p>';
+    var naBanca=d.professores.filter(function(p){return p.na_banca || p.total;});
+    h+= naBanca.length ? '<table style="width:100%;border-collapse:collapse;font-size:.9rem"><tr style="text-align:left;border-bottom:1px solid #dbe4ec"><th>Professor</th><th>Recebidas</th><th>Corrigidas</th><th>Faltam</th><th>3ªs correções</th></tr>'
+      + naBanca.map(function(p){ return '<tr style="border-bottom:1px solid #eef2f6"><td>'+esc(p.nome)+(p.ativo?'':' <span class="tag">inativo</span>')+'</td><td>'+p.total+'</td><td>'+p.feitas+'</td><td>'+p.pendentes+'</td><td>'+p.terceiras+'</td></tr>'; }).join('') + '</table>'
+      : '<p class="hint">Ainda não há professores nesta correção.</p>';
+    $('rd_resumo').innerHTML=h;
+    var ativos=d.professores.filter(function(p){return p.ativo;});
+    $('rd_profs').innerHTML = ativos.length ? ativos.map(function(p){
+      return '<div class="checkline"><input type="checkbox" class="rd-pf" value="'+p.id+'" id="rdpf'+p.id+'"'+(p.na_banca?' checked':'')+'><label for="rdpf'+p.id+'" style="margin:0">'+esc(p.nome)+' <span class="meta">'+esc(p.email)+'</span></label></div>';
+    }).join('') : '<p class="hint">Cadastre os professores na aba Professores primeiro.</p>';
+    var opts=function(lista){ return lista.map(function(p){ return '<option value="'+p.id+'">'+esc(p.nome)+'</option>'; }).join(''); };
+    $('rd_de').innerHTML=opts(d.professores.filter(function(p){return p.pendentes;}));
+    $('rd_para').innerHTML=opts(ativos);
+    rdCarregarTextos();
+  }
+  async function rdCarregarTextos(){
+    if(!RD_BANCA) return;
+    var d=await (await fetch('/admin/redacao/banca/'+RD_BANCA.id+'/textos.json')).json();
+    RD_TEXTOS=d.textos||[]; rdDesenharTextos();
+  }
+  function rdDesenharTextos(){
+    var f=$('rd_filtro').value, q=$('rd_busca').value.trim().toUpperCase();
+    var SIT={em_correcao:'Em correção',aguardando_3a:'Aguardando 3ª',concluida:'Concluída'};
+    var ativos=(RD_RESUMO?RD_RESUMO.professores:[]).filter(function(p){return p.ativo;});
+    var lista=RD_TEXTOS.filter(function(t){ return (!f||t.situacao===f) && (!q||t.codigo.toUpperCase().indexOf(q)>-1); });
+    var mostra=lista.slice(0,300);
+    $('rd_textos').innerHTML = !RD_TEXTOS.length ? '<p class="hint">Nenhuma redação enviada ainda.</p>' :
+      '<p class="meta" style="margin-bottom:6px">'+lista.length+' redação(ões)'+(lista.length>300?' — mostrando as 300 primeiras; use a busca':'')+'</p>'
+      +'<table style="width:100%;border-collapse:collapse;font-size:.88rem"><tr style="text-align:left;border-bottom:1px solid #dbe4ec"><th>Inscrição</th><th>Nº</th><th>Correções</th><th>Nota final</th><th>Situação</th><th></th></tr>'
+      + mostra.map(function(t){
+        var cs=t.correcoes.map(function(c){
+          var quem;
+          if(c.status==='feita') quem='<b>'+esc(c.prof||'(professor excluído)')+'</b>: '+(c.zero_motivo?'<span style="color:#b91c1c">ZERO</span>':rdFmt(c.total));
+          else quem='<select onchange="rdTrocar('+c.id+',this.value)" style="width:auto;padding:2px 4px;font-size:.85rem"><option value="">'+(c.prof?esc(c.prof):'— sem professor —')+' (pendente)</option>'
+            + ativos.filter(function(p){return p.id!==c.professor_id;}).map(function(p){return '<option value="'+p.id+'">→ '+esc(p.nome)+'</option>';}).join('')+'</select>';
+          return '<div>'+c.ordem+'ª: '+quem+'</div>';
+        }).join('') || '<span class="meta">não distribuída</span>';
+        return '<tr style="border-bottom:1px solid #eef2f6;vertical-align:top"><td>'+esc(t.codigo)+'</td><td>'+t.seq+'</td><td>'+cs+'</td><td><b>'+rdFmt(t.final)+'</b></td><td>'+SIT[t.situacao]+'</td>'
+          +'<td><a href="/admin/redacao/texto/'+t.id+'/imagem" target="_blank">ver</a></td></tr>';
+      }).join('')+'</table>';
+  }
+  async function rdTrocar(cid, pid){
+    if(!pid) return;
+    try{ await rdJson(await fetch('/admin/redacao/correcao/'+cid+'/professor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({professor_id:pid})})); }
+    catch(e){ alert(e.message); }
+    rdResumo();
+  }
+  function rdLerArquivo(f){ return new Promise(function(ok,erro){ var r=new FileReader(); r.onload=function(){ok(r.result);}; r.onerror=erro; r.readAsDataURL(f); }); }
+  async function rdEnviar(){
+    if(!RD_BANCA){ alert('Salve a correção primeiro.'); return; }
+    var fs=Array.prototype.slice.call($('rd_arquivos').files||[]);
+    if(!fs.length){ alert('Escolha as imagens.'); return; }
+    var ok=0, subst=0, erros=[];
+    for(var i=0;i<fs.length;i++){
+      $('rd_env_status').textContent='Enviando '+(i+1)+' de '+fs.length+'...';
+      try{
+        var data=await rdLerArquivo(fs[i]);
+        var j=await rdJson(await fetch('/admin/redacao/banca/'+RD_BANCA.id+'/texto',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({codigo:fs[i].name,dataBase64:data})}));
+        ok++; if(j.substituido) subst++;
+      }catch(e){ erros.push(fs[i].name+': '+e.message); }
+    }
+    $('rd_env_status').textContent='Pronto: '+ok+' enviada(s)'+(subst?(' ('+subst+' substituída(s))'):'')+(erros.length?(' — '+erros.length+' com erro'):'')+'.';
+    if(erros.length) alert('Arquivos com erro:'+RD_NL+erros.slice(0,30).join(RD_NL));
+    $('rd_arquivos').value='';
+    carregarRedacoes(RD_BANCA.id);
+  }
+  async function rdDistribuir(){
+    var ids=Array.prototype.map.call(document.querySelectorAll('.rd-pf:checked'),function(x){return parseInt(x.value);});
+    try{
+      var j=await rdJson(await fetch('/admin/redacao/banca/'+RD_BANCA.id+'/distribuir',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({professor_ids:ids})}));
+      alert(j.novas+' correção(ões) atribuída(s).'); rdResumo();
+    }catch(e){ alert(e.message); }
+  }
+  async function rdRemanejar(){
+    try{
+      var j=await rdJson(await fetch('/admin/redacao/banca/'+RD_BANCA.id+'/remanejar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({de:$('rd_de').value,para:$('rd_para').value,quantidade:$('rd_qtd').value})}));
+      alert(j.movidas+' redação(ões) remanejada(s).'); $('rd_qtd').value=''; rdResumo();
+    }catch(e){ alert(e.message); }
+  }
+  function rdCsv(){ location.href='/admin/redacao/banca/'+RD_BANCA.id+'/resultado.csv'; }
+  async function rdEncerrar(){
+    var enc=!RD_BANCA.encerrada;
+    if(!confirm(enc?'Encerrar? Os professores não poderão mais lançar nem alterar notas.':'Reabrir para os professores?')) return;
+    await fetch('/admin/redacao/banca/'+RD_BANCA.id+'/encerrar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({encerrar:enc})});
+    carregarRedacoes(RD_BANCA.id);
+  }
+  async function rdExcluir(){
+    if(!confirm('EXCLUIR esta correção com todas as imagens e notas? Não dá para desfazer.')) return;
+    if(prompt('Para confirmar, digite EXCLUIR')!=='EXCLUIR') return;
+    await fetch('/admin/redacao/banca/'+RD_BANCA.id,{method:'DELETE'});
+    RD_BANCA=null; carregarRedacoes();
   }
 
   initEmpresas();
