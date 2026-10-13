@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v29-redacoes -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v30-titulos-zip -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -1008,7 +1008,8 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var pend=arr.reduce(function(s,c){return s+(c.pendentes||0);},0);
     $('tit_resumo').innerHTML='<b>'+arr.length+'</b> candidato(s) com títulos · <b>'+pend+'</b> título(s) ainda por avaliar'
       +' &nbsp; <a class="mini" style="text-decoration:none;padding:6px 12px" href="/admin/concurso/'+cid+'/titulos-resumo.csv" target="_blank">⬇ Relatório resumo</a>'
-      +' <a class="mini" style="text-decoration:none;padding:6px 12px" href="/admin/concurso/'+cid+'/titulos-detalhe.csv" target="_blank">⬇ Relatório detalhado</a>';
+      +' <a class="mini" style="text-decoration:none;padding:6px 12px" href="/admin/concurso/'+cid+'/titulos-detalhe.csv" target="_blank">⬇ Relatório detalhado</a>'
+      +' <a class="mini" style="text-decoration:none;padding:6px 12px;background:var(--navy);color:#fff" href="/admin/concurso/'+cid+'/titulos.zip">⬇ Baixar todos os documentos (ZIP, uma pasta por candidato)</a>';
     $('tit_lista').innerHTML='<table style="width:100%;border-collapse:collapse"><thead><tr>'
       +'<th style="text-align:left;padding:8px;border-bottom:2px solid var(--navy)">Candidato</th>'
       +'<th style="text-align:left;padding:8px;border-bottom:2px solid var(--navy)">Cargo</th>'
@@ -1025,7 +1026,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
           +'<td style="padding:8px;border-bottom:1px solid #eee;text-align:center">'+c.qtd+'</td>'
           +'<td style="padding:8px;border-bottom:1px solid #eee;text-align:center">'+sit+'</td>'
           +'<td style="padding:8px;border-bottom:1px solid #eee;text-align:center"><b>'+(Number(c.pontos)||0)+'</b></td>'
-          +'<td style="padding:8px;border-bottom:1px solid #eee;text-align:right"><button class="mini" onclick="verTitulos('+c.id+')">Avaliar</button></td>'
+          +'<td style="padding:8px;border-bottom:1px solid #eee;text-align:right"><a class="mini" style="text-decoration:none;padding:6px 10px" href="/admin/inscrito/'+c.id+'/titulos.zip" title="Baixar os documentos deste candidato">⬇ Baixar</a> <button class="mini" onclick="verTitulos('+c.id+')">Avaliar</button></td>'
           +'</tr>';
       }).join('')+'</tbody></table>';
   }

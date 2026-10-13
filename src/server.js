@@ -603,7 +603,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'redacoes-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'titulos-zip-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -1977,6 +1977,91 @@ app.post('/admin/titulo/:id/avaliar', exigirSenha, async (req, res) => {
   await pool.query('UPDATE titulos SET aval_status=$1, aval_pontos=$2, aval_obs=$3, aval_em=now() WHERE id=$4',
     [status, decisao === 'deferir' ? pontos : null, obs, id]);
   res.json({ ok: true, status });
+});
+// ---- ZIP dos títulos (uma pasta por candidato) -------------
+// Escritor de ZIP simples, em fluxo: um arquivo por vez sai do banco direto para o download,
+// sem juntar tudo na memória (importante no Render).
+const ZIP_CRC = (() => { const t = new Int32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); t[n] = c; } return t; })();
+function zipCrc(buf) { let c = -1; for (let i = 0; i < buf.length; i++) c = ZIP_CRC[(c ^ buf[i]) & 0xff] ^ (c >>> 8); return (c ^ -1) >>> 0; }
+function zipNomeLimpo(s) { return String(s == null ? '' : s).replace(/[\\/:*?"<>|\x00-\x1f]+/g, '-').replace(/\s+/g, ' ').trim().slice(0, 90) || 'sem-nome'; }
+function criarZip(res) {
+  const zlib = require('zlib');
+  const central = []; let offset = 0; const usados = new Set();
+  const escrever = (b) => new Promise((ok) => { if (res.write(b)) ok(); else res.once('drain', ok); });
+  return {
+    async add(nome, dados) {
+      let n = nome, i = 2; while (usados.has(n.toLowerCase())) { const d = nome.lastIndexOf('.'); n = d > nome.lastIndexOf('/') ? nome.slice(0, d) + ' (' + i + ')' + nome.slice(d) : nome + ' (' + i + ')'; i++; }
+      usados.add(n.toLowerCase());
+      const nb = Buffer.from(n, 'utf8'); const crc = zipCrc(dados);
+      let comp = zlib.deflateRawSync(dados); let metodo = 8;
+      if (comp.length >= dados.length) { comp = dados; metodo = 0; }
+      const agora = new Date();
+      const dt = ((agora.getFullYear() - 1980) << 9) | ((agora.getMonth() + 1) << 5) | agora.getDate();
+      const hr = (agora.getHours() << 11) | (agora.getMinutes() << 5) | (agora.getSeconds() >> 1);
+      const h = Buffer.alloc(30);
+      h.writeUInt32LE(0x04034b50, 0); h.writeUInt16LE(20, 4); h.writeUInt16LE(0x0800, 6); h.writeUInt16LE(metodo, 8);
+      h.writeUInt16LE(hr, 10); h.writeUInt16LE(dt, 12); h.writeUInt32LE(crc, 14); h.writeUInt32LE(comp.length, 18);
+      h.writeUInt32LE(dados.length, 22); h.writeUInt16LE(nb.length, 26); h.writeUInt16LE(0, 28);
+      const c = Buffer.alloc(46);
+      c.writeUInt32LE(0x02014b50, 0); c.writeUInt16LE(20, 4); c.writeUInt16LE(20, 6); c.writeUInt16LE(0x0800, 8); c.writeUInt16LE(metodo, 10);
+      c.writeUInt16LE(hr, 12); c.writeUInt16LE(dt, 14); c.writeUInt32LE(crc, 16); c.writeUInt32LE(comp.length, 20); c.writeUInt32LE(dados.length, 24);
+      c.writeUInt16LE(nb.length, 28); c.writeUInt32LE(offset, 42);
+      central.push(Buffer.concat([c, nb]));
+      await escrever(h); await escrever(nb); await escrever(comp);
+      offset += 30 + nb.length + comp.length;
+    },
+    async fim() {
+      const cd = Buffer.concat(central); const e = Buffer.alloc(22);
+      e.writeUInt32LE(0x06054b50, 0); e.writeUInt16LE(central.length, 8); e.writeUInt16LE(central.length, 10);
+      e.writeUInt32LE(cd.length, 12); e.writeUInt32LE(offset, 16);
+      await escrever(cd); res.end(e);
+    },
+  };
+}
+const MIME_EXT = { 'application/pdf': '.pdf', 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' };
+async function zipTitulos(res, where, params, nomeZip, comPlanilha) {
+  const { rows } = await pool.query(`SELECT t.id, t.tipo, t.filename, t.mime, t.aval_status, t.aval_pontos, t.aval_obs,
+      k.nome, k.cpf, k.cargo, k.protocolo
+    FROM titulos t JOIN candidatos k ON k.id=t.candidato_id WHERE ${where} ORDER BY k.nome, t.id`, params);
+  if (!rows.length) return res.status(404).send('Nenhum título encontrado.');
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', 'attachment; filename="' + nomeZip.replace(/[^\w.\-]/g, '_') + '"; filename*=UTF-8\'\'' + encodeURIComponent(nomeZip));
+  const zip = criarZip(res);
+  const sit = (s) => s === 'deferido' ? 'DEFERIDO' : s === 'indeferido' ? 'INDEFERIDO' : 'NÃO AVALIADO';
+  if (comPlanilha) {
+    const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+    const linhas = [['Nome', 'CPF', 'Cargo', 'Inscrição', 'Pasta no ZIP', 'Título', 'Arquivo', 'Situação', 'Pontos', 'Observação'].map(esc).join(';')];
+    rows.forEach((r) => linhas.push([r.nome, r.cpf, r.cargo, r.protocolo, zipNomeLimpo(r.nome + ' - ' + (r.protocolo || r.cpf || '')), r.tipo, r.filename,
+      sit(r.aval_status), r.aval_pontos == null ? '' : String(r.aval_pontos).replace('.', ','), r.aval_obs].map(esc).join(';')));
+    await zip.add('Lista de candidatos e títulos.csv', Buffer.from('﻿' + linhas.join('\r\n'), 'utf8'));
+  }
+  const cont = {};
+  try {
+    for (const r of rows) {
+      const d = await pool.query('SELECT dados FROM titulos WHERE id=$1', [r.id]);
+      const dados = d.rows[0] && d.rows[0].dados; if (!dados) continue;
+      const pasta = zipNomeLimpo(r.nome + ' - ' + (r.protocolo || r.cpf || ''));
+      cont[pasta] = (cont[pasta] || 0) + 1;
+      let arq = zipNomeLimpo(r.filename || 'documento');
+      if (!/\.[a-z0-9]{2,5}$/i.test(arq)) arq += MIME_EXT[r.mime] || '';
+      const prefixo = String(cont[pasta]).padStart(2, '0') + ' - ' + (r.tipo ? zipNomeLimpo(r.tipo).slice(0, 50) + ' - ' : '');
+      await zip.add(pasta + '/' + prefixo + arq, dados);
+    }
+    await zip.fim();
+  } catch (e) { console.error('zip titulos', e.message); res.destroy(e); }
+}
+app.get('/admin/concurso/:id/titulos.zip', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  const cid = parseInt(req.params.id);
+  const ct = await pool.query('SELECT titulo FROM concursos WHERE id=$1', [cid]);
+  const titulo = (ct.rows[0] && ct.rows[0].titulo) || 'concurso';
+  await zipTitulos(res, 'k.concurso_id=$1', [cid], 'Titulos - ' + zipNomeLimpo(titulo) + '.zip', true);
+});
+app.get('/admin/inscrito/:id/titulos.zip', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  const k = await pool.query('SELECT nome, protocolo, cpf FROM candidatos WHERE id=$1', [parseInt(req.params.id)]);
+  if (!k.rows.length) return res.status(404).send('Candidato não encontrado.');
+  await zipTitulos(res, 'k.id=$1', [parseInt(req.params.id)], zipNomeLimpo(k.rows[0].nome + ' - ' + (k.rows[0].protocolo || k.rows[0].cpf || '')) + '.zip', false);
 });
 app.get('/admin/titulo/:id', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).send('Indisponível.');
