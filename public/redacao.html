@@ -1,0 +1,301 @@
+<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Correção de Redações</title>
+<link rel="icon" href="/logo.png" type="image/png">
+<style>
+ :root{--navy:#0b3a5e;--azul:#12558a;--verde:#1f9d5b;--linha:#dbe4ec;--suave:#5b7183;--papel:#eef2f6;--txt:#16242f;--verm:#a12626}
+ *{box-sizing:border-box;margin:0;padding:0;font-family:Inter,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+ body{background:var(--papel);color:var(--txt);min-height:100vh}
+ .topo{background:var(--navy);color:#fff;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+ .topo .marca{font-weight:800;font-size:1.05rem}
+ .topo .sub{font-size:.85rem;opacity:.9}
+ .topo a{color:#fff;text-decoration:none;font-size:.88rem;opacity:.95;margin-left:14px}
+ .container{max-width:900px;margin:0 auto;padding:20px 16px 60px}
+ .card{background:#fff;border:1px solid var(--linha);border-radius:14px;padding:20px;margin-bottom:16px}
+ h2{color:var(--navy);font-size:1.15rem;margin-bottom:8px}
+ h3{color:var(--navy);font-size:1rem;margin-bottom:8px}
+ p.leg{color:var(--suave);font-size:.9rem;margin-bottom:14px}
+ label{display:block;font-weight:600;font-size:.88rem;margin:12px 0 5px}
+ input,select{width:100%;padding:10px 12px;border:1.5px solid var(--linha);border-radius:9px;font-size:.95rem;font-family:inherit;background:#fff}
+ input:focus,select:focus{outline:none;border-color:var(--azul)}
+ button{background:var(--navy);color:#fff;border:none;border-radius:9px;padding:11px 18px;font-weight:700;font-size:.95rem;cursor:pointer}
+ button:disabled{opacity:.5;cursor:default}
+ button.sec{background:#eef3f5;color:var(--navy)}
+ button.mini{background:#eef3f5;color:var(--navy);padding:7px 12px;font-size:.85rem}
+ button.zero{background:#fff;color:var(--verm);border:1.5px solid #f0c4c4}
+ button.zero.on{background:var(--verm);color:#fff;border-color:var(--verm)}
+ .erro{background:#fde8e8;color:var(--verm);padding:10px 12px;border-radius:8px;margin-top:12px;font-size:.9rem;display:none}
+ .center{min-height:80vh;display:flex;align-items:center;justify-content:center;padding:20px}
+ .hint{color:var(--suave);font-size:.85rem}
+ .tag{display:inline-block;background:#eaf3fb;color:var(--navy);border-radius:20px;padding:2px 10px;font-size:.75rem;font-weight:700}
+ .tag.t3{background:#fff4e0;color:#8a5300}
+ .tag.ok{background:#e7f6ee;color:#0f6b41}
+ .barra{height:8px;background:#e3eaf0;border-radius:6px;overflow:hidden;margin-top:8px}
+ .barra div{height:100%;background:var(--verde)}
+ .banca{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap}
+ /* tela de correção */
+ .corr{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:14px;padding:14px;height:calc(100vh - 62px)}
+ .visor{background:#fff;border:1px solid var(--linha);border-radius:12px;display:flex;flex-direction:column;min-height:0;min-width:0}
+ .visor .ferr{display:flex;gap:6px;align-items:center;padding:8px 10px;border-bottom:1px solid var(--linha);flex-wrap:wrap}
+ .visor .area{flex:1;overflow:auto;background:#5f6b75;min-height:0;text-align:center}
+ .visor img{display:inline-block;background:#fff;transform-origin:top left}
+ .lado{overflow:auto;min-height:0}
+ .top{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #eef2f6}
+ .top .nm{flex:1;font-size:.92rem;font-weight:600}
+ .top .nm small{display:block;color:var(--suave);font-weight:500}
+ .top input{width:84px;text-align:center;font-size:1.05rem;font-weight:700}
+ .top input.inval{border-color:var(--verm);background:#fff5f5}
+ .total{display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding:12px;background:#eaf3fb;border-radius:10px}
+ .total b{font-size:1.6rem;color:var(--navy)}
+ .lista-m{max-height:60vh;overflow:auto}
+ .lista-m .it{display:flex;justify-content:space-between;align-items:center;padding:8px 4px;border-bottom:1px solid #eef2f6;cursor:pointer;font-size:.92rem}
+ .lista-m .it:hover{background:#f5f8fb}
+ #modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;align-items:center;justify-content:center}
+ @media(max-width:900px){.corr{grid-template-columns:minmax(0,1fr);height:auto}.visor .area{height:70vh}}
+</style></head><body>
+
+<div class="center" id="tela_login">
+  <div class="card" style="max-width:420px;width:100%">
+    <h2>Correção de Redações</h2>
+    <p class="leg">Entre com o e-mail e a senha que a coordenação cadastrou para você.</p>
+    <label>E-mail</label><input id="in_email" type="email" placeholder="seu@email.com" autocomplete="username">
+    <label>Senha</label><input id="in_senha" type="password" placeholder="Sua senha" autocomplete="current-password">
+    <div style="margin-top:16px"><button id="btn_entrar" onclick="entrar()" style="width:100%">Entrar</button></div>
+    <div class="erro" id="login_erro"></div>
+  </div>
+</div>
+
+<div id="tela_bancas" style="display:none">
+  <header class="topo">
+    <div><div class="marca">Correção de Redações</div><div class="sub" id="b_nome"></div></div>
+    <div><a href="#" onclick="sair();return false">Sair ↩</a></div>
+  </header>
+  <div class="container">
+    <div id="b_lista"></div>
+  </div>
+</div>
+
+<div id="tela_corr" style="display:none">
+  <header class="topo">
+    <div><div class="marca" id="c_titulo">Correção</div><div class="sub" id="c_prog"></div></div>
+    <div><a href="#" onclick="abrirMinhas();return false">Minhas correções</a><a href="#" onclick="voltarBancas();return false">← Voltar</a><a href="#" onclick="sair();return false">Sair ↩</a></div>
+  </header>
+  <div class="corr" id="c_corpo">
+    <div class="visor">
+      <div class="ferr">
+        <b id="c_num" style="margin-right:6px"></b><span id="c_tags"></span>
+        <span style="flex:1"></span>
+        <button class="mini" onclick="zoom(-0.15)" title="Diminuir">−</button>
+        <span class="hint" id="c_zoom" style="min-width:44px;text-align:center">100%</span>
+        <button class="mini" onclick="zoom(0.15)" title="Aumentar">+</button>
+        <button class="mini" onclick="ajustar()">Ajustar à largura</button>
+      </div>
+      <div class="area" id="c_area"><img id="c_img" alt="Redação"></div>
+    </div>
+    <div class="lado">
+      <div class="card" style="padding:16px">
+        <div id="c_aviso"></div>
+        <h3>Notas por tópico</h3>
+        <div id="c_topicos"></div>
+        <div class="total"><span>Total</span><span><b id="c_total">0</b> <span class="hint" id="c_max"></span></span></div>
+        <div style="margin-top:14px">
+          <button class="zero" id="c_btn_zero" onclick="alternarZero()" style="width:100%">Atribuir nota zero</button>
+          <div id="c_zero_box" style="display:none">
+            <label>Motivo da nota zero</label>
+            <select id="c_zero_motivo"></select>
+          </div>
+        </div>
+        <div class="erro" id="c_erro"></div>
+        <button id="c_salvar" onclick="salvar()" style="width:100%;margin-top:14px;padding:14px">Salvar e ir para a próxima →</button>
+        <p class="hint" style="margin-top:8px;text-align:center">Dica: use Tab para passar de um tópico ao outro e Enter para salvar.</p>
+      </div>
+    </div>
+  </div>
+  <div class="container" id="c_fim" style="display:none">
+    <div class="card" style="text-align:center;padding:36px 20px">
+      <div style="font-size:2.4rem">✓</div>
+      <h2 style="margin-top:6px">Você terminou as redações desta correção</h2>
+      <p class="leg" id="c_fim_txt"></p>
+      <p class="hint" style="margin-bottom:16px">Se aparecerem novas redações para você (por exemplo, uma 3ª correção), elas surgem aqui automaticamente quando você voltar.</p>
+      <button class="sec" onclick="abrirMinhas()">Revisar minhas correções</button>
+      <button onclick="voltarBancas()" style="margin-left:8px">Voltar</button>
+    </div>
+  </div>
+</div>
+
+<div id="modal">
+  <div class="card" style="max-width:520px;width:94%;margin:0">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <h3 style="margin:0">Minhas correções</h3><button class="sec" onclick="fecharMinhas()">Fechar</button>
+    </div>
+    <p class="hint" style="margin-bottom:8px">Clique numa redação para rever ou alterar a nota (enquanto a correção estiver aberta).</p>
+    <div class="lista-m" id="m_lista"></div>
+  </div>
+</div>
+
+<script>
+var SES=null, BANCA_ID=null, ATUAL=null, ESCALA=1, ZERO=false;
+var $=function(id){return document.getElementById(id);};
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+function fmt(v){ if(v==null||v==='') return '—'; return String(Math.round(Number(v)*100)/100).replace('.',','); }
+function num(v){ return Number(String(v==null?'':v).trim().replace(',','.')); }
+async function api(url, extra){
+  var body=Object.assign({}, SES||{}, extra||{});
+  var r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  var j={}; try{ j=await r.json(); }catch(e){}
+  if(r.status===401 && SES){ sair(); throw new Error(j.erro||'Sessão expirada.'); }
+  if(!r.ok) throw new Error(j.erro||'Erro de comunicação. Tente de novo.');
+  return j;
+}
+function mostrar(t){ ['tela_login','tela_bancas','tela_corr'].forEach(function(x){ $(x).style.display = x===t ? '' : 'none'; }); }
+
+async function entrar(){
+  $('login_erro').style.display='none';
+  var email=$('in_email').value.trim(), senha=$('in_senha').value;
+  if(!email||!senha){ $('login_erro').textContent='Informe e-mail e senha.'; $('login_erro').style.display='block'; return; }
+  $('btn_entrar').disabled=true;
+  try{
+    SES={email:email, senha:senha};
+    var j=await api('/api/redacao/bancas');
+    try{ sessionStorage.setItem('red_ses', JSON.stringify(SES)); }catch(e){}
+    mostrarBancas(j);
+  }catch(e){ SES=null; $('login_erro').textContent=e.message; $('login_erro').style.display='block'; }
+  $('btn_entrar').disabled=false;
+}
+function sair(){ SES=null; try{ sessionStorage.removeItem('red_ses'); }catch(e){} $('in_senha').value=''; mostrar('tela_login'); }
+async function voltarBancas(){ try{ mostrarBancas(await api('/api/redacao/bancas')); }catch(e){ alert(e.message); } }
+function mostrarBancas(j){
+  mostrar('tela_bancas');
+  $('b_nome').textContent = j.nome ? ('Olá, ' + j.nome) : '';
+  if(!j.bancas.length){ $('b_lista').innerHTML='<div class="card"><h3>Nenhuma redação para você ainda</h3><p class="leg" style="margin:0">Assim que a coordenação distribuir as redações, elas aparecem aqui.</p></div>'; return; }
+  $('b_lista').innerHTML = j.bancas.map(function(b){
+    var pct = b.total ? Math.round(b.feitas*100/b.total) : 0;
+    var falta = b.total - b.feitas;
+    return '<div class="card"><div class="banca"><div style="flex:1;min-width:220px"><h3 style="margin:0">'+esc(b.titulo)+'</h3>'
+      +'<div class="hint" style="margin-top:4px">'+b.feitas+' de '+b.total+' corrigidas'+(falta?(' · faltam '+falta):'')+(b.encerrada?' · <b>encerrada</b>':'')+'</div>'
+      +'<div class="barra"><div style="width:'+pct+'%"></div></div></div>'
+      +'<button onclick="iniciar('+b.id+')">'+(b.encerrada?'Ver':(falta?'Corrigir':'Revisar'))+'</button></div></div>';
+  }).join('');
+}
+
+async function iniciar(id){ BANCA_ID=id; await proxima(); }
+async function proxima(){
+  try{
+    var j=await api('/api/redacao/proxima',{banca_id:BANCA_ID});
+    mostrar('tela_corr');
+    if(j.fim){
+      ATUAL=null; $('c_corpo').style.display='none'; $('c_fim').style.display='';
+      $('c_titulo').textContent=j.banca.titulo; $('c_prog').textContent=j.progresso.feitas+' de '+j.progresso.total+' corrigidas';
+      $('c_fim_txt').textContent='Você corrigiu '+j.progresso.feitas+' redação(ões). Obrigado!';
+      return;
+    }
+    carregar(j);
+  }catch(e){ alert(e.message); }
+}
+async function abrir(cid){
+  fecharMinhas();
+  try{ var j=await api('/api/redacao/abrir',{correcao_id:cid}); mostrar('tela_corr'); carregar(j); }catch(e){ alert(e.message); }
+}
+function carregar(j){
+  ATUAL=j; $('c_fim').style.display='none'; $('c_corpo').style.display='';
+  var b=j.banca, ed=j.status==='feita', bloq=b.encerrada;
+  $('c_titulo').textContent=b.titulo;
+  $('c_prog').textContent=j.progresso.feitas+' de '+j.progresso.total+' corrigidas';
+  $('c_num').textContent='Redação nº '+j.numero;
+  $('c_tags').innerHTML=(j.terceira?'<span class="tag t3">3ª correção</span> ':'')+(ed?'<span class="tag ok">já corrigida — revisão</span>':'');
+  $('c_aviso').innerHTML = bloq ? '<div class="erro" style="display:block;margin:0 0 10px">Esta correção foi encerrada pela coordenação. As notas não podem mais ser alteradas.</div>'
+    : (j.terceira ? '<p class="hint" style="margin-bottom:10px;color:#8a5300">As duas primeiras notas desta redação ficaram muito diferentes. Faça a sua correção normalmente.</p>' : '');
+  $('c_max').textContent='de '+fmt(b.nota_max);
+  $('c_topicos').innerHTML=b.topicos.map(function(t,i){
+    var v = j.notas && j.notas[i]!=null ? fmt(j.notas[i]) : '';
+    return '<div class="top"><div class="nm">'+esc(t.nome)+'<small>0 a '+fmt(t.max)+'</small></div>'
+      +'<input id="tp'+i+'" inputmode="decimal" autocomplete="off" value="'+(v==='—'?'':v)+'" oninput="somar()" onkeydown="tecla(event,'+i+')"'+(bloq?' disabled':'')+'></div>';
+  }).join('');
+  $('c_zero_motivo').innerHTML='<option value="">Escolha o motivo...</option>'+b.motivos_zero.map(function(m){return '<option>'+esc(m)+'</option>';}).join('');
+  ZERO=!!j.zero_motivo; $('c_zero_motivo').value=j.zero_motivo||'';
+  $('c_btn_zero').disabled=bloq; $('c_zero_motivo').disabled=bloq; $('c_salvar').disabled=bloq;
+  $('c_salvar').textContent = ed ? 'Salvar alteração →' : 'Salvar e ir para a próxima →';
+  $('c_erro').style.display='none';
+  aplicarZero(); somar();
+  var img=$('c_img'); img.onload=function(){ ajustar(); }; img.src=j.imagem||'';
+  $('c_area').scrollTop=0; $('c_area').scrollLeft=0;
+  if(!bloq && !ZERO){ var p=$('tp0'); if(p) setTimeout(function(){ p.focus(); },50); }
+}
+function tecla(ev,i){
+  if(ev.key==='Enter'){ ev.preventDefault(); var n=$('tp'+(i+1)); if(n && !n.value) n.focus(); else salvar(); }
+}
+function somar(){
+  if(!ATUAL) return;
+  var s=0, ok=true;
+  ATUAL.banca.topicos.forEach(function(t,i){
+    var el=$('tp'+i), raw=el.value.trim(); el.classList.remove('inval');
+    if(raw==='') return;
+    var v=num(raw);
+    if(!isFinite(v) || v<0 || v>Number(t.max)+1e-9){ el.classList.add('inval'); ok=false; return; }
+    s+=v;
+  });
+  $('c_total').textContent = ZERO ? '0' : fmt(Math.round(s*100)/100);
+  return ok;
+}
+function alternarZero(){ ZERO=!ZERO; if(!ZERO) $('c_zero_motivo').value=''; aplicarZero(); somar(); if(ZERO) $('c_zero_motivo').focus(); }
+function aplicarZero(){
+  $('c_btn_zero').classList.toggle('on',ZERO);
+  $('c_btn_zero').textContent = ZERO ? 'Nota zero marcada (clique para desfazer)' : 'Atribuir nota zero';
+  $('c_zero_box').style.display = ZERO ? '' : 'none';
+  var bloq=ATUAL && ATUAL.banca.encerrada;
+  ATUAL.banca.topicos.forEach(function(t,i){ var el=$('tp'+i); el.disabled = ZERO || bloq; el.style.opacity = ZERO ? .4 : 1; });
+}
+function erro(m){ $('c_erro').textContent=m; $('c_erro').style.display='block'; }
+async function salvar(){
+  if(!ATUAL || ATUAL.banca.encerrada) return;
+  $('c_erro').style.display='none';
+  var notas={};
+  if(ZERO){
+    if(!$('c_zero_motivo').value){ erro('Escolha o motivo da nota zero.'); return; }
+  } else {
+    for(var i=0;i<ATUAL.banca.topicos.length;i++){
+      var t=ATUAL.banca.topicos[i], raw=$('tp'+i).value.trim();
+      if(raw===''){ erro('Preencha a nota de "'+t.nome+'".'); $('tp'+i).focus(); return; }
+      var v=num(raw);
+      if(!isFinite(v)||v<0||v>Number(t.max)+1e-9){ erro('A nota de "'+t.nome+'" deve ficar entre 0 e '+fmt(t.max)+'.'); $('tp'+i).focus(); return; }
+      notas[i]=v;
+    }
+  }
+  $('c_salvar').disabled=true;
+  try{
+    await api('/api/redacao/salvar',{correcao_id:ATUAL.correcao_id, notas:notas, zero_motivo: ZERO ? $('c_zero_motivo').value : ''});
+    await proxima();
+  }catch(e){ erro(e.message); }
+  $('c_salvar').disabled=false;
+}
+function zoom(d){ ESCALA=Math.max(0.3,Math.min(4,ESCALA+d)); aplicarEscala(); }
+function ajustar(){
+  var img=$('c_img'), area=$('c_area');
+  if(!img.naturalWidth) return;
+  ESCALA=Math.max(0.3,(area.clientWidth-24)/img.naturalWidth); aplicarEscala();
+}
+function aplicarEscala(){
+  var img=$('c_img');
+  if(img.naturalWidth) img.style.width=Math.round(img.naturalWidth*ESCALA)+'px';
+  $('c_zoom').textContent=Math.round(ESCALA*100)+'%';
+}
+window.addEventListener('resize',function(){ if(ATUAL) ajustar(); });
+async function abrirMinhas(){
+  if(!BANCA_ID) return;
+  try{
+    var j=await api('/api/redacao/minhas',{banca_id:BANCA_ID});
+    $('m_lista').innerHTML = j.correcoes.length ? j.correcoes.map(function(c){
+      var st = c.status==='feita' ? ('<b>'+(c.zero_motivo?'<span style="color:#a12626">ZERO</span>':fmt(c.total))+'</b>') : '<span class="hint">pendente</span>';
+      return '<div class="it" onclick="abrir('+c.id+')"><span>Redação nº '+c.seq+(c.terceira?' <span class="tag t3">3ª</span>':'')+'</span>'+st+'</div>';
+    }).join('') : '<p class="hint">Nenhuma.</p>';
+    $('modal').style.display='flex';
+  }catch(e){ alert(e.message); }
+}
+function fecharMinhas(){ $('modal').style.display='none'; }
+$('in_senha').addEventListener('keydown',function(e){ if(e.key==='Enter') entrar(); });
+(function(){
+  try{ var s=JSON.parse(sessionStorage.getItem('red_ses')||'null'); if(s&&s.email){ SES=s; voltarBancas(); return; } }catch(e){}
+  mostrar('tela_login');
+})();
+</script>
+</body></html>
