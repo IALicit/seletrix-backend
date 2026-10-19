@@ -603,7 +603,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'titulos-zip-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'cartao-local-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -3039,7 +3039,7 @@ app.get('/admin/relatorio/cartoes.html', exigirSenha, async (req, res) => {
   const params = [concurso.id]; let filtro = '';
   if (salaId) { params.push(salaId); filtro += ' AND s.id=$' + params.length; }
   if (cargo) { params.push(cargo); filtro += ' AND k.cargo=$' + params.length; }
-  const { rows } = await pool.query(`SELECT k.nome,k.cpf,k.protocolo,k.cargo, s.nome AS sala, s.obs AS sala_obs, e.nome AS escola
+  const { rows } = await pool.query(`SELECT k.nome,k.cpf,k.protocolo,k.cargo, s.nome AS sala, s.obs AS sala_obs, e.nome AS escola, e.endereco AS escola_end
     FROM candidatos k JOIN salas s ON s.id=k.sala_id JOIN escolas e ON e.id=s.escola_id
     WHERE k.concurso_id=$1${filtro} ORDER BY e.id, s.id, k.nome`, params);
   const e = escapeHtml;
@@ -3065,7 +3065,8 @@ app.get('/admin/relatorio/cartoes.html', exigirSenha, async (req, res) => {
         <div class="dados">
           <div class="l1">EDITAL: ${e(concurso.titulo || '')} &nbsp;•&nbsp; TURNO: ${turnoTxt}</div>
           <div>${e(concurso.orgao || '')}</div>
-          <div><b>SALA ${salaTxt}</b> &nbsp;•&nbsp; DATA: ${dataTxt}</div>
+          <div>LOCAL: <b>${e(String(r.escola || '').toUpperCase())}</b>${r.escola_end ? (' &nbsp;<span style="font-size:10px">(' + e(r.escola_end) + ')</span>') : ''}</div>
+          <div><b>${/^SALA\b/.test(salaTxt) ? '' : 'SALA '}${salaTxt}</b> &nbsp;•&nbsp; DATA: ${dataTxt}</div>
           <div>CANDIDATO: <b>${e(r.nome || '')}</b></div>
           <div>CPF: ${e(r.cpf || '')} &nbsp;•&nbsp; INSCRIÇÃO: ${e(r.protocolo || '')}</div>
           <div>CARGO: <b>${e(r.cargo || '')}</b></div>
