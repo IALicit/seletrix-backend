@@ -84,6 +84,23 @@
       <button type="submit" id="btn-entrar">Entrar</button>
       <div class="msg erro" id="erro"></div>
     </form>
+    <p style="text-align:center;margin-top:16px"><a href="#" id="link-esqueci" style="color:var(--aco);font-weight:600">Esqueci minha senha</a></p>
+  </div>
+
+  <!-- Esqueci minha senha -->
+  <div class="card" id="esqueci" style="display:none">
+    <h2>Esqueci minha senha</h2>
+    <p class="leg">Informe seu CPF e sua data de nascimento. Vamos enviar uma senha nova para o e-mail que você cadastrou na inscrição.</p>
+    <form id="form-esqueci">
+      <label>CPF</label>
+      <input id="cpf_esq" inputmode="numeric" placeholder="000.000.000-00" maxlength="14">
+      <label>Data de nascimento</label>
+      <input id="nasc_esq" inputmode="numeric" placeholder="DD/MM/AAAA" maxlength="10">
+      <button type="submit" id="btn-esqueci">Receber nova senha por e-mail</button>
+      <div class="msg erro" id="erro_esq" style="display:none"></div>
+      <div class="msg" id="ok_esq" style="display:none;background:#e7f6ec;color:#1d6b3a;border:1px solid #bfe3cb"></div>
+    </form>
+    <p style="text-align:center;margin-top:16px"><a href="#" id="link-voltar-login" style="color:var(--aco);font-weight:600">← Voltar para o login</a></p>
   </div>
 
   <!-- Painel do candidato -->
@@ -372,6 +389,26 @@
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro ao remover');return;}
     recarregar();
   }
+
+  // ---- Esqueci minha senha ----
+  function mascaraCpf(el){ el.addEventListener('input',function(){ let v=el.value.replace(/\D/g,'').slice(0,11); v=v.replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d)/,'$1.$2').replace(/(\d{3})(\d{1,2})$/,'$1-$2'); el.value=v; }); }
+  mascaraCpf($('cpf_esq'));
+  $('nasc_esq').addEventListener('input',function(){ let v=this.value.replace(/\D/g,'').slice(0,8); v=v.replace(/(\d{2})(\d)/,'$1/$2').replace(/(\d{2})(\d)/,'$1/$2'); this.value=v; });
+  $('link-esqueci').addEventListener('click',function(e){ e.preventDefault(); $('login').style.display='none'; $('esqueci').style.display='block'; $('cpf_esq').value=cpf.value; $('erro_esq').style.display='none'; $('ok_esq').style.display='none'; });
+  $('link-voltar-login').addEventListener('click',function(e){ e.preventDefault(); $('esqueci').style.display='none'; $('login').style.display='block'; });
+  $('form-esqueci').addEventListener('submit', async function(e){
+    e.preventDefault(); $('erro_esq').style.display='none'; $('ok_esq').style.display='none';
+    const btn=$('btn-esqueci'); btn.disabled=true; btn.textContent='Enviando...';
+    try{
+      const r=await fetch('/api/candidato/esqueci-senha',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cpf:$('cpf_esq').value,nascimento:$('nasc_esq').value})});
+      const j=await r.json();
+      if(!r.ok) throw new Error(j.erro||'Não foi possível redefinir a senha.');
+      $('ok_esq').innerHTML='Pronto! Enviamos uma senha nova para <b>'+esc(j.email)+'</b>. Confira também a caixa de spam. Depois, volte ao login e entre com seu CPF e a senha nova.';
+      $('ok_esq').style.display='block';
+      cpf.value=$('cpf_esq').value;
+    }catch(err){ $('erro_esq').textContent=err.message; $('erro_esq').style.display='block'; }
+    finally{ btn.disabled=false; btn.textContent='Receber nova senha por e-mail'; }
+  });
 
   $('form-login').addEventListener('submit', async function(e){
     e.preventDefault(); $('erro').style.display='none';
