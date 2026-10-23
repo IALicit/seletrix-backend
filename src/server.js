@@ -603,7 +603,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'cartao-local-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'esqueci-senha-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -877,6 +877,75 @@ app.post('/api/inscricao', async (req, res) => {
 });
 
 // ---- Área do Candidato (login CPF + senha) -----------------
+// ---- Esqueci minha senha (Área do Candidato) ----------------
+// O candidato informa CPF + data de nascimento. Se conferir com alguma
+// inscrição, o sistema gera uma senha nova e manda SÓ para o e-mail
+// cadastrado (nunca mostra na tela). Limite de tentativas por CPF e por IP.
+const _esqueciTent = new Map();
+function esqueciLimite(chave, max) {
+  const agora = Date.now(), janela = 60 * 60 * 1000;
+  const l = (_esqueciTent.get(chave) || []).filter((t) => agora - t < janela);
+  if (l.length >= max) { _esqueciTent.set(chave, l); return false; }
+  l.push(agora); _esqueciTent.set(chave, l); return true;
+}
+function mascararEmail(e) {
+  const [u, d] = String(e || '').split('@');
+  if (!d) return '';
+  return (u.length <= 2 ? u[0] + '*' : u.slice(0, 2) + '***') + '@' + d;
+}
+function senhaProvisoria() {
+  const alf = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sem 0/O, 1/I, que confundem
+  let s = '';
+  for (const b of crypto.randomBytes(8)) s += alf[b % alf.length];
+  return s;
+}
+function normalizaNasc(v) {
+  const s = String(v || '').trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/); if (m) return m[1] + '-' + m[2] + '-' + m[3];
+  m = s.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{4})$/); if (m) return m[3] + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0');
+  m = s.replace(/\D/g, '').match(/^(\d{2})(\d{2})(\d{4})$/); if (m) return m[3] + '-' + m[2] + '-' + m[1];
+  return '';
+}
+app.post('/api/candidato/esqueci-senha', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível no momento.' });
+  const b = req.body || {};
+  const cpf = soDigitos(b.cpf);
+  const nasc = normalizaNasc(b.nascimento);
+  if (!cpfValido(cpf)) return res.status(400).json({ erro: 'Informe um CPF válido.' });
+  if (!nasc) return res.status(400).json({ erro: 'Informe sua data de nascimento.' });
+  const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+  if (!esqueciLimite('cpf:' + cpf, 3) || !esqueciLimite('ip:' + ip, 15))
+    return res.status(429).json({ erro: 'Muitas tentativas. Aguarde 1 hora e tente de novo, ou fale com o suporte.' });
+  const { rows } = await pool.query(
+    `SELECT k.nome, k.email, to_char(k.nascimento,'YYYY-MM-DD') AS nasc, e.nome AS empresa
+       FROM candidatos k LEFT JOIN concursos c ON c.id=k.concurso_id LEFT JOIN empresas e ON e.id=c.empresa_id
+      WHERE regexp_replace(k.cpf,'\\D','','g')=$1 ORDER BY k.id DESC`, [cpf]);
+  if (!rows.length) return res.status(404).json({ erro: 'Não encontramos inscrição com este CPF.' });
+  const comData = rows.filter((r) => r.nasc);
+  if (!comData.length) return res.status(409).json({ erro: 'Sua inscrição não tem data de nascimento cadastrada. Fale com o suporte para redefinir a senha.' });
+  const conf = comData.filter((r) => r.nasc === nasc);
+  if (!conf.length) return res.status(400).json({ erro: 'A data de nascimento não confere com a da inscrição.' });
+  const alvo = conf.find((r) => r.email) || rows.find((r) => r.email);
+  if (!alvo || !alvo.email) return res.status(409).json({ erro: 'Não há e-mail cadastrado na sua inscrição. Fale com o suporte para redefinir a senha.' });
+  if (!temEmail) return res.status(503).json({ erro: 'O envio de e-mails está indisponível no momento. Fale com o suporte.' });
+  const nova = senhaProvisoria();
+  const marca = alvo.empresa || 'Seletrix Concursos';
+  const html = `<div style="font-family:Arial,sans-serif;max-width:520px;color:#222">`
+    + `<p>Olá, <b>${escapeHtml(alvo.nome)}</b>!</p>`
+    + `<p>Recebemos um pedido para redefinir a senha da sua <b>Área do Candidato</b>.</p>`
+    + `<p>Sua nova senha é:</p><p style="font-size:22px;font-weight:bold;letter-spacing:3px;background:#f2f5f8;padding:12px 16px;border-radius:8px;display:inline-block">${nova}</p>`
+    + `<p>Entre com seu <b>CPF</b> e essa senha. Digite exatamente como está acima (letras maiúsculas).</p>`
+    + `<p style="color:#888;font-size:13px">Se não foi você que pediu, pode ignorar: sua inscrição continua normal, só a senha mudou para a de cima.</p>`
+    + `<hr style="border:none;border-top:1px solid #eee;margin:16px 0"><div style="color:#888;font-size:12px">${escapeHtml(marca)}</div></div>`;
+  const texto = `Ola, ${alvo.nome}! Sua nova senha da Area do Candidato e: ${nova} . Entre com seu CPF e essa senha (letras maiusculas).`;
+  const ok = await enviarEmail({ para: alvo.email, assunto: 'Nova senha — Área do Candidato', html, texto });
+  if (!ok) return res.status(502).json({ erro: 'Não conseguimos enviar o e-mail agora. Tente mais tarde ou fale com o suporte.' });
+  // Só troca a senha depois que o e-mail saiu (senão o candidato ficaria sem nenhuma).
+  await pool.query(`INSERT INTO candidato_login (cpf, senha_hash, nome) VALUES ($1,$2,$3)
+    ON CONFLICT (cpf) DO UPDATE SET senha_hash=EXCLUDED.senha_hash`, [cpf, hashSenha(nova), alvo.nome]);
+  res.json({ ok: true, email: mascararEmail(alvo.email) });
+});
+
 app.post('/api/candidato/login', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
   let cpf = soDigitos((req.body || {}).cpf);
