@@ -603,7 +603,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'esqueci-senha-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'vista-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -4432,6 +4432,106 @@ const PAINEL_HTML = require('./painel.js');
 
 // Rede de segurança: erro não tratado em rota de dados responde JSON, nunca a
 // página HTML de erro (que quebrava o front com "Unexpected token '<'").
+// ================= VISTA DA FOLHA DE RESPOSTAS =================
+// Página pública /vista.html?c=<ref>: o candidato informa inscrição + nº da
+// identidade e vê a imagem do cartão-resposta e as notas. Os dados são
+// carregados pelo admin em lotes (o navegador lê o ZIP e manda em partes).
+async function vistaTabelas() {
+  await pool.query(`CREATE TABLE IF NOT EXISTS vista_conjuntos (id SERIAL PRIMARY KEY, ref TEXT UNIQUE,
+    titulo TEXT, subtitulo TEXT, ativo BOOLEAN DEFAULT FALSE, criado_em TIMESTAMPTZ DEFAULT now())`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS vista_cartoes (conjunto_id INT, inscricao TEXT, ident TEXT,
+    nome TEXT, notas TEXT, total TEXT, img_mime TEXT, img BYTEA, PRIMARY KEY (conjunto_id, inscricao))`);
+}
+let _vistaOk = null;
+function vistaPronta() { if (!_vistaOk) _vistaOk = vistaTabelas().catch((e) => { _vistaOk = null; throw e; }); return _vistaOk; }
+const normInsc = (s) => String(s || '').toUpperCase().replace(/\s+/g, '');
+const normIdent = (s) => String(s || '').toUpperCase().replace(/[^0-9A-Z]/g, '').replace(/^0+/, '');
+
+app.get('/admin/vista/conjuntos', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  await vistaPronta();
+  const { rows } = await pool.query(`SELECT c.id, c.ref, c.titulo, c.subtitulo, c.ativo,
+      (SELECT count(*) FROM vista_cartoes v WHERE v.conjunto_id=c.id)::int AS qtd,
+      (SELECT coalesce(sum(octet_length(img)),0) FROM vista_cartoes v WHERE v.conjunto_id=c.id)::bigint AS bytes
+    FROM vista_conjuntos c ORDER BY c.id DESC`);
+  res.json(rows);
+});
+app.post('/admin/vista/conjunto', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  await vistaPronta();
+  const b = req.body || {};
+  const ref = String(b.ref || '').trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  if (!ref) return res.status(400).json({ erro: 'Informe o código do link (ex.: pedro2-6ano).' });
+  const titulo = String(b.titulo || '').trim().slice(0, 200), sub = String(b.subtitulo || '').trim().slice(0, 300);
+  const { rows } = await pool.query(`INSERT INTO vista_conjuntos (ref,titulo,subtitulo) VALUES ($1,$2,$3)
+    ON CONFLICT (ref) DO UPDATE SET titulo=EXCLUDED.titulo, subtitulo=EXCLUDED.subtitulo RETURNING id`, [ref, titulo, sub]);
+  res.json({ ok: true, id: rows[0].id, ref });
+});
+app.post('/admin/vista/conjunto/:id/ativo', exigirSenha, async (req, res) => {
+  await vistaPronta();
+  await pool.query('UPDATE vista_conjuntos SET ativo=$1 WHERE id=$2', [!!(req.body || {}).ativo, parseInt(req.params.id)]);
+  res.json({ ok: true });
+});
+app.delete('/admin/vista/conjunto/:id', exigirSenha, async (req, res) => {
+  await vistaPronta();
+  const id = parseInt(req.params.id);
+  await pool.query('DELETE FROM vista_cartoes WHERE conjunto_id=$1', [id]);
+  await pool.query('DELETE FROM vista_conjuntos WHERE id=$1', [id]);
+  res.json({ ok: true });
+});
+// Recebe um lote: { itens: [{inscricao, identidade, nome, notas:[{rotulo,valor}], total, img (dataURL ou base64)}] }
+app.post('/admin/vista/conjunto/:id/lote', exigirSenha, async (req, res) => {
+  await vistaPronta();
+  const id = parseInt(req.params.id);
+  const itens = Array.isArray((req.body || {}).itens) ? req.body.itens : [];
+  let ok = 0; const erros = [];
+  for (const it of itens) {
+    const insc = normInsc(it.inscricao), ident = normIdent(it.identidade);
+    if (!insc || !ident) { erros.push((it.inscricao || '?') + ': sem inscrição ou identidade'); continue; }
+    let buf = null, mime = null;
+    if (it.img) { buf = decodeB64(it.img); mime = mimeDe(buf); if (!mime) { erros.push(insc + ': imagem inválida'); continue; } }
+    await pool.query(`INSERT INTO vista_cartoes (conjunto_id,inscricao,ident,nome,notas,total,img_mime,img)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (conjunto_id,inscricao) DO UPDATE SET ident=EXCLUDED.ident,
+      nome=EXCLUDED.nome, notas=EXCLUDED.notas, total=EXCLUDED.total,
+      img_mime=COALESCE(EXCLUDED.img_mime, vista_cartoes.img_mime), img=COALESCE(EXCLUDED.img, vista_cartoes.img)`,
+      [id, insc, ident, String(it.nome || '').slice(0, 200), JSON.stringify(it.notas || []), String(it.total == null ? '' : it.total), mime, buf]);
+    ok++;
+  }
+  res.json({ ok: true, gravados: ok, erros });
+});
+// Público
+app.get('/api/vista/:ref', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  await vistaPronta();
+  const { rows } = await pool.query('SELECT titulo, subtitulo, ativo FROM vista_conjuntos WHERE ref=$1', [String(req.params.ref).toLowerCase()]);
+  if (!rows.length) return res.status(404).json({ erro: 'Link não encontrado.' });
+  res.json(rows[0]);
+});
+const _vistaTent = new Map();
+app.post('/api/vista/:ref/consulta', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  await vistaPronta();
+  const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
+  const agora = Date.now(); const l = (_vistaTent.get(ip) || []).filter((t) => agora - t < 3600e3);
+  if (l.length >= 30) return res.status(429).json({ erro: 'Muitas tentativas sem sucesso. Aguarde 1 hora e tente novamente.' });
+  const c = await pool.query('SELECT id, ativo FROM vista_conjuntos WHERE ref=$1', [String(req.params.ref).toLowerCase()]);
+  if (!c.rows.length) return res.status(404).json({ erro: 'Link não encontrado.' });
+  if (!c.rows[0].ativo) return res.status(403).json({ erro: 'A consulta ainda não está disponível.' });
+  const b = req.body || {};
+  const insc = normInsc(b.inscricao), ident = normIdent(b.identidade);
+  if (!insc || !ident) return res.status(400).json({ erro: 'Informe o número de inscrição e o número da identidade.' });
+  const { rows } = await pool.query('SELECT inscricao, nome, notas, total, img_mime, img FROM vista_cartoes WHERE conjunto_id=$1 AND inscricao=$2 AND ident=$3',
+    [c.rows[0].id, insc, ident]);
+  if (!rows.length) {
+    l.push(agora); _vistaTent.set(ip, l);
+    return res.status(404).json({ erro: 'Não encontramos uma folha de respostas com esta inscrição e identidade. Confira os dados (a identidade deve ser a mesma informada na inscrição).' });
+  }
+  const r = rows[0];
+  let notas = []; try { notas = JSON.parse(r.notas || '[]'); } catch {}
+  res.json({ inscricao: r.inscricao, nome: r.nome, notas, total: r.total,
+    imagem: r.img ? ('data:' + r.img_mime + ';base64,' + r.img.toString('base64')) : null });
+});
+
 app.use((err, req, res, next) => {
   console.error('erro nao tratado:', req.path, err && err.message);
   if (res.headersSent) return next(err);

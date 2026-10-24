@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v30-titulos-zip -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v31-vista -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -85,6 +85,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   <div class="tab" data-t="questoes">Questões</div>
   <div class="tab" data-t="professores">Professores</div>
   <div class="tab" data-t="redacoes">Redações</div>
+  <div class="tab" data-t="vista">Vista</div>
   <div class="tab" data-t="prova_online">Prova Online</div>
   <div class="tab" data-t="recursos">Recursos</div>
   <div class="tab" data-t="titulos">Títulos</div>
@@ -535,6 +536,30 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     </div>
     <div class="card"><div id="pf_lista"></div></div>
   </section>
+  <section id="vista" style="display:none">
+    <div class="card">
+      <h2 style="font-size:1.15rem;color:var(--navy);margin-bottom:6px">Vista da folha de respostas</h2>
+      <p class="hint" style="margin-bottom:12px">Página pública onde o candidato informa a <b>inscrição</b> e o <b>número da identidade</b> e vê a imagem do cartão-resposta e as notas. Cada link (ex.: Pedro II 6º ano) recebe um arquivo .zip preparado pela Seletrix. Só fica visível ao público depois de clicar em <b>Publicar</b>.</p>
+      <div id="vs_lista"></div>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--navy);margin-bottom:10px">1. Criar link</h3>
+      <div class="grid2">
+        <div><label>Código do link (vai no endereço)</label><input id="vs_ref" placeholder="Ex.: pedro2-6ano"></div>
+        <div><label>Título da página</label><input id="vs_tit" placeholder="Ex.: Colégio Pedro II · Processo Seletivo 6º ano 2027"></div>
+        <div><label>Subtítulo</label><input id="vs_sub" placeholder="Ex.: Vista da Folha de Respostas · Resultado preliminar"></div>
+      </div>
+      <div style="margin-top:12px"><button onclick="vsCriar()">Criar / atualizar link</button></div>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--navy);margin-bottom:10px">2. Carregar os cartões</h3>
+      <div class="grid2">
+        <div><label>Link</label><select id="vs_sel"></select></div>
+        <div><label>Arquivo .zip (pode enviar várias partes, uma de cada vez)</label><input type="file" id="vs_zip" accept=".zip"></div>
+      </div>
+      <div style="margin-top:12px"><button onclick="vsEnviar()">Enviar arquivo</button> <span class="hint" id="vs_status"></span></div>
+    </div>
+  </section>
   <section id="redacoes" style="display:none">
     <div class="card">
       <h2 style="font-size:1.15rem;color:var(--navy);margin-bottom:6px">Correção de redações</h2>
@@ -816,7 +841,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   let CONCURSOS = [], cargosEdit = [], tiposEdit = [], INSCRITOS = [];
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
     document.querySelectorAll('.tab').forEach(x => x.classList.remove('on')); t.classList.add('on');
-    ['concursos','inscritos','relatorios','locacao','alocacao','questoes','prova_online','recursos','titulos','empresas','professores','redacoes'].forEach(s => $(s).style.display = s === t.dataset.t ? 'block' : 'none');
+    ['concursos','inscritos','relatorios','locacao','alocacao','questoes','prova_online','recursos','titulos','empresas','professores','redacoes','vista'].forEach(s => $(s).style.display = s === t.dataset.t ? 'block' : 'none');
     if (t.dataset.t === 'inscritos') carregarInscritos();
     if (t.dataset.t === 'titulos') popularTitConcursos();
     if (t.dataset.t === 'relatorios') popularRelConcursos();
@@ -828,6 +853,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     if (t.dataset.t === 'empresas') { carregarEmpresas(); }
     if (t.dataset.t === 'professores') { carregarProfessores(); }
     if (t.dataset.t === 'redacoes') { carregarRedacoes(); }
+    if (t.dataset.t === 'vista') { vsCarregar(); }
   });
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
   function combinaDT(data, hora, horaPadrao){ if(!data) return ''; return data+'T'+((hora||horaPadrao)).slice(0,5); }
@@ -2291,6 +2317,57 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   function rdNum(v){ return Number(String(v==null?'':v).replace(',','.')); }
   function rdFmt(v){ return v==null?'—':String(Math.round(Number(v)*100)/100).replace('.',','); }
   async function rdJson(r){ var j={}; try{ j=await r.json(); }catch(e){} if(!r.ok) throw new Error(j.erro||'Erro'); return j; }
+  // ---------- Vista de cartões ----------
+  var VS=[];
+  async function vsCarregar(){
+    var r=await fetch('/admin/vista/conjuntos'); VS=await r.json(); if(!r.ok){ $('vs_lista').innerHTML='<p class="hint">Erro ao carregar.</p>'; return; }
+    if(!VS.length){ $('vs_lista').innerHTML='<p class="hint">Nenhum link criado ainda.</p>'; }
+    else $('vs_lista').innerHTML='<div class="scroll"><table><tr><th>Link</th><th>Título</th><th>Cartões</th><th>Tamanho</th><th>Situação</th><th></th></tr>'+VS.map(function(c){
+      var url=location.origin+'/vista.html?c='+encodeURIComponent(c.ref);
+      return '<tr><td><a href="'+url+'" target="_blank">'+esc(url)+'</a></td><td>'+esc(c.titulo||'')+'</td><td>'+c.qtd+'</td><td>'+(Math.round(Number(c.bytes)/1048576*10)/10)+' MB</td><td>'+(c.ativo?'<b style="color:#0f6b41">Publicado</b>':'Não publicado')+'</td>'
+        +'<td style="white-space:nowrap"><button class="mini" onclick="vsAtivo('+c.id+','+(!c.ativo)+')">'+(c.ativo?'Despublicar':'Publicar')+'</button> <button class="del" style="padding:6px 10px" onclick="vsExcluir('+c.id+')">Excluir</button></td></tr>';
+    }).join('')+'</table></div>';
+    $('vs_sel').innerHTML=VS.map(function(c){return '<option value="'+c.id+'">'+esc(c.ref+' — '+(c.titulo||''))+'</option>';}).join('');
+  }
+  async function vsCriar(){
+    var r=await fetch('/admin/vista/conjunto',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ref:$('vs_ref').value,titulo:$('vs_tit').value,subtitulo:$('vs_sub').value})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} vsCarregar();
+  }
+  async function vsAtivo(id,ativo){
+    if(ativo && !confirm('Publicar? A partir de agora qualquer candidato com inscrição e identidade consegue consultar.')) return;
+    await fetch('/admin/vista/conjunto/'+id+'/ativo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ativo:ativo})}); vsCarregar();
+  }
+  async function vsExcluir(id){
+    if(!confirm('Excluir este link e TODOS os cartões carregados nele?')) return;
+    await fetch('/admin/vista/conjunto/'+id,{method:'DELETE'}); vsCarregar();
+  }
+  function vsJSZip(){ return new Promise(function(ok,falha){ if(window.JSZip) return ok(); var s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js'; s.onload=ok; s.onerror=function(){falha(new Error('Não foi possível carregar o leitor de ZIP.'));}; document.head.appendChild(s); }); }
+  async function vsEnviar(){
+    var id=$('vs_sel').value, f=$('vs_zip').files[0];
+    if(!id){alert('Crie o link primeiro.');return;} if(!f){alert('Escolha o arquivo .zip.');return;}
+    var st=$('vs_status');
+    try{
+      st.textContent='Abrindo o arquivo...'; await vsJSZip();
+      var zip=await JSZip.loadAsync(f);
+      var dj=zip.file('dados.json'); if(!dj) throw new Error('O .zip não tem o arquivo dados.json.');
+      var itens=JSON.parse(await dj.async('string')); var tot=itens.length, feitos=0, gravados=0, erros=[];
+      for(var i=0;i<tot;i+=40){
+        var lote=[];
+        for(var k=i;k<Math.min(i+40,tot);k++){
+          var it=Object.assign({},itens[k]);
+          if(it.img){ var fi=zip.file(it.img); it.img=fi?('data:'+(String(it.img).toLowerCase().endsWith('.png')?'image/png':'image/jpeg')+';base64,'+(await fi.async('base64'))):null; }
+          lote.push(it);
+        }
+        var r=await fetch('/admin/vista/conjunto/'+id+'/lote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({itens:lote})});
+        var j=await r.json(); if(!r.ok) throw new Error(j.erro||('Erro no envio (HTTP '+r.status+')'));
+        gravados+=j.gravados; erros=erros.concat(j.erros||[]); feitos=Math.min(i+40,tot);
+        st.textContent='Enviando... '+feitos+' de '+tot;
+      }
+      st.textContent='Pronto: '+gravados+' cartões gravados'+(erros.length?(' · '+erros.length+' com problema'):'')+'.';
+      if(erros.length) alert('Com problema:'+String.fromCharCode(10)+erros.slice(0,20).join(String.fromCharCode(10)));
+      $('vs_zip').value=''; vsCarregar();
+    }catch(e){ st.textContent=''; alert(e.message); }
+  }
   async function carregarRedacoes(sel){
     if($('rd_link')) $('rd_link').textContent = location.origin + '/redacao.html';
     var d=await (await fetch('/admin/redacao/bancas.json?empresa='+EMPRESA_ID)).json();
