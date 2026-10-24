@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vista da Folha de Respostas</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{--tinta:#0f3a4f;--tinta2:#0b2a3a;--aco:#2e6f8e;--verde:#1b8a5a;--papel:#f5f7f8;--branco:#fff;--linha:#dde6ea;--txt:#1b2a32;--suave:#5e7280}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Inter',-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--papel);color:var(--txt);line-height:1.5}
+  h1,h2,h3{font-family:'Sora',sans-serif}
+  header.topo{background:linear-gradient(135deg,var(--tinta),var(--tinta2));color:#fff;padding:24px 20px}
+  .topo .marca{font-family:'Sora';font-weight:700;font-size:1.15rem}
+  .topo .sub{opacity:.85;font-size:.88rem;margin-top:2px}
+  .container{max-width:760px;margin:0 auto;padding:26px 16px 60px}
+  .card{background:var(--branco);border:1px solid var(--linha);border-radius:14px;padding:24px}
+  h2{font-size:1.2rem;margin-bottom:4px}
+  .leg{color:var(--suave);font-size:.92rem;margin-bottom:12px}
+  label{display:block;font-size:.82rem;font-weight:600;color:#33454f;margin:12px 0 6px}
+  input{width:100%;padding:12px;font-size:1rem;border:1.5px solid var(--linha);border-radius:9px}
+  input:focus{outline:none;border-color:var(--aco);box-shadow:0 0 0 3px rgba(46,111,142,.12)}
+  button{margin-top:18px;width:100%;background:var(--verde);color:#fff;border:none;border-radius:10px;padding:14px;font-size:1rem;font-weight:700;font-family:'Sora';cursor:pointer}
+  button:disabled{opacity:.6}
+  .sec{background:#fff;color:var(--aco);border:1.5px solid var(--aco)}
+  .msg{display:none;margin-top:14px;padding:12px 14px;border-radius:10px;font-size:.9rem;background:#fdecec;color:#a12626;border:1px solid #f3c6c6}
+  .notas{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0 18px}
+  .nota{flex:1;min-width:140px;border:1px solid var(--linha);border-radius:10px;padding:12px 14px}
+  .nota .r{font-size:.8rem;color:var(--suave)}
+  .nota .v{font-family:'Sora';font-weight:700;font-size:1.25rem}
+  .nota.total{background:#eef6f1;border-color:#bfe3cb}
+  .img{border:1px solid var(--linha);border-radius:10px;overflow:hidden;background:#fff}
+  .img img{width:100%;display:block}
+  .dica{font-size:.8rem;color:var(--suave);margin-top:8px}
+</style>
+</head>
+<body>
+<header class="topo">
+  <div class="marca" id="titulo">Vista da Folha de Respostas</div>
+  <div class="sub" id="subtitulo"></div>
+</header>
+<div class="container">
+  <div class="card" id="form-card">
+    <h2>Consultar folha de respostas</h2>
+    <p class="leg">Informe o número de inscrição e o número da identidade do candidato, os mesmos informados na inscrição.</p>
+    <form id="form">
+      <label>Número de inscrição</label>
+      <input id="insc" placeholder="Ex.: CE.6A.00123/27" autocapitalize="characters" autocomplete="off">
+      <label>Número da identidade (RG) do candidato</label>
+      <input id="ident" placeholder="Somente números" autocomplete="off">
+      <button type="submit" id="btn">Consultar</button>
+      <div class="msg" id="erro"></div>
+    </form>
+  </div>
+
+  <div class="card" id="res" style="display:none">
+    <h2 id="r_nome"></h2>
+    <p class="leg" id="r_insc"></p>
+    <div class="notas" id="r_notas"></div>
+    <div class="img" id="r_img"></div>
+    <p class="dica">Toque ou clique na imagem para abrir em tamanho maior.</p>
+    <button class="sec" onclick="voltar()">Consultar outro candidato</button>
+  </div>
+</div>
+<script>
+  var $=function(id){return document.getElementById(id);};
+  var REF=(new URLSearchParams(location.search).get('c')||'').trim();
+  function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  function erro(t){ $('erro').textContent=t; $('erro').style.display='block'; }
+  (async function(){
+    if(!REF){ erro('Link incompleto.'); $('btn').disabled=true; return; }
+    try{
+      var r=await fetch('/api/vista/'+encodeURIComponent(REF)); var j=await r.json();
+      if(!r.ok) throw new Error(j.erro||'Link não encontrado.');
+      if(j.titulo){ $('titulo').textContent=j.titulo; document.title=j.titulo; }
+      $('subtitulo').textContent=j.subtitulo||'';
+      if(!j.ativo){ erro('A consulta ainda não está disponível.'); $('btn').disabled=true; }
+    }catch(e){ erro(e.message); $('btn').disabled=true; }
+  })();
+  $('form').addEventListener('submit', async function(e){
+    e.preventDefault(); $('erro').style.display='none';
+    var b=$('btn'); b.disabled=true; b.textContent='Consultando...';
+    try{
+      var r=await fetch('/api/vista/'+encodeURIComponent(REF)+'/consulta',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({inscricao:$('insc').value,identidade:$('ident').value})});
+      var j=await r.json(); if(!r.ok) throw new Error(j.erro||'Não foi possível consultar.');
+      $('r_nome').textContent=j.nome||'';
+      $('r_insc').textContent='Inscrição '+j.inscricao;
+      var h=(j.notas||[]).map(function(n){return '<div class="nota"><div class="r">'+esc(n.rotulo)+'</div><div class="v">'+esc(n.valor)+'</div></div>';}).join('');
+      if(j.total!==''&&j.total!=null) h+='<div class="nota total"><div class="r">Total da prova objetiva</div><div class="v">'+esc(j.total)+'</div></div>';
+      $('r_notas').innerHTML=h;
+      $('r_img').innerHTML=j.imagem?('<a href="#" id="abrir"><img src="'+j.imagem+'" alt="Folha de respostas"></a>'):'<p style="padding:14px">Imagem não disponível.</p>';
+      if(j.imagem) $('abrir').onclick=function(ev){ev.preventDefault(); var w=window.open(); if(w){w.document.write('<title>Folha de respostas</title><img src="'+j.imagem+'" style="max-width:100%">');}};
+      $('form-card').style.display='none'; $('res').style.display='block'; window.scrollTo(0,0);
+    }catch(err){ erro(err.message); }
+    finally{ b.disabled=false; b.textContent='Consultar'; }
+  });
+  function voltar(){ $('res').style.display='none'; $('form-card').style.display='block'; $('insc').value=''; $('ident').value=''; }
+</script>
+</body>
+</html>
