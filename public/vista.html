@@ -43,12 +43,12 @@
 <div class="container">
   <div class="card" id="form-card">
     <h2>Consultar folha de respostas</h2>
-    <p class="leg">Informe o número de inscrição e o número da identidade do candidato, os mesmos informados na inscrição.</p>
+    <p class="leg" id="leg">Informe o número de inscrição e a data de nascimento do candidato.</p>
     <form id="form">
       <label>Número de inscrição</label>
       <input id="insc" placeholder="Ex.: CE.6A.00123/27" autocapitalize="characters" autocomplete="off">
-      <label>Número da identidade (RG) do candidato</label>
-      <input id="ident" placeholder="Somente números" autocomplete="off">
+      <label id="lb_chave">Data de nascimento do candidato</label>
+      <input id="ident" placeholder="DD/MM/AAAA" inputmode="numeric" maxlength="10" autocomplete="off">
       <button type="submit" id="btn">Consultar</button>
       <div class="msg" id="erro"></div>
     </form>
@@ -66,6 +66,8 @@
 <script>
   var $=function(id){return document.getElementById(id);};
   var REF=(new URLSearchParams(location.search).get('c')||'').trim();
+  var CAMPO='nascimento';
+  $('ident').addEventListener('input',function(){ if(CAMPO!=='nascimento') return; var v=this.value.replace(/\D/g,'').slice(0,8); v=v.replace(/(\d{2})(\d)/,'$1/$2').replace(/(\d{2})(\d)/,'$1/$2'); this.value=v; });
   function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
   function erro(t){ $('erro').textContent=t; $('erro').style.display='block'; }
   (async function(){
@@ -75,6 +77,8 @@
       if(!r.ok) throw new Error(j.erro||'Link não encontrado.');
       if(j.titulo){ $('titulo').textContent=j.titulo; document.title=j.titulo; }
       $('subtitulo').textContent=j.subtitulo||'';
+      CAMPO=j.campo||'nascimento';
+      if(CAMPO==='identidade'){ $('lb_chave').textContent='Número da identidade (RG) do candidato'; $('ident').placeholder='Somente números'; $('ident').removeAttribute('maxlength'); $('leg').textContent='Informe o número de inscrição e o número da identidade do candidato, os mesmos informados na inscrição.'; }
       if(!j.ativo){ erro('A consulta ainda não está disponível.'); $('btn').disabled=true; }
     }catch(e){ erro(e.message); $('btn').disabled=true; }
   })();
@@ -82,7 +86,7 @@
     e.preventDefault(); $('erro').style.display='none';
     var b=$('btn'); b.disabled=true; b.textContent='Consultando...';
     try{
-      var r=await fetch('/api/vista/'+encodeURIComponent(REF)+'/consulta',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({inscricao:$('insc').value,identidade:$('ident').value})});
+      var r=await fetch('/api/vista/'+encodeURIComponent(REF)+'/consulta',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({inscricao:$('insc').value,chave:$('ident').value})});
       var j=await r.json(); if(!r.ok) throw new Error(j.erro||'Não foi possível consultar.');
       $('r_nome').textContent=j.nome||'';
       $('r_insc').textContent='Inscrição '+j.inscricao;
