@@ -603,7 +603,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'vista-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'vista-v2', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -4441,16 +4441,29 @@ async function vistaTabelas() {
     titulo TEXT, subtitulo TEXT, ativo BOOLEAN DEFAULT FALSE, criado_em TIMESTAMPTZ DEFAULT now())`);
   await pool.query(`CREATE TABLE IF NOT EXISTS vista_cartoes (conjunto_id INT, inscricao TEXT, ident TEXT,
     nome TEXT, notas TEXT, total TEXT, img_mime TEXT, img BYTEA, PRIMARY KEY (conjunto_id, inscricao))`);
+  await pool.query(`ALTER TABLE vista_conjuntos ADD COLUMN IF NOT EXISTS campo TEXT DEFAULT 'nascimento'`);
 }
 let _vistaOk = null;
 function vistaPronta() { if (!_vistaOk) _vistaOk = vistaTabelas().catch((e) => { _vistaOk = null; throw e; }); return _vistaOk; }
 const normInsc = (s) => String(s || '').toUpperCase().replace(/\s+/g, '');
 const normIdent = (s) => String(s || '').toUpperCase().replace(/[^0-9A-Z]/g, '').replace(/^0+/, '');
+// Chave de acesso: data de nascimento (padrão) ou nº da identidade, conforme o link.
+function normNasc(s) {
+  const v = String(s || '').trim();
+  let m = v.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return m[1] + m[2].padStart(2, '0') + m[3].padStart(2, '0');
+  m = v.match(/^(\d{1,2})\D+(\d{1,2})\D+(\d{4})$/);
+  if (m) return m[3] + m[2].padStart(2, '0') + m[1].padStart(2, '0');
+  m = v.replace(/\D/g, '').match(/^(\d{2})(\d{2})(\d{4})$/);
+  if (m) return m[3] + m[2] + m[1];
+  return '';
+}
+const normChave = (campo, s) => (campo === 'identidade' ? normIdent(s) : normNasc(s));
 
 app.get('/admin/vista/conjuntos', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
   await vistaPronta();
-  const { rows } = await pool.query(`SELECT c.id, c.ref, c.titulo, c.subtitulo, c.ativo,
+  const { rows } = await pool.query(`SELECT c.id, c.ref, c.titulo, c.subtitulo, c.ativo, c.campo,
       (SELECT count(*) FROM vista_cartoes v WHERE v.conjunto_id=c.id)::int AS qtd,
       (SELECT coalesce(sum(octet_length(img)),0) FROM vista_cartoes v WHERE v.conjunto_id=c.id)::bigint AS bytes
     FROM vista_conjuntos c ORDER BY c.id DESC`);
@@ -4463,8 +4476,9 @@ app.post('/admin/vista/conjunto', exigirSenha, async (req, res) => {
   const ref = String(b.ref || '').trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
   if (!ref) return res.status(400).json({ erro: 'Informe o código do link (ex.: pedro2-6ano).' });
   const titulo = String(b.titulo || '').trim().slice(0, 200), sub = String(b.subtitulo || '').trim().slice(0, 300);
-  const { rows } = await pool.query(`INSERT INTO vista_conjuntos (ref,titulo,subtitulo) VALUES ($1,$2,$3)
-    ON CONFLICT (ref) DO UPDATE SET titulo=EXCLUDED.titulo, subtitulo=EXCLUDED.subtitulo RETURNING id`, [ref, titulo, sub]);
+  const campo = b.campo === 'identidade' ? 'identidade' : 'nascimento';
+  const { rows } = await pool.query(`INSERT INTO vista_conjuntos (ref,titulo,subtitulo,campo) VALUES ($1,$2,$3,$4)
+    ON CONFLICT (ref) DO UPDATE SET titulo=EXCLUDED.titulo, subtitulo=EXCLUDED.subtitulo, campo=EXCLUDED.campo RETURNING id`, [ref, titulo, sub, campo]);
   res.json({ ok: true, id: rows[0].id, ref });
 });
 app.post('/admin/vista/conjunto/:id/ativo', exigirSenha, async (req, res) => {
@@ -4484,10 +4498,14 @@ app.post('/admin/vista/conjunto/:id/lote', exigirSenha, async (req, res) => {
   await vistaPronta();
   const id = parseInt(req.params.id);
   const itens = Array.isArray((req.body || {}).itens) ? req.body.itens : [];
+  const cj = await pool.query('SELECT campo FROM vista_conjuntos WHERE id=$1', [id]);
+  if (!cj.rows.length) return res.status(404).json({ erro: 'Link não encontrado.' });
+  const campo = cj.rows[0].campo || 'nascimento';
   let ok = 0; const erros = [];
   for (const it of itens) {
-    const insc = normInsc(it.inscricao), ident = normIdent(it.identidade);
-    if (!insc || !ident) { erros.push((it.inscricao || '?') + ': sem inscrição ou identidade'); continue; }
+    const insc = normInsc(it.inscricao);
+    const ident = normChave(campo, campo === 'identidade' ? (it.identidade || it.chave) : (it.nascimento || it.chave));
+    if (!insc || !ident) { erros.push((it.inscricao || '?') + ': sem inscrição ou ' + (campo === 'identidade' ? 'identidade' : 'data de nascimento')); continue; }
     let buf = null, mime = null;
     if (it.img) { buf = decodeB64(it.img); mime = mimeDe(buf); if (!mime) { erros.push(insc + ': imagem inválida'); continue; } }
     await pool.query(`INSERT INTO vista_cartoes (conjunto_id,inscricao,ident,nome,notas,total,img_mime,img)
@@ -4503,7 +4521,7 @@ app.post('/admin/vista/conjunto/:id/lote', exigirSenha, async (req, res) => {
 app.get('/api/vista/:ref', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
   await vistaPronta();
-  const { rows } = await pool.query('SELECT titulo, subtitulo, ativo FROM vista_conjuntos WHERE ref=$1', [String(req.params.ref).toLowerCase()]);
+  const { rows } = await pool.query('SELECT titulo, subtitulo, ativo, campo FROM vista_conjuntos WHERE ref=$1', [String(req.params.ref).toLowerCase()]);
   if (!rows.length) return res.status(404).json({ erro: 'Link não encontrado.' });
   res.json(rows[0]);
 });
@@ -4514,17 +4532,18 @@ app.post('/api/vista/:ref/consulta', async (req, res) => {
   const ip = String(req.headers['x-forwarded-for'] || req.ip || '').split(',')[0].trim();
   const agora = Date.now(); const l = (_vistaTent.get(ip) || []).filter((t) => agora - t < 3600e3);
   if (l.length >= 30) return res.status(429).json({ erro: 'Muitas tentativas sem sucesso. Aguarde 1 hora e tente novamente.' });
-  const c = await pool.query('SELECT id, ativo FROM vista_conjuntos WHERE ref=$1', [String(req.params.ref).toLowerCase()]);
+  const c = await pool.query('SELECT id, ativo, campo FROM vista_conjuntos WHERE ref=$1', [String(req.params.ref).toLowerCase()]);
   if (!c.rows.length) return res.status(404).json({ erro: 'Link não encontrado.' });
   if (!c.rows[0].ativo) return res.status(403).json({ erro: 'A consulta ainda não está disponível.' });
   const b = req.body || {};
-  const insc = normInsc(b.inscricao), ident = normIdent(b.identidade);
-  if (!insc || !ident) return res.status(400).json({ erro: 'Informe o número de inscrição e o número da identidade.' });
+  const campo = c.rows[0].campo || 'nascimento';
+  const insc = normInsc(b.inscricao), ident = normChave(campo, b.chave != null ? b.chave : b.identidade);
+  if (!insc || !ident) return res.status(400).json({ erro: campo === 'identidade' ? 'Informe o número de inscrição e o número da identidade.' : 'Informe o número de inscrição e a data de nascimento (DD/MM/AAAA).' });
   const { rows } = await pool.query('SELECT inscricao, nome, notas, total, img_mime, img FROM vista_cartoes WHERE conjunto_id=$1 AND inscricao=$2 AND ident=$3',
     [c.rows[0].id, insc, ident]);
   if (!rows.length) {
     l.push(agora); _vistaTent.set(ip, l);
-    return res.status(404).json({ erro: 'Não encontramos uma folha de respostas com esta inscrição e identidade. Confira os dados (a identidade deve ser a mesma informada na inscrição).' });
+    return res.status(404).json({ erro: campo === 'identidade' ? 'Não encontramos uma folha de respostas com esta inscrição e identidade. Confira os dados (a identidade deve ser a mesma informada na inscrição).' : 'Não encontramos uma folha de respostas com esta inscrição e data de nascimento. Confira os dados.' });
   }
   const r = rows[0];
   let notas = []; try { notas = JSON.parse(r.notas || '[]'); } catch {}

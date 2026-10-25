@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v31-vista -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v32-vista -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -539,7 +539,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   <section id="vista" style="display:none">
     <div class="card">
       <h2 style="font-size:1.15rem;color:var(--navy);margin-bottom:6px">Vista da folha de respostas</h2>
-      <p class="hint" style="margin-bottom:12px">Página pública onde o candidato informa a <b>inscrição</b> e o <b>número da identidade</b> e vê a imagem do cartão-resposta e as notas. Cada link (ex.: Pedro II 6º ano) recebe um arquivo .zip preparado pela Seletrix. Só fica visível ao público depois de clicar em <b>Publicar</b>.</p>
+      <p class="hint" style="margin-bottom:12px">Página pública onde o candidato informa a <b>inscrição</b> e a <b>data de nascimento</b> (ou a identidade, conforme o link) e vê a imagem do cartão-resposta e as notas. Cada link (ex.: Pedro II 6º ano) recebe um arquivo .zip preparado pela Seletrix. Só fica visível ao público depois de clicar em <b>Publicar</b>.</p>
       <div id="vs_lista"></div>
     </div>
     <div class="card">
@@ -548,6 +548,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
         <div><label>Código do link (vai no endereço)</label><input id="vs_ref" placeholder="Ex.: pedro2-6ano"></div>
         <div><label>Título da página</label><input id="vs_tit" placeholder="Ex.: Colégio Pedro II · Processo Seletivo 6º ano 2027"></div>
         <div><label>Subtítulo</label><input id="vs_sub" placeholder="Ex.: Vista da Folha de Respostas · Resultado preliminar"></div>
+        <div><label>O candidato entra com</label><select id="vs_campo"><option value="nascimento">Inscrição + data de nascimento</option><option value="identidade">Inscrição + nº da identidade</option></select></div>
       </div>
       <div style="margin-top:12px"><button onclick="vsCriar()">Criar / atualizar link</button></div>
     </div>
@@ -2322,7 +2323,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   async function vsCarregar(){
     var r=await fetch('/admin/vista/conjuntos'); VS=await r.json(); if(!r.ok){ $('vs_lista').innerHTML='<p class="hint">Erro ao carregar.</p>'; return; }
     if(!VS.length){ $('vs_lista').innerHTML='<p class="hint">Nenhum link criado ainda.</p>'; }
-    else $('vs_lista').innerHTML='<div class="scroll"><table><tr><th>Link</th><th>Título</th><th>Cartões</th><th>Tamanho</th><th>Situação</th><th></th></tr>'+VS.map(function(c){
+    else $('vs_lista').innerHTML='<div class="scroll"><table><tr><th>Link</th><th>Título</th><th>Acesso</th><th>Cartões</th><th>Tamanho</th><th>Situação</th><th></th></tr>'+VS.map(function(c){
       var url=location.origin+'/vista.html?c='+encodeURIComponent(c.ref);
       return '<tr><td><a href="'+url+'" target="_blank">'+esc(url)+'</a></td><td>'+esc(c.titulo||'')+'</td><td>'+c.qtd+'</td><td>'+(Math.round(Number(c.bytes)/1048576*10)/10)+' MB</td><td>'+(c.ativo?'<b style="color:#0f6b41">Publicado</b>':'Não publicado')+'</td>'
         +'<td style="white-space:nowrap"><button class="mini" onclick="vsAtivo('+c.id+','+(!c.ativo)+')">'+(c.ativo?'Despublicar':'Publicar')+'</button> <button class="del" style="padding:6px 10px" onclick="vsExcluir('+c.id+')">Excluir</button></td></tr>';
@@ -2330,11 +2331,11 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('vs_sel').innerHTML=VS.map(function(c){return '<option value="'+c.id+'">'+esc(c.ref+' — '+(c.titulo||''))+'</option>';}).join('');
   }
   async function vsCriar(){
-    var r=await fetch('/admin/vista/conjunto',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ref:$('vs_ref').value,titulo:$('vs_tit').value,subtitulo:$('vs_sub').value})});
+    var r=await fetch('/admin/vista/conjunto',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ref:$('vs_ref').value,titulo:$('vs_tit').value,subtitulo:$('vs_sub').value,campo:$('vs_campo').value})});
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} vsCarregar();
   }
   async function vsAtivo(id,ativo){
-    if(ativo && !confirm('Publicar? A partir de agora qualquer candidato com inscrição e identidade consegue consultar.')) return;
+    if(ativo && !confirm('Publicar? A partir de agora os candidatos já conseguem consultar pelo link.')) return;
     await fetch('/admin/vista/conjunto/'+id+'/ativo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ativo:ativo})}); vsCarregar();
   }
   async function vsExcluir(id){
