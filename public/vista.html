@@ -43,13 +43,13 @@
 <div class="container">
   <div class="card" id="form-card">
     <h2>Consultar folha de respostas</h2>
-    <p class="leg" id="leg">Informe o número de inscrição e a data de nascimento do candidato.</p>
+    <p class="leg" id="leg">Informe o código de inscrição (com ponto e com barra) e a data de nascimento do candidato.</p>
     <form id="form">
-      <label>Número de inscrição</label>
+      <label>Código de Inscrição:</label>
       <input id="insc" placeholder="Ex.: CE.6A.00123/27" autocapitalize="characters" autocomplete="off">
-      <label id="lb_chave">Data de nascimento do candidato</label>
+      <label id="lb_chave">Data de Nascimento:</label>
       <input id="ident" placeholder="DD/MM/AAAA" inputmode="numeric" maxlength="10" autocomplete="off">
-      <button type="submit" id="btn">Consultar</button>
+      <button type="submit" id="btn">BUSCAR</button>
       <div class="msg" id="erro"></div>
     </form>
   </div>
@@ -84,7 +84,7 @@
   })();
   $('form').addEventListener('submit', async function(e){
     e.preventDefault(); $('erro').style.display='none';
-    var b=$('btn'); b.disabled=true; b.textContent='Consultando...';
+    var b=$('btn'); b.disabled=true; b.textContent='Buscando...';
     try{
       var r=await fetch('/api/vista/'+encodeURIComponent(REF)+'/consulta',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({inscricao:$('insc').value,chave:$('ident').value})});
       var j=await r.json(); if(!r.ok) throw new Error(j.erro||'Não foi possível consultar.');
@@ -97,7 +97,7 @@
       if(j.imagem) $('abrir').onclick=function(ev){ev.preventDefault(); var w=window.open(); if(w){w.document.write('<title>Folha de respostas</title><img src="'+j.imagem+'" style="max-width:100%">');}};
       $('form-card').style.display='none'; $('res').style.display='block'; window.scrollTo(0,0);
     }catch(err){ erro(err.message); }
-    finally{ b.disabled=false; b.textContent='Consultar'; }
+    finally{ b.disabled=false; b.textContent='BUSCAR'; }
   });
   function voltar(){ $('res').style.display='none'; $('form-card').style.display='block'; $('insc').value=''; $('ident').value=''; }
 </script>
