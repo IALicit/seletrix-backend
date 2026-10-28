@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v32-vista -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v33-supervisor -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -532,6 +532,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
         <div><label>Senha</label><input id="pf_senha" type="password" placeholder="mín. 6 caracteres"></div>
       </div>
       <div class="checkline" style="margin-top:10px"><input type="checkbox" id="pf_ativo" checked><label for="pf_ativo" style="margin:0">Ativo (pode acessar)</label></div>
+      <div class="checkline" style="margin-top:6px"><input type="checkbox" id="pf_sup"><label for="pf_sup" style="margin:0">Supervisor de redação (acompanha a correção e decide quem faz a 3ª correção)</label></div>
       <div style="margin-top:16px;display:flex;gap:10px"><button onclick="salvarProfessor()">Salvar professor</button><button class="sec" onclick="novoProfessor()">Limpar / Novo</button></div>
     </div>
     <div class="card"><div id="pf_lista"></div></div>
@@ -2282,24 +2283,24 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     alert('Acessos criados: '+j.criados+' de '+j.semAcesso+' sem acesso.'+(j.semData?('\\n\\n'+j.semData+' candidato(s) sem data de nascimento cadastrada ficaram sem acesso.'):''));
   }
   var PROFESSORES=[];
-  function novoProfessor(){ $('pf_id').value=''; $('pf_nome').value=''; $('pf_email').value=''; $('pf_disciplina').value=''; $('pf_senha').value=''; $('pf_senha').placeholder='mín. 6 caracteres'; $('pf_ativo').checked=true; }
+  function novoProfessor(){ $('pf_id').value=''; $('pf_nome').value=''; $('pf_email').value=''; $('pf_disciplina').value=''; $('pf_senha').value=''; $('pf_senha').placeholder='mín. 6 caracteres'; $('pf_ativo').checked=true; $('pf_sup').checked=false; }
   async function carregarProfessores(){
     if($('pf_link')) $('pf_link').textContent = location.origin + '/professor.html';
     var d=await (await fetch('/admin/professores.json?empresa='+EMPRESA_ID)).json();
     PROFESSORES=d.professores;
     $('pf_lista').innerHTML = d.professores.length ? d.professores.map(function(p){
-      return '<div class="conc"><div><b>'+esc(p.nome)+'</b>'+(p.ativo?'':' <span class="tag">inativo</span>')+'<div class="meta">'+esc(p.email)+(p.disciplina?(' &middot; '+esc(p.disciplina)):'')+' &middot; '+p.questoes+' questão(ões)</div></div>'
+      return '<div class="conc"><div><b>'+esc(p.nome)+'</b>'+(p.ativo?'':' <span class="tag">inativo</span>')+(p.supervisor?' <span class="tag">supervisor</span>':'')+'<div class="meta">'+esc(p.email)+(p.disciplina?(' &middot; '+esc(p.disciplina)):'')+' &middot; '+p.questoes+' questão(ões)</div></div>'
         +'<div class="row-actions"><button class="mini" onclick="editarProfessor('+p.id+')">Editar</button><button class="del" onclick="delProfessor('+p.id+')">Excluir</button></div></div>';
     }).join('') : '<p class="hint">Nenhum professor cadastrado nesta empresa.</p>';
   }
   function editarProfessor(id){
     var p=PROFESSORES.find(function(x){return x.id===id;}); if(!p)return;
     $('pf_id').value=p.id; $('pf_nome').value=p.nome||''; $('pf_email').value=p.email||''; $('pf_disciplina').value=p.disciplina||'';
-    $('pf_senha').value=''; $('pf_senha').placeholder='deixe em branco p/ manter a senha atual'; $('pf_ativo').checked=!!p.ativo;
+    $('pf_senha').value=''; $('pf_senha').placeholder='deixe em branco p/ manter a senha atual'; $('pf_ativo').checked=!!p.ativo; $('pf_sup').checked=!!p.supervisor;
     window.scrollTo({top:0,behavior:'smooth'});
   }
   async function salvarProfessor(){
-    var body={id:$('pf_id').value||undefined, nome:$('pf_nome').value, email:$('pf_email').value, disciplina:$('pf_disciplina').value, senha:$('pf_senha').value, ativo:$('pf_ativo').checked, empresa_id:EMPRESA_ID};
+    var body={id:$('pf_id').value||undefined, nome:$('pf_nome').value, email:$('pf_email').value, disciplina:$('pf_disciplina').value, senha:$('pf_senha').value, ativo:$('pf_ativo').checked, supervisor:$('pf_sup').checked, empresa_id:EMPRESA_ID};
     var r=await fetch('/admin/professor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
     alert('Professor salvo!'); novoProfessor(); carregarProfessores();
