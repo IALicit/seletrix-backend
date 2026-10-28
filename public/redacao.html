@@ -43,7 +43,15 @@
  .top{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #eef2f6}
  .top .nm{flex:1;font-size:.92rem;font-weight:600}
  .top .nm small{display:block;color:var(--suave);font-weight:500}
- .top input{width:84px;text-align:center;font-size:1.05rem;font-weight:700}
+ .top input,.top select{width:96px;text-align:center;font-size:1.05rem;font-weight:700}
+ .top select.vazio{border-color:#f0c48a;background:#fffaf0}
+ table.t{width:100%;border-collapse:collapse;font-size:.9rem}
+ table.t th{text-align:left;color:var(--suave);font-weight:600;padding:6px 4px;border-bottom:1px solid var(--linha)}
+ table.t td{padding:7px 4px;border-bottom:1px solid #eef2f6;vertical-align:middle}
+ .nums{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:6px 0 4px}
+ .nums div{background:#f4f8fb;border-radius:10px;padding:10px 12px}
+ .nums b{display:block;font-size:1.4rem;color:var(--navy)}
+ .nums span{font-size:.78rem;color:var(--suave)}
  .top input.inval{border-color:var(--verm);background:#fff5f5}
  .total{display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding:12px;background:#eaf3fb;border-radius:10px}
  .total b{font-size:1.6rem;color:var(--navy)}
@@ -72,6 +80,20 @@
   </header>
   <div class="container">
     <div id="b_lista"></div>
+  </div>
+</div>
+
+<div id="tela_sup" style="display:none">
+  <header class="topo">
+    <div><div class="marca">Supervisão da correção</div><div class="sub" id="s_titulo"></div></div>
+    <div><a href="#" onclick="supCarregar();return false">Atualizar ↻</a><a href="#" onclick="voltarBancas();return false">← Voltar</a><a href="#" onclick="sair();return false">Sair ↩</a></div>
+  </header>
+  <div class="container" style="max-width:1000px">
+    <div class="card"><h3>Andamento</h3><div class="nums" id="s_nums"></div><div class="barra"><div id="s_barra" style="width:0"></div></div></div>
+    <div class="card"><h3>3ª correção</h3>
+      <p class="leg">Redações em que as duas notas ficaram muito diferentes. Escolha quem faz a 3ª correção, ou clique em <b>Eu corrijo</b> — ela aparece na sua lista de correção.</p>
+      <div id="s_terc"></div></div>
+    <div class="card"><h3>Professores</h3><div id="s_profs"></div></div>
   </div>
 </div>
 
@@ -107,7 +129,7 @@
         </div>
         <div class="erro" id="c_erro"></div>
         <button id="c_salvar" onclick="salvar()" style="width:100%;margin-top:14px;padding:14px">Salvar e ir para a próxima →</button>
-        <p class="hint" style="margin-top:8px;text-align:center">Dica: use Tab para passar de um tópico ao outro e Enter para salvar.</p>
+        <p class="hint" style="margin-top:8px;text-align:center">Escolha a nota de cada tópico (de meio em meio ponto). O total é somado automaticamente.</p>
       </div>
     </div>
   </div>
@@ -147,7 +169,7 @@ async function api(url, extra){
   if(!r.ok) throw new Error(j.erro||'Erro de comunicação. Tente de novo.');
   return j;
 }
-function mostrar(t){ ['tela_login','tela_bancas','tela_corr'].forEach(function(x){ $(x).style.display = x===t ? '' : 'none'; }); }
+function mostrar(t){ ['tela_login','tela_bancas','tela_corr','tela_sup'].forEach(function(x){ $(x).style.display = x===t ? '' : 'none'; }); }
 
 async function entrar(){
   $('login_erro').style.display='none';
@@ -167,8 +189,20 @@ async function voltarBancas(){ try{ mostrarBancas(await api('/api/redacao/bancas
 function mostrarBancas(j){
   mostrar('tela_bancas');
   $('b_nome').textContent = j.nome ? ('Olá, ' + j.nome) : '';
-  if(!j.bancas.length){ $('b_lista').innerHTML='<div class="card"><h3>Nenhuma redação para você ainda</h3><p class="leg" style="margin:0">Assim que a coordenação distribuir as redações, elas aparecem aqui.</p></div>'; return; }
-  $('b_lista').innerHTML = j.bancas.map(function(b){
+  var sup='';
+  if(j.supervisor){
+    sup = '<h2 style="margin:4px 0 10px">Supervisão</h2>' + ((j.sup_bancas||[]).length ? j.sup_bancas.map(function(b){
+      var pct = b.total ? Math.round(b.feitas*100/b.total) : 0;
+      return '<div class="card"><div class="banca"><div style="flex:1;min-width:220px"><h3 style="margin:0">'+esc(b.titulo)+'</h3>'
+        +'<div class="hint" style="margin-top:4px">'+b.textos+' redações · '+b.feitas+' de '+b.total+' correções feitas'
+        +(b.terceiras_sem_prof?(' · <b style="color:#8a5300">'+b.terceiras_sem_prof+' 3ª correção(ões) aguardando você definir</b>'):'')+(b.encerrada?' · <b>encerrada</b>':'')+'</div>'
+        +'<div class="barra"><div style="width:'+pct+'%"></div></div></div>'
+        +'<button onclick="supAbrir('+b.id+')">Acompanhar</button></div></div>';
+    }).join('') : '<div class="card"><p class="hint">Nenhuma correção cadastrada ainda.</p></div>')
+      + '<h2 style="margin:22px 0 10px">Minhas correções</h2>';
+  }
+  if(!j.bancas.length){ $('b_lista').innerHTML=sup+'<div class="card"><h3>Nenhuma redação para você ainda</h3><p class="leg" style="margin:0">Assim que a coordenação distribuir as redações, elas aparecem aqui.</p></div>'; return; }
+  $('b_lista').innerHTML = sup + j.bancas.map(function(b){
     var pct = b.total ? Math.round(b.feitas*100/b.total) : 0;
     var falta = b.total - b.feitas;
     return '<div class="card"><div class="banca"><div style="flex:1;min-width:220px"><h3 style="margin:0">'+esc(b.titulo)+'</h3>'
@@ -207,35 +241,40 @@ function carregar(j){
     : (j.terceira ? '<p class="hint" style="margin-bottom:10px;color:#8a5300">As duas primeiras notas desta redação ficaram muito diferentes. Faça a sua correção normalmente.</p>' : '');
   $('c_max').textContent='de '+fmt(b.nota_max);
   $('c_topicos').innerHTML=b.topicos.map(function(t,i){
-    var v = j.notas && j.notas[i]!=null ? fmt(j.notas[i]) : '';
+    var atual = j.notas && j.notas[i]!=null ? Number(j.notas[i]) : null;
+    var ops = '<option value="">—</option>', mx=Number(t.max);
+    for(var k=0;k<=mx*2+1e-9;k++){ var v=k/2; ops+='<option value="'+v+'"'+(atual!=null&&Math.abs(atual-v)<1e-9?' selected':'')+'>'+fmt(v)+'</option>'; }
+    if(Math.abs(mx*2-Math.round(mx*2))>1e-9) ops+='<option value="'+mx+'"'+(atual!=null&&Math.abs(atual-mx)<1e-9?' selected':'')+'>'+fmt(mx)+'</option>';
     return '<div class="top"><div class="nm">'+esc(t.nome)+'<small>0 a '+fmt(t.max)+'</small></div>'
-      +'<input id="tp'+i+'" inputmode="decimal" autocomplete="off" value="'+(v==='—'?'':v)+'" oninput="somar()" onkeydown="tecla(event,'+i+')"'+(bloq?' disabled':'')+'></div>';
+      +'<select id="tp'+i+'" onchange="somar()"'+(bloq?' disabled':'')+'>'+ops+'</select></div>';
   }).join('');
   $('c_zero_motivo').innerHTML='<option value="">Escolha o motivo...</option>'+b.motivos_zero.map(function(m){return '<option>'+esc(m)+'</option>';}).join('');
   ZERO=!!j.zero_motivo; $('c_zero_motivo').value=j.zero_motivo||'';
   $('c_btn_zero').disabled=bloq; $('c_zero_motivo').disabled=bloq; $('c_salvar').disabled=bloq;
-  $('c_salvar').textContent = ed ? 'Salvar alteração →' : 'Salvar e ir para a próxima →';
   $('c_erro').style.display='none';
   aplicarZero(); somar();
   var img=$('c_img'); img.onload=function(){ ajustar(); }; img.src=j.imagem||'';
   $('c_area').scrollTop=0; $('c_area').scrollLeft=0;
   if(!bloq && !ZERO){ var p=$('tp0'); if(p) setTimeout(function(){ p.focus(); },50); }
 }
-function tecla(ev,i){
-  if(ev.key==='Enter'){ ev.preventDefault(); var n=$('tp'+(i+1)); if(n && !n.value) n.focus(); else salvar(); }
-}
 function somar(){
   if(!ATUAL) return;
-  var s=0, ok=true;
+  var s=0, falta=0;
   ATUAL.banca.topicos.forEach(function(t,i){
-    var el=$('tp'+i), raw=el.value.trim(); el.classList.remove('inval');
-    if(raw==='') return;
-    var v=num(raw);
-    if(!isFinite(v) || v<0 || v>Number(t.max)+1e-9){ el.classList.add('inval'); ok=false; return; }
-    s+=v;
+    var el=$('tp'+i), raw=el.value; el.classList.toggle('vazio', raw==='' && !ZERO);
+    if(raw===''){ falta++; return; }
+    s+=num(raw);
   });
-  $('c_total').textContent = ZERO ? '0' : fmt(Math.round(s*100)/100);
-  return ok;
+  var tot = ZERO ? 0 : Math.round(s*100)/100;
+  $('c_total').textContent = fmt(tot);
+  var bloq = ATUAL.banca.encerrada, ed = ATUAL.status==='feita';
+  if(!bloq){
+    if(ZERO) $('c_salvar').textContent = 'Confirmar nota ZERO e '+(ed?'salvar →':'ir para a próxima →');
+    else if(falta) $('c_salvar').textContent = 'Falta'+(falta>1?'m ':' ')+falta+' tópico'+(falta>1?'s':'')+' para dar nota';
+    else $('c_salvar').textContent = 'Confirmar total '+fmt(tot)+' e '+(ed?'salvar →':'ir para a próxima →');
+    $('c_salvar').disabled = !ZERO && falta>0;
+  }
+  return falta===0;
 }
 function alternarZero(){ ZERO=!ZERO; if(!ZERO) $('c_zero_motivo').value=''; aplicarZero(); somar(); if(ZERO) $('c_zero_motivo').focus(); }
 function aplicarZero(){
@@ -254,19 +293,17 @@ async function salvar(){
     if(!$('c_zero_motivo').value){ erro('Escolha o motivo da nota zero.'); return; }
   } else {
     for(var i=0;i<ATUAL.banca.topicos.length;i++){
-      var t=ATUAL.banca.topicos[i], raw=$('tp'+i).value.trim();
-      if(raw===''){ erro('Preencha a nota de "'+t.nome+'".'); $('tp'+i).focus(); return; }
-      var v=num(raw);
-      if(!isFinite(v)||v<0||v>Number(t.max)+1e-9){ erro('A nota de "'+t.nome+'" deve ficar entre 0 e '+fmt(t.max)+'.'); $('tp'+i).focus(); return; }
-      notas[i]=v;
+      var t=ATUAL.banca.topicos[i], raw=$('tp'+i).value;
+      if(raw===''){ erro('Escolha a nota de "'+t.nome+'".'); $('tp'+i).focus(); return; }
+      notas[i]=num(raw);
     }
   }
   $('c_salvar').disabled=true;
   try{
     await api('/api/redacao/salvar',{correcao_id:ATUAL.correcao_id, notas:notas, zero_motivo: ZERO ? $('c_zero_motivo').value : ''});
     await proxima();
-  }catch(e){ erro(e.message); }
-  $('c_salvar').disabled=false;
+  }catch(e){ erro(e.message); somar(); return; }
+  somar();
 }
 function zoom(d){ ESCALA=Math.max(0.3,Math.min(4,ESCALA+d)); aplicarEscala(); }
 function ajustar(){
@@ -292,6 +329,42 @@ async function abrirMinhas(){
   }catch(e){ alert(e.message); }
 }
 function fecharMinhas(){ $('modal').style.display='none'; }
+var SUP_ID=null, SUP=null;
+async function supAbrir(id){ SUP_ID=id; mostrar('tela_sup'); await supCarregar(); }
+async function supCarregar(){
+  try{
+    var j=await api('/api/redacao/sup/resumo',{banca_id:SUP_ID}); SUP=j;
+    $('s_titulo').textContent=j.banca.titulo+(j.banca.encerrada?' — encerrada':'');
+    var pend3=j.terceiras.filter(function(t){return t.status!=='feita';}).length;
+    $('s_nums').innerHTML=
+      '<div><b>'+j.textos+'</b><span>redações</span></div>'
+      +'<div><b>'+j.concluidas+'</b><span>redações com nota final</span></div>'
+      +'<div><b>'+j.correcoes_feitas+' / '+j.correcoes_total+'</b><span>correções feitas</span></div>'
+      +'<div><b>'+pend3+'</b><span>3ª correção pendente</span></div>';
+    $('s_barra').style.width=(j.correcoes_total?Math.round(j.correcoes_feitas*100/j.correcoes_total):0)+'%';
+    $('s_terc').innerHTML = j.terceiras.length ? '<table class="t"><tr><th>Redação</th><th>1ª nota</th><th>2ª nota</th><th>3ª correção</th><th></th></tr>'
+      + j.terceiras.map(function(t){
+        var acao;
+        if(t.status==='feita') acao='<td>'+esc(t.prof||'')+'</td><td><span class="tag ok">feita: '+fmt(t.nota3)+'</span></td>';
+        else {
+          var ops='<option value="">'+(t.professor_id?'':'— escolha —')+'</option>'+j.ativos.filter(function(p){return t.excluir.indexOf(p.id)<0;}).map(function(p){
+            return '<option value="'+p.id+'"'+(p.id===t.professor_id?' selected':'')+'>'+esc(p.nome)+(p.id===j.eu?' (eu)':'')+'</option>';}).join('');
+          acao='<td><select id="s3_'+t.correcao_id+'" style="min-width:170px">'+ops+'</select></td>'
+            +'<td style="white-space:nowrap"><button class="mini" onclick="supAtribuir('+t.correcao_id+')">Definir</button> '
+            +(t.excluir.indexOf(j.eu)<0?'<button class="mini" onclick="supAtribuir('+t.correcao_id+',\'eu\')">Eu corrijo</button>':'')+'</td>';
+        }
+        return '<tr><td>Nº '+t.numero+'</td><td>'+fmt(t.nota1)+' <span class="hint">'+esc(t.prof1||'')+'</span></td><td>'+fmt(t.nota2)+' <span class="hint">'+esc(t.prof2||'')+'</span></td>'+acao+'</tr>';
+      }).join('')+'</table>' : '<p class="hint">Nenhuma redação foi para 3ª correção até agora.</p>';
+    $('s_profs').innerHTML = j.professores.length ? '<table class="t"><tr><th>Professor</th><th>Recebidas</th><th>Corrigidas</th><th>Faltam</th><th>3ªs</th></tr>'
+      + j.professores.map(function(p){ return '<tr><td>'+esc(p.nome)+(p.ativo?'':' <span class="hint">(inativo)</span>')+'</td><td>'+p.total+'</td><td>'+p.feitas+'</td><td>'+p.pendentes+'</td><td>'+p.terceiras+'</td></tr>'; }).join('')+'</table>'
+      : '<p class="hint">As redações ainda não foram distribuídas.</p>';
+  }catch(e){ alert(e.message); }
+}
+async function supAtribuir(cid, quem){
+  var pid = quem || $('s3_'+cid).value;
+  if(!pid){ alert('Escolha o professor.'); return; }
+  try{ await api('/api/redacao/sup/atribuir',{banca_id:SUP_ID, correcao_id:cid, professor_id:pid}); await supCarregar(); }catch(e){ alert(e.message); }
+}
 $('in_senha').addEventListener('keydown',function(e){ if(e.key==='Enter') entrar(); });
 (function(){
   try{ var s=JSON.parse(sessionStorage.getItem('red_ses')||'null'); if(s&&s.email){ SES=s; voltarBancas(); return; } }catch(e){}
