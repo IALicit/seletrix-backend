@@ -604,7 +604,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'redacao-v3', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'identsala-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -3027,6 +3027,71 @@ app.get('/admin/relatorio/frente-sala.html', exigirSenha, async (req, res) => {
       <table><thead><tr><th class="num">#</th><th>Nome do Candidato</th><th>CPF</th><th>Cargo</th></tr></thead><tbody>${linhas}</tbody></table></div>`;
   });
   res.send(relShell('Frente de Sala', corpo));
+});
+
+// ---- Identificação de Sala (mapa de ambiente para a porta): sala em letras grandes + faixa de nomes por cargo ----
+app.get('/admin/relatorio/identificacao-sala.html', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  const concurso = await lerConcursoPorChave(String(req.query.concurso || ''));
+  if (!concurso) return res.status(400).send('Concurso inválido.');
+  const rows = await alocadosDoConcurso(concurso.id, parseInt(req.query.sala) || 0);
+  const e = escapeHtml;
+  const turno = String(req.query.turno || '').trim();
+  const data = concurso.prova ? String(concurso.prova).trim() : '';
+  const bySala = {}, ord = [];
+  rows.forEach((r) => { if (!bySala[r.sala_id]) { bySala[r.sala_id] = { r, cands: [] }; ord.push(r.sala_id); } bySala[r.sala_id].cands.push(r); });
+  const ini = (n) => String(n || '').trim().charAt(0).toUpperCase();
+  let paginas = '';
+  ord.forEach((sid) => {
+    const g = bySala[sid], s = g.r;
+    const porCargo = {}, cOrd = [];
+    g.cands.forEach((c) => { const k = c.cargo || ''; if (!porCargo[k]) { porCargo[k] = []; cOrd.push(k); } porCargo[k].push(c); });
+    cOrd.sort((a, b) => a.localeCompare(b, 'pt'));
+    const faixas = cOrd.map((k) => {
+      const l = porCargo[k].slice().sort((a, b) => String(a.nome).localeCompare(String(b.nome), 'pt'));
+      const a = l[0].nome, z = l[l.length - 1].nome;
+      return `<div class="fx"><div class="cg">${e(k || 'Candidatos')}</div>
+        <div class="nm">Letra <b>${e(ini(a))}</b> de <b>${e(a)}</b> até letra <b>${e(ini(z))}</b> de <b>${e(z)}</b>
+        <span class="q">(${l.length} candidato${l.length > 1 ? 's' : ''})</span></div></div>`;
+    }).join('');
+    const nomeSala = ((s.sala || '') + (s.sala_obs ? (' - ' + s.sala_obs) : '')).toUpperCase();
+    const tam = nomeSala.length <= 12 ? 120 : nomeSala.length <= 20 ? 96 : nomeSala.length <= 30 ? 72 : 56;
+    const linhaTD = [turno, data].filter(Boolean).join(' - ');
+    paginas += `<div class="pg">
+      <div class="t1">Identificação de Sala</div>
+      <div class="t2">${e([concurso.titulo, concurso.orgao].filter(Boolean).join(' - '))}</div>
+      <div class="sala" style="font-size:${tam}px">${/^SALA\b/.test(nomeSala) ? '' : 'SALA '}${e(nomeSala)}</div>
+      <div class="loc">${e(s.escola || '')}${linhaTD ? (' | ' + e(linhaTD)) : ''}</div>
+      ${s.endereco ? `<div class="end">${e(s.endereco)}</div>` : ''}
+      <div class="faixas">${faixas}</div>
+      <div class="tot">Quantidade de candidatos nesta sala: <b>${g.cands.length}</b></div>
+    </div>`;
+  });
+  if (!ord.length) paginas = '<div class="pg"><p style="padding:16px">Nenhum candidato alocado.</p></div>';
+  res.send(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Identificação de Sala</title>
+<style>
+ *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,Helvetica,sans-serif}
+ body{color:#222;background:#fff}
+ @page{size:A4 landscape;margin:10mm}
+ .barra-print{background:#0b3a5e;color:#fff;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;font-size:14px}
+ .barra-print button{background:#fff;color:#0b3a5e;border:none;padding:9px 16px;border-radius:7px;font-weight:700;cursor:pointer;font-size:14px}
+ .pg{width:277mm;min-height:180mm;margin:0 auto;padding:6mm 4mm;text-align:center;display:flex;flex-direction:column}
+ .t1{font-size:15px;color:#111}
+ .t2{font-size:16px;color:#444;margin-top:2px;text-transform:uppercase}
+ .sala{font-weight:800;color:#3c3c3c;line-height:1.1;margin:18px 0 14px;word-break:break-word}
+ .loc{font-size:18px;color:#333;text-transform:uppercase}
+ .end{font-size:14px;color:#555;margin-top:3px}
+ .faixas{text-align:left;margin:22px 6mm 0;flex:1}
+ .fx{margin-bottom:14px}
+ .cg{font-size:24px;color:#333}
+ .nm{font-size:17px;margin-top:3px}
+ .q{color:#666;font-size:14px;margin-left:6px}
+ .tot{border:1.5px solid #4a6f8f;padding:8px;font-size:17px;margin:10px 6mm 0}
+ @media print{ .barra-print{display:none} .pg{width:auto;margin:0;padding:0;min-height:185mm} .pg + .pg{break-before:page;page-break-before:always} }
+</style></head><body>
+<div class="barra-print"><span>Uma folha por sala, em A4 deitado. Use <b>Imprimir → Salvar como PDF</b>.</span><button onclick="window.print()">🖨️ Imprimir / Salvar PDF</button></div>
+${paginas}
+</body></html>`);
 });
 
 app.get('/admin/relatorio/frente-predio.html', exigirSenha, async (req, res) => {

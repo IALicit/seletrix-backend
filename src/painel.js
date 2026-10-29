@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v33-supervisor -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v34-identsala -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -271,6 +271,16 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
         <div><label>Sala</label><select id="fs_sala"><option value="">Todas as salas</option></select></div>
       </div>
       <div style="margin-top:14px"><button onclick="fsPDF()">🖨️ Gerar PDF</button></div>
+    </div>
+    <div class="card">
+      <h2 style="font-size:1.15rem;color:var(--navy);margin-bottom:4px">Identificação de Sala</h2>
+      <p class="hint" style="margin-bottom:14px">Folha para colar na porta: nome da sala em letras grandes, escola, turno e data, a faixa de nomes de cada cargo (letra X de FULANO até letra Y de BELTRANO) e a quantidade de candidatos. A data vem do campo "Data da prova" do concurso.</p>
+      <div class="grid2">
+        <div><label>Concurso</label><select id="is_concurso" onchange="fillSalas('is_concurso','is_sala')"></select></div>
+        <div><label>Sala</label><select id="is_sala"><option value="">Todas as salas</option></select></div>
+        <div><label>Turno e horário (opcional)</label><input id="is_turno" placeholder="Ex.: MANHÃ - 08:30"></div>
+      </div>
+      <div style="margin-top:14px"><button onclick="isPDF()">🖨️ Gerar PDF</button></div>
     </div>
     <div class="card">
       <h2 style="font-size:1.15rem;color:var(--navy);margin-bottom:4px">Frente de Prédio</h2>
@@ -1399,6 +1409,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     if($('ata_concurso')) $('ata_concurso').innerHTML = opts;
     if($('pr_concurso')) $('pr_concurso').innerHTML = opts;
     if($('fs_concurso')) $('fs_concurso').innerHTML = opts;
+    if($('is_concurso')) $('is_concurso').innerHTML = opts;
     if($('fp_concurso')) $('fp_concurso').innerHTML = opts;
     if($('ct_concurso')) $('ct_concurso').innerHTML = opts;
     if($('et_concurso')) $('et_concurso').innerHTML = opts;
@@ -1417,6 +1428,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
   }
   function prPDF(){ if(!$('pr_concurso').value){alert('Selecione o concurso.');return;} window.open('/admin/relatorio/presenca.html?concurso='+encodeURIComponent($('pr_concurso').value)+'&sala='+encodeURIComponent($('pr_sala').value),'_blank'); }
   function fsPDF(){ if(!$('fs_concurso').value){alert('Selecione o concurso.');return;} window.open('/admin/relatorio/frente-sala.html?concurso='+encodeURIComponent($('fs_concurso').value)+'&sala='+encodeURIComponent($('fs_sala').value),'_blank'); }
+  function isPDF(){ if(!$('is_concurso').value){alert('Selecione o concurso.');return;} window.open('/admin/relatorio/identificacao-sala.html?concurso='+encodeURIComponent($('is_concurso').value)+'&sala='+encodeURIComponent($('is_sala').value)+'&turno='+encodeURIComponent($('is_turno').value),'_blank'); }
   function fpPDF(){ if(!$('fp_concurso').value){alert('Selecione o concurso.');return;} window.open('/admin/relatorio/frente-predio.html?concurso='+encodeURIComponent($('fp_concurso').value),'_blank'); }
   async function fillSalasCt(){
     var id=$('ct_concurso').value;
