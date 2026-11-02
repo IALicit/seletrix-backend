@@ -604,7 +604,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'identsala-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'etiquetas-v2', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -3241,24 +3241,36 @@ app.get('/admin/relatorio/etiquetas.html', exigirSenha, async (req, res) => {
     if (!bySala[r.sala_id]) { bySala[r.sala_id] = { r, qtd: 0, cargos: new Set() }; ord.push(r.sala_id); }
     bySala[r.sala_id].qtd++; if (r.cargo) bySala[r.sala_id].cargos.add(r.cargo);
   });
-  const etiquetas = ord.map((sid) => {
+  // Cada sala gera duas etiquetas lado a lado: o pacote que vai para a sala e o envelope de devolução.
+  const tipo = String(req.query.tipo || 'ambas');
+  const TIPOS = {
+    envio: { tit: 'PACOTE DE PROVAS', cls: 'env', itens: ['Caderno de prova', 'Cartão-resposta'] },
+    devolucao: { tit: 'MATERIAL DE DEVOLUÇÃO', cls: 'dev', itens: ['Cartão-resposta', 'Ata de sala', 'Lista de presença'] },
+  };
+  const usar = tipo === 'envio' ? ['envio'] : tipo === 'devolucao' ? ['devolucao'] : ['envio', 'devolucao'];
+  const etiquetas = [];
+  ord.forEach((sid) => {
     const g = bySala[sid], s = g.r;
     const salaTxt = ((s.sala || '') + (s.obs ? (' - ' + s.obs) : '')).toUpperCase();
-    const cargos = Array.from(g.cargos).sort().join(', ') || '—';
-    return `<div class="etq">
-      <div class="tag">LOCAL DE PROVA · MALOTE — ${e(concurso.titulo || '')}</div>
-      <div class="sala">SALA ${e(salaTxt)}</div>
-      <div class="esc">${e(s.escola || '')}</div>
-      <div class="row"><b>Cargos:</b> ${e(cargos)}</div>
-      <div class="row"><b>Turno:</b> ${turno} &nbsp;&nbsp; <b>Data:</b> ${data}</div>
-      <div class="qtd">${g.qtd} CANDIDATO(S)</div>
-    </div>`;
+    const cargos = Array.from(g.cargos).sort().join(', ');
+    usar.forEach((k) => {
+      const t = TIPOS[k];
+      etiquetas.push(`<div class="etq ${t.cls}">
+      <div class="tit">${t.tit}</div>
+      <div class="conc">${e(concurso.titulo || '')}</div>
+      <div class="row"><b>Escola:</b> ${e(s.escola || '')}</div>
+      <div class="row"><b>Sala:</b> <span class="sala">${e(salaTxt)}</span></div>
+      <div class="row"><b>Período:</b> ${turno} &nbsp; <b>Data:</b> ${data} &nbsp; <b>Candidatos:</b> ${g.qtd}</div>
+      ${cargos ? `<div class="row cg"><b>Cargos:</b> ${e(cargos)}</div>` : ''}
+      <div class="itens">${t.itens.map((x) => '☐ ' + x).join(' &nbsp; + &nbsp; ')}</div>
+    </div>`);
+    });
   });
   // páginas de 10 etiquetas
   let corpo = '';
   if (!etiquetas.length) corpo = '<div class="folha"><div class="etq">Nenhuma sala com candidatos alocados.</div></div>';
   for (let i = 0; i < etiquetas.length; i += 10) corpo += `<div class="folha">${etiquetas.slice(i, i + 10).join('')}</div>`;
-  const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Etiquetas de Malote</title>
+  const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Etiquetas dos Pacotes</title>
 <style>
  *{box-sizing:border-box;margin:0;padding:0;font-family:Arial,Helvetica,sans-serif}
  body{color:#1a2b4a;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact}
@@ -3266,15 +3278,18 @@ app.get('/admin/relatorio/etiquetas.html', exigirSenha, async (req, res) => {
  .barra-print{background:#0b3a5e;color:#fff;padding:12px 18px;display:flex;justify-content:space-between;align-items:center}
  .barra-print button{background:#fff;color:#0b3a5e;border:none;padding:9px 16px;border-radius:7px;font-weight:700;cursor:pointer;font-size:14px}
  .folha{width:210mm;min-height:297mm;padding:9mm 5mm 0;margin:0 auto;display:grid;grid-template-columns:repeat(2,99mm);grid-auto-rows:55.8mm;column-gap:2mm;row-gap:0;background:#fff}
- .etq{padding:5mm;overflow:hidden;border:1px dashed #e2e6ea;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center}
- .etq .tag{font-size:8px;letter-spacing:.08em;color:#5b7183;font-weight:700;text-transform:uppercase}
- .etq .sala{font-size:16px;font-weight:800;color:#0b2a4a;margin-top:3px;line-height:1.1}
- .etq .esc{font-size:11px;margin-top:3px;font-weight:600}
- .etq .row{font-size:10px;margin-top:4px}
- .etq .qtd{font-size:14px;font-weight:800;margin-top:6px;color:#0b2a4a}
+ .etq{padding:4mm 5mm;overflow:hidden;border:1px dashed #e2e6ea;display:flex;flex-direction:column;justify-content:center;text-align:left;gap:1.2mm}
+ .etq .tit{font-size:15px;font-weight:800;text-align:center;color:#fff;background:#0b2a4a;border-radius:3px;padding:2px 0;letter-spacing:.04em}
+ .etq.dev .tit{background:#a12626}
+ .etq .conc{font-size:8.5px;text-align:center;color:#5b7183;font-weight:700;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ .etq .row{font-size:10.5px;line-height:1.25}
+ .etq .row.cg{font-size:9px;max-height:2.6em;overflow:hidden}
+ .etq .sala{font-size:15px;font-weight:800;color:#0b2a4a}
+ .etq .itens{font-size:11px;font-weight:700;border:1.3px solid #0b2a4a;border-radius:3px;padding:2px 4px;text-align:center}
+ .etq.dev .itens{border-color:#a12626;color:#a12626}
  @media print{.barra-print{display:none} .etq{border:none} .folha + .folha{break-before:page;page-break-before:always}}
 </style></head><body>
-<div class="barra-print"><span>Etiquetas Pimaco A4350 (10 por folha). <b>Imprima em escala 100%</b> e teste antes numa folha comum.</span><button onclick="window.print()">🖨️ Imprimir / Salvar PDF</button></div>
+<div class="barra-print"><span>Etiquetas Pimaco A4350 (10 por folha) — na mesma linha, à esquerda o pacote de provas e à direita a devolução da mesma sala. <b>Imprima em escala 100%</b> e teste antes numa folha comum.</span><button onclick="window.print()">🖨️ Imprimir / Salvar PDF</button></div>
 ${corpo}
 </body></html>`;
   res.send(html);

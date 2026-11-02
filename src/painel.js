@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v34-identsala -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v35-etiquetas -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -305,11 +305,12 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       <div style="margin-top:14px"><button onclick="ctPDF()">🖨️ Gerar cartões (PDF)</button></div>
     </div>
     <div class="card">
-      <h2 style="font-size:1.15rem;color:var(--navy);margin-bottom:4px">Etiquetas de Malote</h2>
-      <p class="hint" style="margin-bottom:14px">Etiquetas adesivas (Pimaco A4350 · 10 por folha) para identificar os malotes de prova de cada sala: escola, sala, cargos, turno, data e quantidade de candidatos.</p>
+      <h2 style="font-size:1.15rem;color:var(--navy);margin-bottom:4px">Etiquetas dos Pacotes</h2>
+      <p class="hint" style="margin-bottom:14px">Etiquetas adesivas (Pimaco A4350 · 10 por folha). Para cada sala saem duas: <b>Pacote de provas</b> (caderno de prova + cartão-resposta) e <b>Material de devolução</b> (cartão-resposta + ata + lista de presença), com escola, sala, período, data e quantidade de candidatos.</p>
       <div class="grid2">
         <div><label>Concurso</label><select id="et_concurso"></select></div>
-        <div><label>Turno</label><input id="et_turno" placeholder="Ex.: Manhã"></div>
+        <div><label>Período</label><input id="et_turno" placeholder="Ex.: Manhã"></div>
+        <div><label>Quais etiquetas</label><select id="et_tipo"><option value="ambas">As duas (pacote de provas + devolução)</option><option value="envio">Só pacote de provas</option><option value="devolucao">Só material de devolução</option></select></div>
       </div>
       <div style="margin-top:14px"><button onclick="etPDF()">🖨️ Gerar etiquetas (PDF)</button></div>
     </div>
@@ -1451,7 +1452,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       +'&turno='+encodeURIComponent($('ct_turno').value);
     window.open(u,'_blank');
   }
-  function etPDF(){ if(!$('et_concurso').value){alert('Selecione o concurso.');return;} window.open('/admin/relatorio/etiquetas.html?concurso='+encodeURIComponent($('et_concurso').value)+'&turno='+encodeURIComponent($('et_turno').value),'_blank'); }
+  function etPDF(){ if(!$('et_concurso').value){alert('Selecione o concurso.');return;} window.open('/admin/relatorio/etiquetas.html?concurso='+encodeURIComponent($('et_concurso').value)+'&turno='+encodeURIComponent($('et_turno').value)+'&tipo='+encodeURIComponent($('et_tipo').value),'_blank'); }
   async function ataSalas(){
     if($('ata_sala')) $('ata_sala').innerHTML='<option value="">Todas as salas</option>';
     var id=$('ata_concurso').value; if(!id)return;
