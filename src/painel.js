@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v39-recursos -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v40-separar -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -623,6 +623,15 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
         <p class="hint" style="margin-bottom:10px">Imagens JPG ou PNG, uma por candidato. O nome do arquivo é o número de inscrição, trocando a barra por sublinhado (ex.: <b>CE.6A.00755_27.jpg</b>). Enviar de novo um arquivo com o mesmo nome substitui a imagem. Os professores veem só um número sequencial, nunca a inscrição.</p>
         <input type="file" id="rd_arquivos" multiple accept="image/jpeg,image/png">
         <div style="margin-top:10px"><button onclick="rdEnviar()">Enviar imagens</button> <span class="hint" id="rd_env_status"></span></div>
+      </div>
+      <div class="card">
+        <h3 style="color:var(--navy);margin-bottom:6px">Separar redações em outra correção</h3>
+        <p class="hint" style="margin-bottom:10px">Move para outra correção as redações cujo número de inscrição contém um trecho. Ex.: na 1ª série, <b>EMI</b> leva o Integrado (EMIADM, EMIDS, EMIMA) e a Música (EMIMUS), e o Regular (EMRD, EMNOT) fica. Crie antes a correção de destino. Redações já corrigidas não podem ser movidas; as só distribuídas voltam a ficar sem corretor.</p>
+        <div class="grid2">
+          <div><label>Código contém</label><input id="rd_mv_trecho" placeholder="Ex.: EMI"></div>
+          <div><label>Mover para a correção</label><select id="rd_mv_dest"></select></div>
+        </div>
+        <div style="margin-top:10px"><button class="sec" onclick="rdMover(false)">Ver quantas</button> <button onclick="rdMover(true)">Mover</button> <span class="hint" id="rd_mv_status"></span></div>
       </div>
       <div class="card">
         <h3 style="color:var(--navy);margin-bottom:6px">2. Escolher os professores e distribuir</h3>
@@ -2451,6 +2460,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('rd_id').value=RD_BANCA.id; $('rd_titulo').value=RD_BANCA.titulo; $('rd_max').value=rdFmt(RD_BANCA.nota_max); $('rd_disc').value=rdFmt(RD_BANCA.discrepancia);
     rdTopicosForm(RD_BANCA.topicos); $('rd_motivos').value=RD_BANCA.motivos_zero.join(RD_NL);
     $('rd_painel').style.display='block';
+    if($('rd_mv_dest')) $('rd_mv_dest').innerHTML='<option value="">Escolha...</option>'+RD_BANCAS.filter(function(b){return b.id!==RD_BANCA.id;}).map(function(b){return '<option value="'+b.id+'">'+esc(b.titulo)+' ('+b.textos+')</option>';}).join('');
     $('rd_btn_enc').textContent = RD_BANCA.encerrada ? 'Reabrir correção' : 'Encerrar correção';
     rdResumo();
   }
@@ -2551,6 +2561,24 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     rdResumo();
   }
   function rdLerArquivo(f){ return new Promise(function(ok,erro){ var r=new FileReader(); r.onload=function(){ok(r.result);}; r.onerror=erro; r.readAsDataURL(f); }); }
+  async function rdMover(confirmar){
+    if(!RD_BANCA) return;
+    var dest=$('rd_mv_dest').value, tr=$('rd_mv_trecho').value.trim();
+    if(!dest){ alert('Escolha a correção de destino.'); return; }
+    if(tr.length<2){ alert('Informe o trecho do código (ex.: EMI).'); return; }
+    var corpo={destino_id:dest, contem:tr};
+    try{
+      var j=await rdJson(await fetch('/admin/redacao/banca/'+RD_BANCA.id+'/mover',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(corpo)}));
+      var txt=j.encontradas+' redação(ões) com "'+tr.toUpperCase()+'"'+(j.distribuidas?(' · '+j.distribuidas+' já distribuída(s)'):'')+(j.corrigidas?(' · '+j.corrigidas+' correção(ões) feitas'):'')+(j.ja_no_destino?(' · '+j.ja_no_destino+' já estão no destino'):'')+(j.exemplos.length?(' · ex.: '+j.exemplos.slice(0,3).join(', ')):'');
+      $('rd_mv_status').textContent=txt;
+      if(!confirmar) return;
+      if(!confirm('Mover '+j.encontradas+' redação(ões) para a outra correção?')) return;
+      corpo.confirmar=true;
+      var k=await rdJson(await fetch('/admin/redacao/banca/'+RD_BANCA.id+'/mover',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(corpo)}));
+      alert(k.movidas+' redação(ões) movida(s).'+(k.repetidas_removidas?(' '+k.repetidas_removidas+' já estavam no destino e foram tiradas daqui.'):''));
+      $('rd_mv_status').textContent=''; carregarRedacoes(RD_BANCA.id);
+    }catch(e){ alert(e.message); }
+  }
   async function rdEnviar(){
     if(!RD_BANCA){ alert('Salve a correção primeiro.'); return; }
     var fs=Array.prototype.slice.call($('rd_arquivos').files||[]);

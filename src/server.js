@@ -605,7 +605,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'recursos-zip-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'redacao-v7-separar', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -4056,6 +4056,47 @@ async function redHBanca(req, res) {
   res.json({ ok: true, id: r.rows[0].id });
 }
 app.post('/admin/redacao/banca', exigirSenha, redHBanca);
+// Separar uma correção em duas: move as redações cujo código (inscrição) contém um trecho para outra correção.
+// Ex.: na 1ª série, "EMI" separa o Integrado (EMIADM, EMIDS, EMIMA) e a Música (EMIMUS) do Regular (EMRD, EMNOT).
+app.post('/admin/redacao/banca/:id/mover', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const origem = await redBanca(req.params.id);
+  const b = req.body || {};
+  const destino = await redBanca(b.destino_id);
+  if (!origem || !destino) return res.status(404).json({ erro: 'Correção não encontrada.' });
+  if (origem.id === destino.id) return res.status(400).json({ erro: 'Escolha uma correção de destino diferente.' });
+  const trecho = String(b.contem || '').trim().toUpperCase();
+  if (trecho.length < 2) return res.status(400).json({ erro: 'Informe o trecho do código (ex.: EMI).' });
+  const { rows } = await pool.query(`SELECT t.id, t.codigo,
+      (SELECT COUNT(*)::int FROM red_correcoes c WHERE c.texto_id=t.id) AS corr,
+      (SELECT COUNT(*)::int FROM red_correcoes c WHERE c.texto_id=t.id AND c.status='feita') AS feitas
+    FROM red_textos t WHERE t.banca_id=$1 AND upper(t.codigo) LIKE '%' || $2 || '%' ORDER BY t.seq`, [origem.id, trecho]);
+  const dup = rows.length ? (await pool.query('SELECT codigo FROM red_textos WHERE banca_id=$1 AND codigo = ANY($2::text[])', [destino.id, rows.map((r) => r.codigo)])).rows.map((r) => r.codigo) : [];
+  const feitas = rows.reduce((a, r) => a + r.feitas, 0), distrib = rows.filter((r) => r.corr).length;
+  const resumo = { encontradas: rows.length, ja_no_destino: dup.length, distribuidas: distrib, corrigidas: feitas, exemplos: rows.slice(0, 5).map((r) => r.codigo) };
+  if (!b.confirmar) return res.json({ ok: true, previa: true, ...resumo });
+  if (feitas) return res.status(400).json({ erro: 'Há ' + feitas + ' correção(ões) já feitas nessas redações. Não dá para mover.', ...resumo });
+  if (!rows.length) return res.status(400).json({ erro: 'Nenhuma redação com "' + trecho + '" no código.' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const ids = rows.filter((r) => !dup.includes(r.codigo)).map((r) => r.id);
+    const repetidas = rows.filter((r) => dup.includes(r.codigo)).map((r) => r.id);
+    // distribuições ainda não corrigidas são desfeitas: na correção nova, a supervisão distribui de novo
+    await client.query('DELETE FROM red_correcoes WHERE texto_id = ANY($1::int[])', [rows.map((r) => r.id)]);
+    if (repetidas.length) await client.query('DELETE FROM red_textos WHERE id = ANY($1::int[])', [repetidas]);
+    if (ids.length) {
+      await client.query(`UPDATE red_textos t SET banca_id=$1, seq=x.novo FROM (
+          SELECT id, (SELECT COALESCE(MAX(seq),0) FROM red_textos WHERE banca_id=$1) + ROW_NUMBER() OVER (ORDER BY seq) AS novo
+          FROM red_textos WHERE id = ANY($2::int[])) x WHERE t.id=x.id`, [destino.id, ids]);
+    }
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {}); console.error('mover', e);
+    return res.status(500).json({ erro: 'Erro ao mover. Nada foi alterado.' });
+  } finally { client.release(); }
+  res.json({ ok: true, movidas: rows.length - dup.length, repetidas_removidas: dup.length, distribuicoes_desfeitas: distrib });
+});
 app.delete('/admin/redacao/banca/:id', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
   const id = parseInt(req.params.id);
