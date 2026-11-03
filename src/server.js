@@ -605,7 +605,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'redacao-v5-supervisor', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'redacao-v6-config', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -3972,9 +3972,10 @@ app.get('/admin/redacao/bancas.json', exigirSenha, async (req, res) => {
     FROM red_bancas b ${emp ? 'WHERE b.empresa_id=$1' : ''} ORDER BY b.id DESC`, emp ? [emp] : []);
   res.json({ bancas: rows.map((r) => ({ ...redParseBanca(r), textos: r.textos })) });
 });
-app.post('/admin/redacao/banca', exigirSenha, async (req, res) => {
+async function redHBanca(req, res) {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
   const b = req.body || {};
+  if (req._sup) b.id = req._sup.banca_id;   // supervisor só altera a correção dele; criar e excluir ficam com o administrador
   const titulo = String(b.titulo || '').trim().slice(0, 160);
   if (!titulo) return res.status(400).json({ erro: 'Informe o nome da correção.' });
   const notaMax = Number(String(b.nota_max == null ? 10 : b.nota_max).replace(',', '.'));
@@ -3984,10 +3985,11 @@ app.post('/admin/redacao/banca', exigirSenha, async (req, res) => {
   const topicos = (Array.isArray(b.topicos) ? b.topicos : []).map((t) => ({
     nome: String(t && t.nome || '').trim().slice(0, 200), max: red2(Number(String(t && t.max || '').replace(',', '.'))),
   })).filter((t) => t.nome);
-  if (!topicos.length) return res.status(400).json({ erro: 'Cadastre ao menos um tópico.' });
+  // A correção pode ser criada sem tópicos (a supervisão cadastra depois); só não pode ser distribuída assim.
+  if (!topicos.length && req._sup) return res.status(400).json({ erro: 'Cadastre ao menos um tópico.' });
   if (topicos.some((t) => !(t.max > 0))) return res.status(400).json({ erro: 'Cada tópico precisa de uma pontuação máxima maior que zero.' });
   const soma = red2(topicos.reduce((a, t) => a + t.max, 0));
-  if (Math.abs(soma - notaMax) > 1e-9) return res.status(400).json({ erro: 'A soma dos tópicos (' + soma + ') precisa ser igual à nota máxima (' + red2(notaMax) + ').' });
+  if (topicos.length && Math.abs(soma - notaMax) > 1e-9) return res.status(400).json({ erro: 'A soma dos tópicos (' + soma + ') precisa ser igual à nota máxima (' + red2(notaMax) + ').' });
   const motivos = (Array.isArray(b.motivos_zero) && b.motivos_zero.length ? b.motivos_zero : RED_MOTIVOS_PADRAO)
     .map((m) => String(m || '').trim().slice(0, 200)).filter(Boolean);
   const emp = parseInt(b.empresa_id) || null;
@@ -4006,7 +4008,8 @@ app.post('/admin/redacao/banca', exigirSenha, async (req, res) => {
   const r = await pool.query('INSERT INTO red_bancas (empresa_id,titulo,nota_max,discrepancia,topicos,motivos_zero) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id',
     [emp, titulo, notaMax, disc, JSON.stringify(topicos), JSON.stringify(motivos)]);
   res.json({ ok: true, id: r.rows[0].id });
-});
+}
+app.post('/admin/redacao/banca', exigirSenha, redHBanca);
 app.delete('/admin/redacao/banca/:id', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
   const id = parseInt(req.params.id);
@@ -4080,6 +4083,7 @@ async function redHDistribuir(req, res) {
   const banca = await redBanca(req.params.id);
   if (!banca) return res.status(404).json({ erro: 'Correção não encontrada.' });
   const ids = [...new Set((Array.isArray((req.body || {}).professor_ids) ? req.body.professor_ids : []).map((x) => parseInt(x)).filter(Boolean))];
+  if (!banca.topicos.length) return res.status(400).json({ erro: 'Cadastre os tópicos de avaliação antes de distribuir.' });
   if (ids.length < 2) return res.status(400).json({ erro: 'Marque pelo menos 2 professores (cada redação é corrigida por dois).' });
   const ok = await pool.query('SELECT id FROM professores WHERE id = ANY($1::int[]) AND ativo=TRUE' + (req._sup ? ' AND empresa_id IS NOT DISTINCT FROM $2' : ''), req._sup ? [ids, banca.empresa_id] : [ids]);
   if (ok.rows.length !== ids.length) return res.status(400).json({ erro: 'Algum professor marcado está inativo ou não existe.' });
@@ -4281,7 +4285,8 @@ app.post('/api/redacao/sup/resumo', async (req, res) => {
       professor_id: c3.professor_id, prof: c3.prof, status: c3.status, nota3: nota(c3), excluir: [c1 && c1.professor_id, c2 && c2.professor_id].filter(Boolean) };
   }).sort((a, b) => (a.status === b.status ? a.numero - b.numero : (a.status === 'feita' ? 1 : -1)));
   const profs = (await pool.query('SELECT id,nome FROM professores WHERE ativo=TRUE AND empresa_id IS NOT DISTINCT FROM $1 ORDER BY nome', [banca.empresa_id])).rows;
-  res.json({ ...r, banca: { id: banca.id, titulo: banca.titulo, encerrada: banca.encerrada, discrepancia: banca.discrepancia, professores: banca.professores, duplas: banca.duplas },
+  res.json({ ...r, banca: { id: banca.id, titulo: banca.titulo, encerrada: banca.encerrada, discrepancia: banca.discrepancia, professores: banca.professores, duplas: banca.duplas,
+      nota_max: banca.nota_max, topicos: banca.topicos, motivos_zero: banca.motivos_zero },
     professores: r.professores.filter((q) => q.na_banca || q.total), terceiras, ativos: profs, eu: p.id });
 });
 // Supervisor usa as mesmas rotinas do painel do administrador (distribuir, remanejar, trocar professor, lista de redações),
@@ -4298,6 +4303,7 @@ function redSupComo(handler, extra) {
   };
 }
 app.post('/api/redacao/sup/distribuir', redSupComo(redHDistribuir));
+app.post('/api/redacao/sup/configurar', redSupComo(redHBanca));
 app.post('/api/redacao/sup/remanejar', redSupComo(redHRemanejar));
 app.post('/api/redacao/sup/trocar', redSupComo(redHTrocarProf, 'correcao'));
 app.post('/api/redacao/sup/textos', redSupComo(redHTextos, 'leitura'));
@@ -4403,6 +4409,7 @@ app.post('/api/redacao/salvar', async (req, res) => {
   if (!c) return res.status(404).json({ erro: 'Redação não encontrada.' });
   const banca = await redBanca(c.banca_id);
   if (banca.encerrada) return res.status(400).json({ erro: 'Esta correção foi encerrada pela coordenação. Não é mais possível alterar notas.' });
+  if (!banca.topicos.length) return res.status(400).json({ erro: 'Os tópicos desta correção ainda não foram cadastrados.' });
   const v = redValidarNotas(banca, b.notas, String(b.zero_motivo || '').trim() || null);
   if (v.erro) return res.status(400).json({ erro: v.erro });
   await pool.query("UPDATE red_correcoes SET notas=$1,zero_motivo=$2,total=$3,status='feita',corrigido_em=now() WHERE id=$4",

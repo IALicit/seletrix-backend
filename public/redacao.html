@@ -94,6 +94,19 @@
       <p class="leg">Redações em que as duas notas ficaram muito diferentes. Escolha quem faz a 3ª correção, ou clique em <b>Eu corrijo</b> — ela aparece na sua lista de correção.</p>
       <div id="s_terc"></div></div>
     <div class="card"><h3>Professores</h3><div id="s_profs"></div></div>
+    <div class="card"><h3>Configuração da correção</h3>
+      <p class="leg">Tópicos de avaliação na ordem em que aparecem para o corretor, com a pontuação máxima de cada um (a soma tem que dar a nota máxima). Depois que alguma redação for corrigida, só dá para mudar o nome dos tópicos.</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div><label>Nota máxima</label><input id="sc_max" inputmode="decimal" oninput="scSoma()"></div>
+        <div><label>Diferença que abre a 3ª correção (maior que)</label><input id="sc_disc" inputmode="decimal"></div>
+      </div>
+      <label>Tópicos de avaliação</label>
+      <div id="sc_topicos"></div>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:8px"><button class="mini" onclick="scAdd()">+ Tópico</button><span class="hint" id="sc_soma"></span></div>
+      <label>Motivos de nota zero (um por linha)</label>
+      <textarea id="sc_motivos" rows="6" style="width:100%;padding:10px 12px;border:1.5px solid var(--linha);border-radius:9px;font-size:.95rem;font-family:inherit"></textarea>
+      <div style="margin-top:12px"><button onclick="scSalvar()">Salvar configuração</button></div>
+    </div>
     <div class="card"><h3>Distribuir redações</h3>
       <p class="leg">Marque quem vai corrigir e escolha como formar quem corrige cada redação. Pode distribuir de novo quando chegarem mais redações ou entrar um corretor: o que já foi distribuído não muda.</p>
       <div id="s_dist_profs" style="columns:2;column-gap:24px"></div>
@@ -361,7 +374,7 @@ var SUP_ID=null, SUP=null;
 async function supAbrir(id){ SUP_ID=id; mostrar('tela_sup'); await supCarregar(); }
 async function supCarregar(){
   try{
-    var j=await api('/api/redacao/sup/resumo',{banca_id:SUP_ID}); SUP=j; SUP_TEXTOS=null; supPreencherGestao();
+    var j=await api('/api/redacao/sup/resumo',{banca_id:SUP_ID}); SUP=j; SUP_TEXTOS=null; supPreencherGestao(); scPreencher();
     $('s_titulo').textContent=j.banca.titulo+(j.banca.encerrada?' — encerrada':'');
     var pend3=j.terceiras.filter(function(t){return t.status!=='feita';}).length;
     $('s_nums').innerHTML=
@@ -386,6 +399,37 @@ async function supCarregar(){
     $('s_profs').innerHTML = j.professores.length ? '<table class="t"><tr><th>Professor</th><th>Recebidas</th><th>Corrigidas</th><th>Faltam</th><th>3ªs</th></tr>'
       + j.professores.map(function(p){ return '<tr><td>'+esc(p.nome)+(p.ativo?'':' <span class="hint">(inativo)</span>')+'</td><td>'+p.total+'</td><td>'+p.feitas+'</td><td>'+p.pendentes+'</td><td>'+p.terceiras+'</td></tr>'; }).join('')+'</table>'
       : '<p class="hint">As redações ainda não foram distribuídas.</p>';
+  }catch(e){ alert(e.message); }
+}
+var NL=String.fromCharCode(10);
+function scNum(v){ return Number(String(v==null?'':v).trim().replace(',','.')); }
+function scForm(l){
+  $('sc_topicos').innerHTML = l.map(function(t,i){
+    return '<div class="sc-top" style="display:flex;gap:8px;align-items:center;margin-top:6px"><b style="width:22px">'+(i+1)+'.</b>'
+      +'<input class="sc-n" placeholder="Nome do tópico (ex.: Gênero)" value="'+esc(t.nome)+'" style="flex:1">'
+      +'<input class="sc-m" placeholder="Máx." value="'+(t.max===''||t.max==null?'':esc(String(t.max).replace('.',',')))+'" oninput="scSoma()" style="width:80px" inputmode="decimal">'
+      +'<button class="mini" title="Subir" onclick="scMover('+i+',-1)">↑</button><button class="mini" title="Descer" onclick="scMover('+i+',1)">↓</button>'
+      +'<button class="mini" title="Remover" style="color:#a12626" onclick="scRem('+i+')">×</button></div>';
+  }).join(''); scSoma();
+}
+function scLer(){ return Array.prototype.map.call(document.querySelectorAll('#sc_topicos .sc-top'),function(d){ return {nome:d.querySelector('.sc-n').value.trim(), max:d.querySelector('.sc-m').value.trim()}; }); }
+function scAdd(){ var l=scLer(); l.push({nome:'',max:''}); scForm(l); }
+function scRem(i){ var l=scLer(); l.splice(i,1); scForm(l); }
+function scMover(i,d){ var l=scLer(), j=i+d; if(j<0||j>=l.length) return; var t=l[i]; l[i]=l[j]; l[j]=t; scForm(l); }
+function scSoma(){ var s=0; scLer().forEach(function(t){ var v=scNum(t.max); if(isFinite(v)) s+=v; }); s=Math.round(s*100)/100; var m=scNum($('sc_max').value);
+  $('sc_soma').innerHTML='Soma dos tópicos: <b>'+fmt(s)+'</b> de '+fmt(m)+(Math.abs(s-m)<1e-9?' ✓':' <span style="color:#a12626">(precisa ser igual)</span>'); }
+function scPreencher(){
+  var b=SUP.banca; $('sc_max').value=String(b.nota_max).replace('.',','); $('sc_disc').value=String(b.discrepancia).replace('.',',');
+  scForm(b.topicos.length ? b.topicos : [{nome:'',max:''}]);
+  $('sc_motivos').value=(b.motivos_zero||[]).join(NL);
+}
+async function scSalvar(){
+  var tops=scLer().filter(function(t){return t.nome;});
+  if(!tops.length){ alert('Cadastre ao menos um tópico.'); return; }
+  try{
+    await api('/api/redacao/sup/configurar',{banca_id:SUP_ID, titulo:SUP.banca.titulo, nota_max:$('sc_max').value, discrepancia:$('sc_disc').value,
+      topicos:tops, motivos_zero:$('sc_motivos').value.split(NL).map(function(x){return x.trim();}).filter(Boolean)});
+    alert('Configuração salva!'); await supCarregar();
   }catch(e){ alert(e.message); }
 }
 function supAtivosOpts(sel, filtro){ return SUP.ativos.filter(filtro||function(){return true;}).map(function(p){ return '<option value="'+p.id+'"'+(p.id===sel?' selected':'')+'>'+esc(p.nome)+(p.id===SUP.eu?' (eu)':'')+'</option>'; }).join(''); }

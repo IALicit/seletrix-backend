@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v37-supervisor -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v38-config -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -599,6 +599,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
         <div><label>Diferença que abre a 3ª correção (maior que)</label><input id="rd_disc" value="2" inputmode="decimal"></div>
       </div>
       <label style="margin-top:14px;display:block">Tópicos de avaliação (a soma das pontuações máximas deve ser igual à nota máxima)</label>
+      <p class="hint" style="margin:2px 0 4px">Pode deixar os tópicos em branco: o supervisor cadastra pelo login dele (tópicos, pontuação e motivos de nota zero). Só não dá para distribuir sem tópicos.</p>
       <div id="rd_topicos"></div>
       <div style="display:flex;gap:10px;align-items:center;margin-top:8px"><button class="mini" onclick="rdAddTopico()">+ Tópico</button><span class="hint" id="rd_soma"></span></div>
       <label style="margin-top:14px;display:block">Motivos de nota zero (um por linha)</label>
