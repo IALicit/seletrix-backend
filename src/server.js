@@ -605,7 +605,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'redacao-v4-duplas', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'redacao-v5-supervisor', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -4075,13 +4075,13 @@ app.get('/admin/redacao/banca/:id/resumo.json', exigirSenha, async (req, res) =>
   res.json(await redResumo(banca));
 });
 // Distribuição: cada texto ganha 1ª e 2ª correção com professores diferentes, sempre o menos carregado.
-app.post('/admin/redacao/banca/:id/distribuir', exigirSenha, async (req, res) => {
+async function redHDistribuir(req, res) {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
   const banca = await redBanca(req.params.id);
   if (!banca) return res.status(404).json({ erro: 'Correção não encontrada.' });
   const ids = [...new Set((Array.isArray((req.body || {}).professor_ids) ? req.body.professor_ids : []).map((x) => parseInt(x)).filter(Boolean))];
   if (ids.length < 2) return res.status(400).json({ erro: 'Marque pelo menos 2 professores (cada redação é corrigida por dois).' });
-  const ok = await pool.query('SELECT id FROM professores WHERE id = ANY($1::int[]) AND ativo=TRUE', [ids]);
+  const ok = await pool.query('SELECT id FROM professores WHERE id = ANY($1::int[]) AND ativo=TRUE' + (req._sup ? ' AND empresa_id IS NOT DISTINCT FROM $2' : ''), req._sup ? [ids, banca.empresa_id] : [ids]);
   if (ok.rows.length !== ids.length) return res.status(400).json({ erro: 'Algum professor marcado está inativo ou não existe.' });
   // Modo "duplas fixas": cada redação vai para uma dupla predeterminada (os dois fazem a 1ª e a 2ª correção).
   let duplas = null;
@@ -4150,32 +4150,35 @@ app.post('/admin/redacao/banca/:id/distribuir', exigirSenha, async (req, res) =>
     return res.status(500).json({ erro: 'Erro ao distribuir. Nada foi alterado.' });
   } finally { client.release(); }
   res.json({ ok: true, atribuídas: novas, novas });
-});
+}
+app.post('/admin/redacao/banca/:id/distribuir', exigirSenha, redHDistribuir);
 // Lista de redações da correção, com quem corrige cada uma (para conferência e ajuste manual).
-app.get('/admin/redacao/banca/:id/textos.json', exigirSenha, async (req, res) => {
+async function redHTextos(req, res) {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
   const banca = await redBanca(req.params.id);
   if (!banca) return res.status(404).json({ erro: 'Correção não encontrada.' });
-  const tx = await pool.query('SELECT id,codigo,seq FROM red_textos WHERE banca_id=$1 ORDER BY codigo', [banca.id]);
+  const tx = await pool.query('SELECT id,codigo,seq FROM red_textos WHERE banca_id=$1 ORDER BY ' + (req._sup ? 'seq' : 'codigo'), [banca.id]);
   const cs = await pool.query(`SELECT c.id,c.texto_id,c.professor_id,c.ordem,c.status,c.total,c.zero_motivo,p.nome AS prof
     FROM red_correcoes c LEFT JOIN professores p ON p.id=c.professor_id WHERE c.banca_id=$1 ORDER BY c.ordem`, [banca.id]);
   res.json({ textos: tx.rows.map((t) => {
     const l = cs.rows.filter((c) => c.texto_id === t.id);
     const r = redFinal(l, banca.discrepancia);
-    return { id: t.id, codigo: t.codigo, seq: t.seq, situacao: r.situacao, final: r.final,
+    return { id: t.id, codigo: req._sup ? undefined : t.codigo, seq: t.seq, situacao: r.situacao, final: r.final,
       correcoes: l.map((c) => ({ id: c.id, ordem: c.ordem, professor_id: c.professor_id, prof: c.prof, status: c.status,
         total: c.total == null ? null : Number(c.total), zero_motivo: c.zero_motivo })) };
   }) });
-});
+}
+app.get('/admin/redacao/banca/:id/textos.json', exigirSenha, redHTextos);
 // Ajuste manual de uma correção específica: troca o professor (só se ainda estiver pendente).
-app.post('/admin/redacao/correcao/:id/professor', exigirSenha, async (req, res) => {
+async function redHTrocarProf(req, res) {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
   const para = parseInt((req.body || {}).professor_id) || 0;
   const { rows } = await pool.query('SELECT * FROM red_correcoes WHERE id=$1', [parseInt(req.params.id) || 0]);
   if (!rows.length) return res.status(404).json({ erro: 'Correção não encontrada.' });
   const c = rows[0];
+  if (req._sup && c.banca_id !== req._sup.banca_id) return res.status(404).json({ erro: 'Correção não encontrada.' });
   if (c.status === 'feita') return res.status(400).json({ erro: 'Esta correção já foi feita e não pode mudar de professor.' });
-  const pe = await pool.query('SELECT id FROM professores WHERE id=$1 AND ativo=TRUE', [para]);
+  const pe = await pool.query('SELECT id FROM professores WHERE id=$1 AND ativo=TRUE' + (req._sup ? ' AND empresa_id IS NOT DISTINCT FROM $2' : ''), req._sup ? [para, req._sup.empresa_id] : [para]);
   if (!pe.rows.length) return res.status(400).json({ erro: 'Escolha um professor ativo.' });
   const outro = await pool.query('SELECT 1 FROM red_correcoes WHERE texto_id=$1 AND professor_id=$2 AND id<>$3', [c.texto_id, para, c.id]);
   if (outro.rows.length) return res.status(400).json({ erro: 'Este professor já corrige esta mesma redação. Cada correção precisa ser de um professor diferente.' });
@@ -4186,9 +4189,10 @@ app.post('/admin/redacao/correcao/:id/professor', exigirSenha, async (req, res) 
     await pool.query('UPDATE red_bancas SET professores=$1 WHERE id=$2', [JSON.stringify(banca.professores), banca.id]);
   }
   res.json({ ok: true });
-});
+}
+app.post('/admin/redacao/correcao/:id/professor', exigirSenha, redHTrocarProf);
 // Remanejar: passa correções PENDENTES de um professor para outro (nunca para quem já corrige o mesmo texto).
-app.post('/admin/redacao/banca/:id/remanejar', exigirSenha, async (req, res) => {
+async function redHRemanejar(req, res) {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
   const banca = await redBanca(req.params.id);
   if (!banca) return res.status(404).json({ erro: 'Correção não encontrada.' });
@@ -4196,7 +4200,7 @@ app.post('/admin/redacao/banca/:id/remanejar', exigirSenha, async (req, res) => 
   const qtd = Math.max(0, parseInt(b.quantidade) || 0);
   if (!de || !para || de === para) return res.status(400).json({ erro: 'Escolha dois professores diferentes.' });
   if (!qtd) return res.status(400).json({ erro: 'Informe a quantidade.' });
-  const pe = await pool.query('SELECT id FROM professores WHERE id=$1 AND ativo=TRUE', [para]);
+  const pe = await pool.query('SELECT id FROM professores WHERE id=$1 AND ativo=TRUE' + (req._sup ? ' AND empresa_id IS NOT DISTINCT FROM $2' : ''), req._sup ? [para, banca.empresa_id] : [para]);
   if (!pe.rows.length) return res.status(400).json({ erro: 'O professor de destino está inativo.' });
   const cand = await pool.query(`SELECT c.id FROM red_correcoes c WHERE c.banca_id=$1 AND c.professor_id=$2 AND c.status='pendente'
     AND NOT EXISTS (SELECT 1 FROM red_correcoes o WHERE o.texto_id=c.texto_id AND o.professor_id=$3)
@@ -4207,7 +4211,8 @@ app.post('/admin/redacao/banca/:id/remanejar', exigirSenha, async (req, res) => 
     await pool.query('UPDATE red_bancas SET professores=$1 WHERE id=$2', [JSON.stringify(banca.professores), banca.id]);
   }
   res.json({ ok: true, movidas: cand.rows.length });
-});
+}
+app.post('/admin/redacao/banca/:id/remanejar', exigirSenha, redHRemanejar);
 app.post('/admin/redacao/banca/:id/encerrar', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
   const encerrar = !!(req.body || {}).encerrar;
@@ -4276,9 +4281,26 @@ app.post('/api/redacao/sup/resumo', async (req, res) => {
       professor_id: c3.professor_id, prof: c3.prof, status: c3.status, nota3: nota(c3), excluir: [c1 && c1.professor_id, c2 && c2.professor_id].filter(Boolean) };
   }).sort((a, b) => (a.status === b.status ? a.numero - b.numero : (a.status === 'feita' ? 1 : -1)));
   const profs = (await pool.query('SELECT id,nome FROM professores WHERE ativo=TRUE AND empresa_id IS NOT DISTINCT FROM $1 ORDER BY nome', [banca.empresa_id])).rows;
-  res.json({ ...r, banca: { id: banca.id, titulo: banca.titulo, encerrada: banca.encerrada, discrepancia: banca.discrepancia },
+  res.json({ ...r, banca: { id: banca.id, titulo: banca.titulo, encerrada: banca.encerrada, discrepancia: banca.discrepancia, professores: banca.professores, duplas: banca.duplas },
     professores: r.professores.filter((q) => q.na_banca || q.total), terceiras, ativos: profs, eu: p.id });
 });
+// Supervisor usa as mesmas rotinas do painel do administrador (distribuir, remanejar, trocar professor, lista de redações),
+// sempre limitado às correções e aos professores da empresa dele. Enviar imagens, tópicos e excluir continuam só no painel.
+function redSupComo(handler, extra) {
+  return async (req, res) => {
+    const x = await redSupBanca(req, res); if (!x) return;
+    if (x.banca.encerrada && extra !== 'leitura') return res.status(400).json({ erro: 'Esta correção está encerrada.' });
+    const b = req.body || {};
+    const fake = { params: { id: String(x.banca.id) }, query: {}, body: b,
+      _sup: { id: x.p.id, banca_id: x.banca.id, empresa_id: x.banca.empresa_id } };
+    if (extra === 'correcao') fake.params.id = String(parseInt(b.correcao_id) || 0);
+    return handler(fake, res);
+  };
+}
+app.post('/api/redacao/sup/distribuir', redSupComo(redHDistribuir));
+app.post('/api/redacao/sup/remanejar', redSupComo(redHRemanejar));
+app.post('/api/redacao/sup/trocar', redSupComo(redHTrocarProf, 'correcao'));
+app.post('/api/redacao/sup/textos', redSupComo(redHTextos, 'leitura'));
 app.post('/api/redacao/sup/atribuir', async (req, res) => {
   const x = await redSupBanca(req, res); if (!x) return;
   const { p, banca } = x;

@@ -94,6 +94,34 @@
       <p class="leg">Redações em que as duas notas ficaram muito diferentes. Escolha quem faz a 3ª correção, ou clique em <b>Eu corrijo</b> — ela aparece na sua lista de correção.</p>
       <div id="s_terc"></div></div>
     <div class="card"><h3>Professores</h3><div id="s_profs"></div></div>
+    <div class="card"><h3>Distribuir redações</h3>
+      <p class="leg">Marque quem vai corrigir e escolha como formar quem corrige cada redação. Pode distribuir de novo quando chegarem mais redações ou entrar um corretor: o que já foi distribuído não muda.</p>
+      <div id="s_dist_profs" style="columns:2;column-gap:24px"></div>
+      <label>Como formar quem corrige cada redação</label>
+      <select id="s_modo" onchange="supModo()">
+        <option value="sorteio">Sorteio a cada redação (carga igual para todos)</option>
+        <option value="duplas">Duplas fixas (cada dupla recebe um lote e os dois corrigem as mesmas)</option>
+      </select>
+      <div id="s_duplas_box" style="display:none;margin-top:10px">
+        <button class="mini" onclick="supMontarDuplas()">Montar duplas com os marcados</button>
+        <div id="s_duplas" style="margin-top:10px"></div>
+      </div>
+      <div style="margin-top:14px"><button onclick="supDistribuir()">Distribuir redações</button></div>
+    </div>
+    <div class="card"><h3>Remanejar</h3>
+      <p class="leg">Passa redações <b>ainda não corrigidas</b> de um corretor para outro (por exemplo, quando alguém não puder continuar).</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr 120px auto;gap:10px;align-items:end">
+        <div><label>De</label><select id="s_de"></select></div>
+        <div><label>Para</label><select id="s_para"></select></div>
+        <div><label>Quantidade</label><input id="s_qtd" inputmode="numeric" placeholder="Ex.: 10"></div>
+        <div><button onclick="supRemanejar()">Remanejar</button></div>
+      </div>
+    </div>
+    <div class="card"><h3>Ajuste de uma redação</h3>
+      <p class="leg">Digite o número da redação para ver quem corrige e trocar o corretor de uma correção ainda não feita.</p>
+      <div style="display:flex;gap:10px;align-items:end"><div style="width:160px"><label>Nº da redação</label><input id="s_num" inputmode="numeric" onkeydown="if(event.key==='Enter')supBuscarTexto()"></div><button class="sec" onclick="supBuscarTexto()">Buscar</button></div>
+      <div id="s_texto" style="margin-top:12px"></div>
+    </div>
   </div>
 </div>
 
@@ -333,7 +361,7 @@ var SUP_ID=null, SUP=null;
 async function supAbrir(id){ SUP_ID=id; mostrar('tela_sup'); await supCarregar(); }
 async function supCarregar(){
   try{
-    var j=await api('/api/redacao/sup/resumo',{banca_id:SUP_ID}); SUP=j;
+    var j=await api('/api/redacao/sup/resumo',{banca_id:SUP_ID}); SUP=j; SUP_TEXTOS=null; supPreencherGestao();
     $('s_titulo').textContent=j.banca.titulo+(j.banca.encerrada?' — encerrada':'');
     var pend3=j.terceiras.filter(function(t){return t.status!=='feita';}).length;
     $('s_nums').innerHTML=
@@ -359,6 +387,63 @@ async function supCarregar(){
       + j.professores.map(function(p){ return '<tr><td>'+esc(p.nome)+(p.ativo?'':' <span class="hint">(inativo)</span>')+'</td><td>'+p.total+'</td><td>'+p.feitas+'</td><td>'+p.pendentes+'</td><td>'+p.terceiras+'</td></tr>'; }).join('')+'</table>'
       : '<p class="hint">As redações ainda não foram distribuídas.</p>';
   }catch(e){ alert(e.message); }
+}
+function supAtivosOpts(sel, filtro){ return SUP.ativos.filter(filtro||function(){return true;}).map(function(p){ return '<option value="'+p.id+'"'+(p.id===sel?' selected':'')+'>'+esc(p.nome)+(p.id===SUP.eu?' (eu)':'')+'</option>'; }).join(''); }
+function supPreencherGestao(){
+  var na=SUP.banca.professores||[];
+  $('s_dist_profs').innerHTML = SUP.ativos.map(function(p){
+    return '<label style="display:flex;gap:8px;align-items:center;font-weight:500;margin:4px 0;break-inside:avoid"><input type="checkbox" class="s-pf" value="'+p.id+'" style="width:auto"'+(na.indexOf(p.id)>-1?' checked':'')+'> '+esc(p.nome)+'</label>';
+  }).join('') || '<p class="hint">Nenhum professor cadastrado.</p>';
+  $('s_de').innerHTML = supAtivosOpts(null, function(p){ return SUP.professores.some(function(q){return q.id===p.id && q.pendentes;}); });
+  $('s_para').innerHTML = supAtivosOpts(null);
+  $('s_duplas').innerHTML=''; supModo();
+}
+function supModo(){ $('s_duplas_box').style.display = $('s_modo').value==='duplas' ? '' : 'none'; if($('s_modo').value==='duplas' && !$('s_duplas').innerHTML) supMontarDuplas(true); }
+function supMarcados(){ return Array.prototype.map.call(document.querySelectorAll('.s-pf:checked'),function(x){return parseInt(x.value);}); }
+function supMontarDuplas(usarSalvas){
+  var ids=supMarcados(), nomes={}; SUP.ativos.forEach(function(p){ nomes[p.id]=p.nome; });
+  var salvas=SUP.banca.duplas||[], pares=[];
+  if(usarSalvas===true && salvas.length && salvas.every(function(d){return ids.indexOf(d[0])>-1&&ids.indexOf(d[1])>-1;}) && salvas.length*2===ids.length) pares=salvas.map(function(d){return d.slice();});
+  else for(var i=0;i<ids.length;i+=2) pares.push([ids[i], ids[i+1]||'']);
+  var opt=function(sel){ return '<option value="">—</option>'+ids.map(function(id){return '<option value="'+id+'"'+(id===sel?' selected':'')+'>'+esc(nomes[id]||id)+'</option>';}).join(''); };
+  $('s_duplas').innerHTML=(ids.length%2?'<p class="hint" style="color:#a12626;margin-bottom:8px">Há '+ids.length+' corretores marcados (número ímpar). Marque ou desmarque um para formar as duplas.</p>':'')
+    +pares.map(function(d,k){ return '<div class="s-dupla" style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><b style="width:74px;font-size:.88rem;white-space:nowrap">Dupla '+(k+1)+'</b><select class="s-d1">'+opt(d[0])+'</select><select class="s-d2">'+opt(d[1])+'</select></div>'; }).join('');
+}
+async function supDistribuir(){
+  var corpo={banca_id:SUP_ID, professor_ids:supMarcados()};
+  if($('s_modo').value==='duplas'){
+    if(!$('s_duplas').innerHTML) supMontarDuplas(true);
+    corpo.modo='duplas';
+    corpo.duplas=Array.prototype.map.call(document.querySelectorAll('#s_duplas .s-dupla'),function(d){ return [parseInt(d.querySelector('.s-d1').value)||0, parseInt(d.querySelector('.s-d2').value)||0]; });
+  }
+  if(!confirm('Distribuir as redações ainda não distribuídas entre '+corpo.professor_ids.length+' corretor(es)?')) return;
+  try{ var j=await api('/api/redacao/sup/distribuir',corpo); alert(j.novas+' correção(ões) atribuída(s).'); await supCarregar(); }catch(e){ alert(e.message); }
+}
+async function supRemanejar(){
+  var de=$('s_de').value, para=$('s_para').value, q=parseInt($('s_qtd').value)||0;
+  if(!de||!para||de===para){ alert('Escolha dois corretores diferentes.'); return; }
+  if(!q){ alert('Informe a quantidade.'); return; }
+  try{ var j=await api('/api/redacao/sup/remanejar',{banca_id:SUP_ID,de:de,para:para,quantidade:q}); alert(j.movidas+' redação(ões) remanejada(s).'); $('s_qtd').value=''; await supCarregar(); }catch(e){ alert(e.message); }
+}
+var SUP_TEXTOS=null;
+async function supBuscarTexto(){
+  var n=parseInt($('s_num').value)||0; if(!n) return;
+  try{
+    if(!SUP_TEXTOS) SUP_TEXTOS=(await api('/api/redacao/sup/textos',{banca_id:SUP_ID})).textos;
+    var t=SUP_TEXTOS.find(function(x){return x.seq===n;});
+    if(!t){ $('s_texto').innerHTML='<p class="hint">Redação nº '+n+' não encontrada.</p>'; return; }
+    var SIT={concluida:'concluída',aguardando_3a:'aguardando 3ª correção',em_correcao:'em correção'};
+    $('s_texto').innerHTML='<p style="margin-bottom:8px"><b>Redação nº '+t.seq+'</b> — '+(SIT[t.situacao]||t.situacao)+(t.final!=null?' · nota final '+fmt(t.final):'')+'</p>'
+      +'<table class="t"><tr><th>Correção</th><th>Corretor</th><th>Situação</th><th></th></tr>'
+      +t.correcoes.map(function(c){
+        var outros=t.correcoes.filter(function(o){return o.id!==c.id;}).map(function(o){return o.professor_id;});
+        var acao = c.status==='feita' ? '' : '<select id="st_'+c.id+'" style="min-width:160px">'+supAtivosOpts(c.professor_id,function(p){return outros.indexOf(p.id)<0;})+'</select> <button class="mini" onclick="supTrocar('+c.id+')">Trocar</button>';
+        return '<tr><td>'+c.ordem+'ª</td><td>'+esc(c.prof||'(sem corretor)')+'</td><td>'+(c.status==='feita'?'feita: '+(c.zero_motivo?'ZERO':fmt(c.total)):'pendente')+'</td><td>'+acao+'</td></tr>';
+      }).join('')+'</table>';
+  }catch(e){ alert(e.message); }
+}
+async function supTrocar(cid){
+  try{ await api('/api/redacao/sup/trocar',{banca_id:SUP_ID,correcao_id:cid,professor_id:$('st_'+cid).value}); SUP_TEXTOS=null; await supCarregar(); await supBuscarTexto(); }catch(e){ alert(e.message); }
 }
 async function supAtribuir(cid, quem){
   var pid = quem || $('s3_'+cid).value;

@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v36-duplas -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v37-supervisor -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -2569,7 +2569,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var nomes={}; (RD_RESUMO?RD_RESUMO.professores:[]).forEach(function(p){ nomes[p.id]=p.nome; });
     var pares=[];
     var salvas=(RD_BANCA&&RD_BANCA.duplas)||[];
-    if(usarSalvas && salvas.length && salvas.every(function(d){return ids.indexOf(d[0])>-1&&ids.indexOf(d[1])>-1;})) pares=salvas.map(function(d){return d.slice();});
+    if(usarSalvas && salvas.length && salvas.every(function(d){return ids.indexOf(d[0])>-1&&ids.indexOf(d[1])>-1;}) && salvas.length*2===ids.length) pares=salvas.map(function(d){return d.slice();});
     else for(var i=0;i<ids.length;i+=2) pares.push([ids[i], ids[i+1]||'']);
     var opt=function(sel){ return '<option value="">—</option>'+ids.map(function(id){return '<option value="'+id+'"'+(id===sel?' selected':'')+'>'+esc(nomes[id]||id)+'</option>';}).join(''); };
     $('rd_duplas').innerHTML=(ids.length%2?'<p class="hint" style="color:#b91c1c">Há '+ids.length+' professores marcados (número ímpar). Marque ou desmarque um para formar as duplas.</p>':'')
