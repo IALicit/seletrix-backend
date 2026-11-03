@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v35-etiquetas -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v36-duplas -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -546,6 +546,14 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       <div class="checkline" style="margin-top:6px"><input type="checkbox" id="pf_sup"><label for="pf_sup" style="margin:0">Supervisor de redação (acompanha a correção e decide quem faz a 3ª correção)</label></div>
       <div style="margin-top:16px;display:flex;gap:10px"><button onclick="salvarProfessor()">Salvar professor</button><button class="sec" onclick="novoProfessor()">Limpar / Novo</button></div>
     </div>
+    <div class="card">
+      <h3 style="color:var(--navy);margin-bottom:6px">Importar vários professores de uma vez</h3>
+      <p class="hint" style="margin-bottom:10px">Cole as linhas da planilha com <b>nome</b> e <b>e-mail</b> (copie as duas colunas do Excel e cole aqui; também aceita "Nome; e-mail"). Quem já está cadastrado é mantido como está. Para os novos, o sistema gera uma senha — <b>baixe a planilha de senhas</b> no final, ela só aparece uma vez.</p>
+      <textarea id="pfi_txt" rows="8" style="width:100%" placeholder="Maria Silva	maria@email.com"></textarea>
+      <div class="grid2" style="margin-top:8px"><div><label>Disciplina (opcional)</label><input id="pfi_disc" placeholder="Ex.: Redação"></div></div>
+      <div style="margin-top:12px"><button onclick="pfImportar()">Importar</button> <span class="hint" id="pfi_status"></span></div>
+      <div id="pfi_res" style="margin-top:12px"></div>
+    </div>
     <div class="card"><div id="pf_lista"></div></div>
   </section>
   <section id="vista" style="display:none">
@@ -616,9 +624,19 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       </div>
       <div class="card">
         <h3 style="color:var(--navy);margin-bottom:6px">2. Escolher os professores e distribuir</h3>
-        <p class="hint" style="margin-bottom:10px">Marque quem vai corrigir (mínimo 2). O sistema divide as redações por igual, sorteando. Pode distribuir de novo quando enviar mais imagens ou incluir professores: o que já foi distribuído não muda.</p>
+        <p class="hint" style="margin-bottom:10px">Marque quem vai corrigir (mínimo 2). Pode distribuir de novo quando enviar mais imagens ou incluir professores: o que já foi distribuído não muda.</p>
         <div id="rd_profs"></div>
-        <div style="margin-top:10px"><button onclick="rdDistribuir()">Distribuir redações</button></div>
+        <label style="margin-top:12px;display:block">Como formar quem corrige cada redação</label>
+        <select id="rd_modo" onchange="rdModo()" style="max-width:520px">
+          <option value="sorteio">Sorteio a cada redação (dois professores diferentes, carga igual para todos)</option>
+          <option value="duplas">Duplas fixas (cada dupla recebe um lote de redações e os dois corrigem as mesmas)</option>
+        </select>
+        <div id="rd_duplas_box" style="display:none;margin-top:10px">
+          <p class="hint" style="margin-bottom:8px">Clique em <b>Montar duplas</b> para formar as duplas com os professores marcados (na ordem da lista) e ajuste quem fica com quem. O número de professores marcados precisa ser par. As redações são divididas por igual entre as duplas.</p>
+          <button class="sec" onclick="rdMontarDuplas()">Montar duplas</button>
+          <div id="rd_duplas" style="margin-top:10px"></div>
+        </div>
+        <div style="margin-top:12px"><button onclick="rdDistribuir()">Distribuir redações</button></div>
       </div>
       <div class="card">
         <h3 style="color:var(--navy);margin-bottom:6px">3. Ajustes (remanejar)</h3>
@@ -2312,6 +2330,33 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('pf_senha').value=''; $('pf_senha').placeholder='deixe em branco p/ manter a senha atual'; $('pf_ativo').checked=!!p.ativo; $('pf_sup').checked=!!p.supervisor;
     window.scrollTo({top:0,behavior:'smooth'});
   }
+  var PFI_RES=[];
+  async function pfImportar(){
+    var linhas=$('pfi_txt').value.split(/\\r?\\n/).map(function(l){
+      var m=l.match(/[^\\s;,\\t<>]+@[^\\s;,\\t<>]+/); if(!m) return null;
+      var nome=l.replace(m[0],'').replace(/[;\\t,]+/g,' ').replace(/^[^:]*:\\s*/,function(x){return /presid|vice/i.test(x)?'':x;}).replace(/\\s+/g,' ').trim();
+      return {nome:nome,email:m[0]};
+    }).filter(Boolean);
+    if(!linhas.length){ alert('Cole pelo menos uma linha com nome e e-mail.'); return; }
+    if(!confirm('Importar '+linhas.length+' professor(es) na empresa selecionada?')) return;
+    $('pfi_status').textContent='Importando...';
+    try{
+      var r=await fetch('/admin/professores/importar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({empresa_id:EMPRESA_ID,disciplina:$('pfi_disc').value,linhas:linhas})});
+      var j=await r.json(); if(!r.ok) throw new Error(j.erro||'Erro');
+      PFI_RES=j.resultado; var novos=PFI_RES.filter(function(x){return x.senha;}).length;
+      $('pfi_status').textContent=novos+' criado(s), '+(PFI_RES.length-novos)+' não criado(s).';
+      $('pfi_res').innerHTML='<button class="sec" onclick="pfBaixarSenhas()">⬇️ Baixar planilha com logins e senhas</button>'
+        +'<table style="width:100%;border-collapse:collapse;font-size:.85rem;margin-top:10px"><tr style="text-align:left"><th>Nome</th><th>E-mail (login)</th><th>Senha</th><th>Situação</th></tr>'
+        +PFI_RES.map(function(x){return '<tr style="border-top:1px solid #eef2f6"><td>'+esc(x.nome)+'</td><td>'+esc(x.email)+'</td><td><b>'+esc(x.senha||'')+'</b></td><td>'+esc(x.situacao)+'</td></tr>';}).join('')+'</table>';
+      $('pfi_txt').value=''; carregarProfessores();
+    }catch(e){ $('pfi_status').textContent=''; alert(e.message); }
+  }
+  function pfBaixarSenhas(){
+    var q=function(v){return '"'+String(v==null?'':v).replace(/"/g,'""')+'"';};
+    var csv='\\ufeff'+['Nome;E-mail (login);Senha;Situação'].concat(PFI_RES.map(function(x){return [x.nome,x.email,x.senha||'',x.situacao].map(q).join(';');})).join('\\r\\n')
+      +'\\r\\n\\r\\n"Endereço de acesso: '+location.origin+'/redacao.html"';
+    var a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})); a.download='logins-professores.csv'; a.click();
+  }
   async function salvarProfessor(){
     var body={id:$('pf_id').value||undefined, nome:$('pf_nome').value, email:$('pf_email').value, disciplina:$('pf_disciplina').value, senha:$('pf_senha').value, ativo:$('pf_ativo').checked, supervisor:$('pf_sup').checked, empresa_id:EMPRESA_ID};
     var r=await fetch('/admin/professor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -2413,6 +2458,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       return '<div class="rd-top" style="display:flex;gap:8px;margin-top:6px;align-items:center"><b style="width:22px">'+(i+1)+'.</b>'
         +'<input class="rd-tn" placeholder="Nome do tópico (ex.: Adequação ao tema)" value="'+esc(t.nome)+'" style="flex:1">'
         +'<input class="rd-tm" placeholder="Máx." value="'+esc(rdFmt(t.max))+'" oninput="rdSoma()" style="width:80px" inputmode="decimal">'
+        +'<button class="mini" title="Subir" onclick="rdMoverTopico('+i+',-1)">↑</button><button class="mini" title="Descer" onclick="rdMoverTopico('+i+',1)">↓</button>'
         +'<button class="del" onclick="rdRemTopico('+i+')">×</button></div>';
     }).join('');
     rdSoma();
@@ -2423,6 +2469,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     });
   }
   function rdAddTopico(){ var l=rdLerTopicos(); l.push({nome:'',max:''}); rdTopicosForm(l); }
+  function rdMoverTopico(i,d){ var l=rdLerTopicos(), j=i+d; if(j<0||j>=l.length) return; var t=l[i]; l[i]=l[j]; l[j]=t; rdTopicosForm(l); }
   function rdRemTopico(i){ var l=rdLerTopicos(); l.splice(i,1); rdTopicosForm(l); }
   function rdSoma(){
     var s=0; rdLerTopicos().forEach(function(t){ var v=rdNum(t.max); if(isFinite(v)) s+=v; });
@@ -2516,10 +2563,28 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('rd_arquivos').value='';
     carregarRedacoes(RD_BANCA.id);
   }
+  function rdModo(){ $('rd_duplas_box').style.display = $('rd_modo').value==='duplas' ? '' : 'none'; if($('rd_modo').value==='duplas' && !$('rd_duplas').innerHTML) rdMontarDuplas(true); }
+  function rdMontarDuplas(usarSalvas){
+    var ids=Array.prototype.map.call(document.querySelectorAll('.rd-pf:checked'),function(x){return parseInt(x.value);});
+    var nomes={}; (RD_RESUMO?RD_RESUMO.professores:[]).forEach(function(p){ nomes[p.id]=p.nome; });
+    var pares=[];
+    var salvas=(RD_BANCA&&RD_BANCA.duplas)||[];
+    if(usarSalvas && salvas.length && salvas.every(function(d){return ids.indexOf(d[0])>-1&&ids.indexOf(d[1])>-1;})) pares=salvas.map(function(d){return d.slice();});
+    else for(var i=0;i<ids.length;i+=2) pares.push([ids[i], ids[i+1]||'']);
+    var opt=function(sel){ return '<option value="">—</option>'+ids.map(function(id){return '<option value="'+id+'"'+(id===sel?' selected':'')+'>'+esc(nomes[id]||id)+'</option>';}).join(''); };
+    $('rd_duplas').innerHTML=(ids.length%2?'<p class="hint" style="color:#b91c1c">Há '+ids.length+' professores marcados (número ímpar). Marque ou desmarque um para formar as duplas.</p>':'')
+      +pares.map(function(d,k){ return '<div class="rd-dupla" style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><b style="width:70px">Dupla '+(k+1)+'</b><select class="rd-d1" style="flex:1">'+opt(d[0])+'</select><select class="rd-d2" style="flex:1">'+opt(d[1])+'</select></div>'; }).join('');
+  }
   async function rdDistribuir(){
     var ids=Array.prototype.map.call(document.querySelectorAll('.rd-pf:checked'),function(x){return parseInt(x.value);});
+    var corpo={professor_ids:ids};
+    if($('rd_modo').value==='duplas'){
+      if(!$('rd_duplas').innerHTML) rdMontarDuplas(true);
+      corpo.modo='duplas';
+      corpo.duplas=Array.prototype.map.call(document.querySelectorAll('#rd_duplas .rd-dupla'),function(d){ return [parseInt(d.querySelector('.rd-d1').value)||0, parseInt(d.querySelector('.rd-d2').value)||0]; });
+    }
     try{
-      var j=await rdJson(await fetch('/admin/redacao/banca/'+RD_BANCA.id+'/distribuir',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({professor_ids:ids})}));
+      var j=await rdJson(await fetch('/admin/redacao/banca/'+RD_BANCA.id+'/distribuir',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(corpo)}));
       alert(j.novas+' correção(ões) atribuída(s).'); rdResumo();
     }catch(e){ alert(e.message); }
   }

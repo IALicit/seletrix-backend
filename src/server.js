@@ -257,6 +257,7 @@ async function inicializarBanco() {
     corrigido_em TIMESTAMPTZ, criado_em TIMESTAMPTZ DEFAULT now(), UNIQUE(texto_id, ordem));`);
   await pool.query('CREATE INDEX IF NOT EXISTS red_corr_prof ON red_correcoes (banca_id, professor_id, status)');
   await pool.query('ALTER TABLE professores ADD COLUMN IF NOT EXISTS supervisor BOOLEAN DEFAULT FALSE');
+  await pool.query("ALTER TABLE red_bancas ADD COLUMN IF NOT EXISTS duplas TEXT DEFAULT '[]'");
   {
     const pri = await pool.query('SELECT id FROM empresas ORDER BY id LIMIT 1');
     if (pri.rows.length) await pool.query('UPDATE questoes SET empresa_id=$1 WHERE empresa_id IS NULL', [pri.rows[0].id]);
@@ -604,7 +605,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'etiquetas-v2', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'redacao-v4-duplas', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -3886,7 +3887,7 @@ function redParseBanca(r) {
   const j = (t, d) => { try { const v = JSON.parse(t || ''); return Array.isArray(v) ? v : d; } catch { return d; } };
   return { id: r.id, empresa_id: r.empresa_id, titulo: r.titulo, nota_max: Number(r.nota_max), discrepancia: Number(r.discrepancia),
     topicos: j(r.topicos, []), motivos_zero: j(r.motivos_zero, RED_MOTIVOS_PADRAO), professores: j(r.professores, []).map(Number),
-    encerrada: !!r.encerrada };
+    encerrada: !!r.encerrada, duplas: j(r.duplas, []) };
 }
 async function redBanca(id) {
   const { rows } = await pool.query('SELECT * FROM red_bancas WHERE id=$1', [parseInt(id) || 0]);
@@ -3926,12 +3927,17 @@ async function redVerificar3a(texto_id, banca) {
   const r = redFinal(rows, banca.discrepancia);
   const c3 = rows.find((c) => c.ordem === 3);
   if (r.precisa3 && !c3) {
-    // Com supervisor ativo na empresa, a 3ª correção fica sem professor: o supervisor decide quem corrige.
-    const sup = await pool.query('SELECT 1 FROM professores WHERE supervisor=TRUE AND ativo=TRUE AND empresa_id IS NOT DISTINCT FROM $1 LIMIT 1', [banca.empresa_id]);
+    // Com supervisor(es) ativo(s) na empresa, a 3ª correção vai para o supervisor com menos 3ªs nesta correção
+    // (nunca para quem fez a 1ª ou a 2ª). Se nenhum puder, fica sem professor e o supervisor decide no painel dele.
+    const excl = rows.filter((c) => c.ordem !== 3).map((c) => c.professor_id);
+    const sup = await pool.query(`SELECT p.id, (SELECT COUNT(*)::int FROM red_correcoes c WHERE c.banca_id=$2 AND c.ordem=3 AND c.professor_id=p.id) n
+      FROM professores p WHERE p.supervisor=TRUE AND p.ativo=TRUE AND p.empresa_id IS NOT DISTINCT FROM $1`, [banca.empresa_id, banca.id]);
     let prof = null;
-    if (!sup.rows.length) {
+    if (sup.rows.length) {
+      const carga = {}; sup.rows.forEach((x) => { carga[x.id] = x.n; });
+      prof = redMenosCarregado(carga, excl);
+    } else {
       const carga = await redCargas(banca.id, banca.professores);
-      const excl = rows.filter((c) => c.ordem !== 3).map((c) => c.professor_id);
       prof = redMenosCarregado(carga, excl);
     }
     await pool.query('INSERT INTO red_correcoes (texto_id,banca_id,professor_id,ordem) VALUES ($1,$2,$3,3) ON CONFLICT (texto_id,ordem) DO NOTHING',
@@ -3990,7 +3996,9 @@ app.post('/admin/redacao/banca', exigirSenha, async (req, res) => {
     if (!atual) return res.status(404).json({ erro: 'Correção não encontrada.' });
     const feitas = (await pool.query("SELECT COUNT(*)::int n FROM red_correcoes WHERE banca_id=$1 AND status='feita'", [atual.id])).rows[0].n;
     const mudouTopicos = JSON.stringify(atual.topicos) !== JSON.stringify(topicos);
-    if (feitas && mudouTopicos) return res.status(400).json({ erro: 'Já existem ' + feitas + ' correção(ões) feitas. Os tópicos não podem mais ser alterados.' });
+    // Com correções feitas, só é permitido renomear tópicos (mesma quantidade, mesma ordem de pontuação máxima).
+    const soNomes = atual.topicos.length === topicos.length && atual.topicos.every((t, i) => Number(t.max) === Number(topicos[i].max));
+    if (feitas && mudouTopicos && !soNomes) return res.status(400).json({ erro: 'Já existem ' + feitas + ' correção(ões) feitas. Agora só dá para mudar o nome dos tópicos, não a ordem, a quantidade ou a pontuação.' });
     await pool.query('UPDATE red_bancas SET titulo=$1,nota_max=$2,discrepancia=$3,topicos=$4,motivos_zero=$5 WHERE id=$6',
       [titulo, notaMax, disc, JSON.stringify(topicos), JSON.stringify(motivos), atual.id]);
     return res.json({ ok: true, id: atual.id });
@@ -4075,7 +4083,24 @@ app.post('/admin/redacao/banca/:id/distribuir', exigirSenha, async (req, res) =>
   if (ids.length < 2) return res.status(400).json({ erro: 'Marque pelo menos 2 professores (cada redação é corrigida por dois).' });
   const ok = await pool.query('SELECT id FROM professores WHERE id = ANY($1::int[]) AND ativo=TRUE', [ids]);
   if (ok.rows.length !== ids.length) return res.status(400).json({ erro: 'Algum professor marcado está inativo ou não existe.' });
-  await pool.query('UPDATE red_bancas SET professores=$1 WHERE id=$2', [JSON.stringify(ids), banca.id]);
+  // Modo "duplas fixas": cada redação vai para uma dupla predeterminada (os dois fazem a 1ª e a 2ª correção).
+  let duplas = null;
+  if ((req.body || {}).modo === 'duplas') {
+    duplas = (Array.isArray(req.body.duplas) ? req.body.duplas : []).map((d) => (Array.isArray(d) ? d.map((x) => parseInt(x)) : []));
+    const usados = new Set();
+    for (const d of duplas) {
+      if (d.length !== 2 || !d[0] || !d[1] || d[0] === d[1]) return res.status(400).json({ erro: 'Cada dupla precisa de dois professores diferentes.' });
+      for (const x of d) {
+        if (!ids.includes(x)) return res.status(400).json({ erro: 'Há professor nas duplas que não está marcado.' });
+        if (usados.has(x)) return res.status(400).json({ erro: 'Um professor aparece em mais de uma dupla.' });
+        usados.add(x);
+      }
+    }
+    if (!duplas.length) return res.status(400).json({ erro: 'Monte pelo menos uma dupla.' });
+    if (usados.size !== ids.length) return res.status(400).json({ erro: 'Todos os professores marcados precisam estar em uma dupla (número par de professores).' });
+  }
+  await pool.query('UPDATE red_bancas SET professores=$1' + (duplas ? ', duplas=$3' : '') + ' WHERE id=$2',
+    duplas ? [JSON.stringify(ids), banca.id, JSON.stringify(duplas)] : [JSON.stringify(ids), banca.id]);
   banca.professores = ids;
   const tx = await pool.query('SELECT id FROM red_textos WHERE banca_id=$1 ORDER BY random()', [banca.id]);
   const cs = await pool.query('SELECT texto_id,professor_id,ordem FROM red_correcoes WHERE banca_id=$1', [banca.id]);
@@ -4083,6 +4108,23 @@ app.post('/admin/redacao/banca/:id/distribuir', exigirSenha, async (req, res) =>
   const client = await pool.connect(); let novas = 0;
   try {
     await client.query('BEGIN');
+    if (duplas) {
+      // carga de cada dupla = redações que já estão com ela; a redação nova vai para a dupla com menos.
+      const porTexto = {}; cs.rows.forEach((c) => { (porTexto[c.texto_id] = porTexto[c.texto_id] || []).push(c); });
+      const cargaD = duplas.map((d) => Object.values(porTexto).filter((l) => d.every((x) => l.some((c) => c.professor_id === x && c.ordem < 3))).length);
+      const prim = {}; cs.rows.forEach((c) => { if (c.ordem === 1) prim[c.professor_id] = (prim[c.professor_id] || 0) + 1; });
+      for (const t of tx.rows) {
+        if ((porTexto[t.id] || []).some((c) => c.ordem === 1 || c.ordem === 2)) continue;
+        const min = Math.min(...cargaD);
+        const cands = cargaD.map((n, k) => k).filter((k) => cargaD[k] === min);
+        const k = cands[Math.floor(Math.random() * cands.length)];
+        let [a, b] = duplas[k];
+        if ((prim[a] || 0) > (prim[b] || 0)) [a, b] = [b, a];
+        await client.query('INSERT INTO red_correcoes (texto_id,banca_id,professor_id,ordem) VALUES ($1,$2,$3,1),($1,$2,$4,2)', [t.id, banca.id, a, b]);
+        cs.rows.push({ texto_id: t.id, professor_id: a, ordem: 1 }, { texto_id: t.id, professor_id: b, ordem: 2 });
+        prim[a] = (prim[a] || 0) + 1; cargaD[k]++; carga[a]++; carga[b]++; novas += 2;
+      }
+    }
     for (const t of tx.rows) {
       const ja = cs.rows.filter((c) => c.texto_id === t.id);
       for (const ordem of [1, 2]) {
@@ -4383,6 +4425,25 @@ app.post('/admin/professor', exigirSenha, async (req, res) => {
   if (senha.length < 6) return res.status(400).json({ erro: 'Defina uma senha com ao menos 6 caracteres.' });
   const r = await pool.query('INSERT INTO professores (empresa_id,nome,email,senha_hash,disciplina,supervisor) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id', [emp, nome, email, hashSenha(senha), disc, b.supervisor === true]);
   res.json({ ok: true, id: r.rows[0].id });
+});
+// Importação em lote: cada linha "Nome; e-mail". Cria quem ainda não existe, com senha gerada (devolvida uma única vez).
+app.post('/admin/professores/importar', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const b = req.body || {}; const emp = parseInt(b.empresa_id) || null;
+  const disc = String(b.disciplina || '').trim().slice(0, 120);
+  const linhas = Array.isArray(b.linhas) ? b.linhas.slice(0, 500) : [];
+  const out = [];
+  for (const l of linhas) {
+    const nome = String(l && l.nome || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    const email = String(l && l.email || '').trim().toLowerCase().slice(0, 160);
+    if (!nome || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { out.push({ nome, email, situacao: 'ignorado: nome ou e-mail inválido' }); continue; }
+    const ex = await pool.query('SELECT id FROM professores WHERE email=$1', [email]);
+    if (ex.rows.length) { out.push({ nome, email, situacao: 'já cadastrado (senha não alterada)' }); continue; }
+    const senha = senhaProvisoria();
+    await pool.query('INSERT INTO professores (empresa_id,nome,email,senha_hash,disciplina) VALUES ($1,$2,$3,$4,$5)', [emp, nome, email, hashSenha(senha), disc]);
+    out.push({ nome, email, senha, situacao: 'criado' });
+  }
+  res.json({ ok: true, resultado: out });
 });
 app.delete('/admin/professor/:id', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
