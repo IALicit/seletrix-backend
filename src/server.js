@@ -605,7 +605,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'redacao-v6-config', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'recursos-zip-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -1379,7 +1379,7 @@ app.get('/api/candidato/laudo/:id', async (req, res) => {
   const { rows } = await pool.query('SELECT laudo_mime, laudo_dados, laudo_nome FROM candidatos WHERE id=$1 AND cpf=$2', [parseInt(req.params.id), cpf]);
   if (!rows.length || !rows[0].laudo_dados) return res.status(404).send('Sem laudo.');
   res.setHeader('Content-Type', rows[0].laudo_mime || 'application/octet-stream');
-  res.setHeader('Content-Disposition', 'inline; filename="' + (rows[0].laudo_nome || 'laudo') + '"');
+  res.setHeader('Content-Disposition', dispo('inline', rows[0].laudo_nome || 'laudo'));
   res.send(rows[0].laudo_dados);
 });
 // ---- Análise PcD (laudo de deficiência) ---------------------
@@ -1440,7 +1440,7 @@ app.get('/admin/candidato/:id/laudo', exigirSenha, async (req, res) => {
   const { rows } = await pool.query('SELECT laudo_mime, laudo_dados, laudo_nome FROM candidatos WHERE id=$1', [parseInt(req.params.id)]);
   if (!rows.length || !rows[0].laudo_dados) return res.status(404).send('Sem laudo.');
   res.setHeader('Content-Type', rows[0].laudo_mime || 'application/octet-stream');
-  res.setHeader('Content-Disposition', 'inline; filename="' + (rows[0].laudo_nome || 'laudo') + '"');
+  res.setHeader('Content-Disposition', dispo('inline', rows[0].laudo_nome || 'laudo'));
   res.send(rows[0].laudo_dados);
 });
 
@@ -1481,7 +1481,7 @@ app.get('/api/candidato/isencao/:id', async (req, res) => {
   const { rows } = await pool.query('SELECT isencao_doc_mime, isencao_doc_dados, isencao_doc_nome FROM candidatos WHERE id=$1 AND cpf=$2', [parseInt(req.params.id), cpf]);
   if (!rows.length || !rows[0].isencao_doc_dados) return res.status(404).send('Sem comprovante.');
   res.setHeader('Content-Type', rows[0].isencao_doc_mime || 'application/octet-stream');
-  res.setHeader('Content-Disposition', 'inline; filename="' + (rows[0].isencao_doc_nome || 'comprovante') + '"');
+  res.setHeader('Content-Disposition', dispo('inline', rows[0].isencao_doc_nome || 'comprovante'));
   res.send(rows[0].isencao_doc_dados);
 });
 // Admin baixa o comprovante para analisar
@@ -1490,7 +1490,7 @@ app.get('/admin/candidato/:id/isencao', exigirSenha, async (req, res) => {
   const { rows } = await pool.query('SELECT isencao_doc_mime, isencao_doc_dados, isencao_doc_nome FROM candidatos WHERE id=$1', [parseInt(req.params.id)]);
   if (!rows.length || !rows[0].isencao_doc_dados) return res.status(404).send('Sem comprovante.');
   res.setHeader('Content-Type', rows[0].isencao_doc_mime || 'application/octet-stream');
-  res.setHeader('Content-Disposition', 'inline; filename="' + (rows[0].isencao_doc_nome || 'comprovante') + '"');
+  res.setHeader('Content-Disposition', dispo('inline', rows[0].isencao_doc_nome || 'comprovante'));
   res.send(rows[0].isencao_doc_dados);
 });
 // Admin aprova ou nega. Negada = gera o boleto para o candidato pagar.
@@ -1560,7 +1560,7 @@ app.get('/api/candidato/recurso/:id/anexo', async (req, res) => {
   const { rows } = await pool.query('SELECT r.anexo_mime, r.anexo_dados, r.anexo_nome FROM recursos r JOIN candidatos k ON k.id=r.candidato_id WHERE r.id=$1 AND k.cpf=$2', [parseInt(req.params.id), cpf]);
   if (!rows.length || !rows[0].anexo_dados) return res.status(404).send('Sem anexo.');
   res.setHeader('Content-Type', rows[0].anexo_mime || 'application/octet-stream');
-  res.setHeader('Content-Disposition', 'inline; filename="' + (rows[0].anexo_nome || 'anexo') + '"');
+  res.setHeader('Content-Disposition', dispo('inline', rows[0].anexo_nome || 'anexo'));
   res.send(rows[0].anexo_dados);
 });
 app.get('/api/candidato/recurso/:id/resposta-anexo', async (req, res) => {
@@ -1570,7 +1570,7 @@ app.get('/api/candidato/recurso/:id/resposta-anexo', async (req, res) => {
   const { rows } = await pool.query('SELECT r.resp_anexo_mime, r.resp_anexo_dados, r.resp_anexo_nome FROM recursos r JOIN candidatos k ON k.id=r.candidato_id WHERE r.id=$1 AND k.cpf=$2', [parseInt(req.params.id), cpf]);
   if (!rows.length || !rows[0].resp_anexo_dados) return res.status(404).send('Sem anexo.');
   res.setHeader('Content-Type', rows[0].resp_anexo_mime || 'application/octet-stream');
-  res.setHeader('Content-Disposition', 'inline; filename="' + (rows[0].resp_anexo_nome || 'anexo') + '"');
+  res.setHeader('Content-Disposition', dispo('inline', rows[0].resp_anexo_nome || 'anexo'));
   res.send(rows[0].resp_anexo_dados);
 });
 
@@ -1647,7 +1647,7 @@ app.get('/admin/recurso/:id/resposta-anexo', exigirSenha, async (req, res) => {
   const { rows } = await pool.query('SELECT resp_anexo_mime, resp_anexo_dados, resp_anexo_nome FROM recursos WHERE id=$1', [parseInt(req.params.id)]);
   if (!rows.length || !rows[0].resp_anexo_dados) return res.status(404).send('Sem anexo.');
   res.setHeader('Content-Type', rows[0].resp_anexo_mime || 'application/octet-stream');
-  res.setHeader('Content-Disposition', 'inline; filename="' + (rows[0].resp_anexo_nome || 'anexo') + '"');
+  res.setHeader('Content-Disposition', dispo('inline', rows[0].resp_anexo_nome || 'anexo'));
   res.send(rows[0].resp_anexo_dados);
 });
 app.get('/admin/recurso/:id/anexo', exigirSenha, async (req, res) => {
@@ -1655,7 +1655,7 @@ app.get('/admin/recurso/:id/anexo', exigirSenha, async (req, res) => {
   const { rows } = await pool.query('SELECT anexo_mime, anexo_dados, anexo_nome FROM recursos WHERE id=$1', [parseInt(req.params.id)]);
   if (!rows.length || !rows[0].anexo_dados) return res.status(404).send('Sem anexo.');
   res.setHeader('Content-Type', rows[0].anexo_mime || 'application/octet-stream');
-  res.setHeader('Content-Disposition', 'inline; filename="' + (rows[0].anexo_nome || 'anexo') + '"');
+  res.setHeader('Content-Disposition', dispo('inline', rows[0].anexo_nome || 'anexo'));
   res.send(rows[0].anexo_dados);
 });
 
@@ -1673,6 +1673,13 @@ app.post('/webhook/asaas', async (req, res) => {
 });
 
 // ---- Painel (senha) ----------------------------------------
+// Content-Disposition seguro: nomes de arquivo de candidatos podem ter acentos "decompostos" (Mac/iPhone),
+// travessões, emojis ou aspas, que o Node recusa no cabeçalho (erro 500). Manda um nome ASCII + o nome real em UTF-8.
+function dispo(tipo, nome) {
+  const n = String(nome || 'arquivo').normalize('NFC').replace(/[\r\n"]/g, ' ').trim().slice(0, 180) || 'arquivo';
+  const ascii = n.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7e]/g, '_').replace(/[\\;]/g, '_');
+  return tipo + '; filename="' + ascii + '"; filename*=UTF-8\'\'' + encodeURIComponent(n).replace(/['()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+}
 function exigirSenha(req, res, next) {
   const senha = process.env.ADMIN_PASSWORD;
   if (!senha) return res.status(503).send('Defina ADMIN_PASSWORD.');
@@ -2090,6 +2097,45 @@ function criarZip(res) {
   };
 }
 const MIME_EXT = { 'application/pdf': '.pdf', 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' };
+// ---- ZIP dos recursos: uma pasta por candidato com o texto do recurso e o anexo dele ----
+app.get('/admin/recursos/anexos.zip', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).send('Banco não configurado.');
+  const cid = parseInt(req.query.concurso) || 0;
+  const params = [cid]; let filtro = '';
+  if (req.query.fase) { params.push(parseInt(req.query.fase)); filtro += ' AND r.fase_id=$' + params.length; }
+  if (req.query.status) { params.push(String(req.query.status)); filtro += ' AND r.status=$' + params.length; }
+  const { rows } = await pool.query(`SELECT r.id, r.texto, r.status, r.criado_em, r.anexo_nome, r.anexo_mime, (r.anexo_dados IS NOT NULL) tem_anexo,
+      k.nome, k.cpf, k.protocolo, k.cargo, f.nome AS fase_nome
+    FROM recursos r JOIN candidatos k ON k.id=r.candidato_id LEFT JOIN recurso_fases f ON f.id=r.fase_id
+    WHERE r.concurso_id=$1${filtro} ORDER BY k.nome, r.id`, params);
+  if (!rows.length) return res.status(404).send('Nenhum recurso encontrado.');
+  const conc = await pool.query('SELECT titulo FROM concursos WHERE id=$1', [cid]);
+  const nomeZip = 'recursos - ' + zipNomeLimpo((conc.rows[0] || {}).titulo || 'concurso') + '.zip';
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', dispo('attachment', nomeZip));
+  const zip = criarZip(res);
+  const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+  const lista = [['Recurso nº', 'Candidato', 'CPF', 'Protocolo', 'Cargo', 'Fase', 'Enviado em', 'Situação', 'Anexo', 'Texto'].map(esc).join(';')];
+  for (const r of rows) {
+    const pasta = zipNomeLimpo(r.nome) + (r.protocolo ? ' - ' + zipNomeLimpo(r.protocolo) : '') + '/';
+    const quando = r.criado_em ? new Date(r.criado_em).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : '';
+    const txt = 'Recurso nº ' + r.id + '\r\nCandidato: ' + r.nome + '\r\nCPF: ' + (r.cpf || '') + '\r\nCargo: ' + (r.cargo || '') + '\r\nFase: ' + (r.fase_nome || '')
+      + '\r\nEnviado em: ' + quando + '\r\n\r\n' + String(r.texto || '').replace(/\r?\n/g, '\r\n');
+    await zip.add(pasta + 'recurso ' + r.id + ' - texto.txt', Buffer.from('\ufeff' + txt, 'utf8'));
+    let nomeAnexo = '';
+    if (r.tem_anexo) {
+      const a = await pool.query('SELECT anexo_dados FROM recursos WHERE id=$1', [r.id]);
+      const ext = MIME_EXT[r.anexo_mime] || '';
+      let base = zipNomeLimpo(String(r.anexo_nome || 'anexo').normalize('NFC'));
+      if (ext && !base.toLowerCase().endsWith(ext)) base += ext;
+      nomeAnexo = 'recurso ' + r.id + ' - ' + base;
+      await zip.add(pasta + nomeAnexo, a.rows[0].anexo_dados);
+    }
+    lista.push([r.id, r.nome, r.cpf, r.protocolo, r.cargo, r.fase_nome, quando, r.status, nomeAnexo || '(sem anexo)', r.texto].map(esc).join(';'));
+  }
+  await zip.add('lista de recursos.csv', Buffer.from('\ufeff' + lista.join('\r\n'), 'utf8'));
+  await zip.fim();
+});
 async function zipTitulos(res, where, params, nomeZip, comPlanilha) {
   const { rows } = await pool.query(`SELECT t.id, t.tipo, t.filename, t.mime, t.aval_status, t.aval_pontos, t.aval_obs,
       k.nome, k.cpf, k.cargo, k.protocolo

@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v38-config -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v39-recursos -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -496,6 +496,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
         <div style="display:flex;gap:8px">
           <select id="rec_f_fase" onchange="carregarRecursos()"><option value="">Todas as fases</option></select>
           <select id="rec_f_status" onchange="carregarRecursos()"><option value="">Todos</option><option value="pendente">Pendentes</option><option value="deferido">Deferidos</option><option value="indeferido">Indeferidos</option></select>
+          <button class="sec" onclick="recZip()">⬇️ Baixar recursos e anexos (.zip)</button>
         </div>
       </div>
       <div id="rec_lista" style="margin-top:12px"></div>
@@ -2148,6 +2149,10 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     limparFase(); carregarFases();
   }
   async function delFase(id){ if(!confirm('Excluir esta fase e TODOS os recursos interpostos nela?'))return; var r=await fetch('/admin/recurso-fase/'+id,{method:'DELETE'}); await r.json(); carregarFases(); carregarRecursos(); }
+  function recZip(){
+    if(!$('rec_concurso').value){ alert('Selecione o concurso.'); return; }
+    window.location.href='/admin/recursos/anexos.zip?concurso='+$('rec_concurso').value+'&fase='+encodeURIComponent($('rec_f_fase').value)+'&status='+encodeURIComponent($('rec_f_status').value);
+  }
   async function carregarRecursos(){
     if(!$('rec_concurso').value){ $('rec_lista').innerHTML='<p class="hint">Selecione um concurso.</p>'; return; }
     var p='concurso='+$('rec_concurso').value+'&fase='+encodeURIComponent($('rec_f_fase').value)+'&status='+encodeURIComponent($('rec_f_status').value);
