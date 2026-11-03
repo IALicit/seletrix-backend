@@ -605,7 +605,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'redacao-v7-separar', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'redacao-v8-desfazer', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -4243,6 +4243,18 @@ async function redHDistribuir(req, res) {
   res.json({ ok: true, atribuídas: novas, novas });
 }
 app.post('/admin/redacao/banca/:id/distribuir', exigirSenha, redHDistribuir);
+// Desfazer a distribuição: tira o corretor de todas as redações em que NINGUÉM corrigiu ainda,
+// para distribuir de novo (ex.: trocar sorteio por duplas fixas). Redações com alguma correção feita ficam como estão.
+async function redHDesfazer(req, res) {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const banca = await redBanca(req.params.id);
+  if (!banca) return res.status(404).json({ erro: 'Correção não encontrada.' });
+  const r = await pool.query(`DELETE FROM red_correcoes c WHERE c.banca_id=$1
+      AND NOT EXISTS (SELECT 1 FROM red_correcoes f WHERE f.texto_id=c.texto_id AND f.status='feita')`, [banca.id]);
+  const mantidas = (await pool.query(`SELECT COUNT(DISTINCT texto_id)::int n FROM red_correcoes WHERE banca_id=$1`, [banca.id])).rows[0].n;
+  res.json({ ok: true, removidas: r.rowCount, redacoes_mantidas: mantidas });
+}
+app.post('/admin/redacao/banca/:id/desfazer', exigirSenha, redHDesfazer);
 // Lista de redações da correção, com quem corrige cada uma (para conferência e ajuste manual).
 async function redHTextos(req, res) {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
@@ -4390,6 +4402,7 @@ function redSupComo(handler, extra) {
   };
 }
 app.post('/api/redacao/sup/distribuir', redSupComo(redHDistribuir));
+app.post('/api/redacao/sup/desfazer', redSupComo(redHDesfazer));
 app.post('/api/redacao/sup/configurar', redSupComo(redHBanca));
 app.post('/api/redacao/sup/remanejar', redSupComo(redHRemanejar));
 app.post('/api/redacao/sup/trocar', redSupComo(redHTrocarProf, 'correcao'));

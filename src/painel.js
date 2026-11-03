@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v40-separar -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v41-desfazer -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -647,7 +647,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
           <button class="sec" onclick="rdMontarDuplas()">Montar duplas</button>
           <div id="rd_duplas" style="margin-top:10px"></div>
         </div>
-        <div style="margin-top:12px"><button onclick="rdDistribuir()">Distribuir redações</button></div>
+        <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap"><button onclick="rdDistribuir()">Distribuir redações</button><button class="sec" onclick="rdDesfazer()">Desfazer distribuição</button></div>
       </div>
       <div class="card">
         <h3 style="color:var(--navy);margin-bottom:6px">3. Ajustes (remanejar)</h3>
@@ -2608,6 +2608,11 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var opt=function(sel){ return '<option value="">—</option>'+ids.map(function(id){return '<option value="'+id+'"'+(id===sel?' selected':'')+'>'+esc(nomes[id]||id)+'</option>';}).join(''); };
     $('rd_duplas').innerHTML=(ids.length%2?'<p class="hint" style="color:#b91c1c">Há '+ids.length+' professores marcados (número ímpar). Marque ou desmarque um para formar as duplas.</p>':'')
       +pares.map(function(d,k){ return '<div class="rd-dupla" style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><b style="width:70px">Dupla '+(k+1)+'</b><select class="rd-d1" style="flex:1">'+opt(d[0])+'</select><select class="rd-d2" style="flex:1">'+opt(d[1])+'</select></div>'; }).join('');
+  }
+  async function rdDesfazer(){
+    if(!RD_BANCA) return;
+    if(!confirm('Desfazer a distribuição? Todas as redações que ninguém corrigiu ainda ficam sem corretor.')) return;
+    try{ var j=await rdJson(await fetch('/admin/redacao/banca/'+RD_BANCA.id+'/desfazer',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})); alert(j.removidas+' correção(ões) desfeita(s).'); rdResumo(); }catch(e){ alert(e.message); }
   }
   async function rdDistribuir(){
     var ids=Array.prototype.map.call(document.querySelectorAll('.rd-pf:checked'),function(x){return parseInt(x.value);});
