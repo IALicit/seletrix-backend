@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v41-desfazer -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v42-senhas -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -554,6 +554,11 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       <div class="grid2" style="margin-top:8px"><div><label>Disciplina (opcional)</label><input id="pfi_disc" placeholder="Ex.: Redação"></div></div>
       <div style="margin-top:12px"><button onclick="pfImportar()">Importar</button> <span class="hint" id="pfi_status"></span></div>
       <div id="pfi_res" style="margin-top:12px"></div>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--navy);margin-bottom:6px">Logins e senhas para enviar aos professores</h3>
+      <p class="hint" style="margin-bottom:10px">As senhas ficam guardadas de forma protegida e não podem ser vistas depois. Para entregar os acessos, marque os professores e gere <b>senhas novas</b>: o sistema baixa uma planilha com nome, e-mail (login), senha e o endereço de acesso. A senha antiga de quem for marcado deixa de valer.</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="sec" onclick="pfMarcarTodos(true)">Marcar todos</button><button class="sec" onclick="pfMarcarTodos(false)">Desmarcar todos</button><button onclick="pfNovasSenhas()">Gerar senhas novas e baixar planilha</button></div>
     </div>
     <div class="card"><div id="pf_lista"></div></div>
   </section>
@@ -2335,7 +2340,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     var d=await (await fetch('/admin/professores.json?empresa='+EMPRESA_ID)).json();
     PROFESSORES=d.professores;
     $('pf_lista').innerHTML = d.professores.length ? d.professores.map(function(p){
-      return '<div class="conc"><div><b>'+esc(p.nome)+'</b>'+(p.ativo?'':' <span class="tag">inativo</span>')+(p.supervisor?' <span class="tag">supervisor</span>':'')+'<div class="meta">'+esc(p.email)+(p.disciplina?(' &middot; '+esc(p.disciplina)):'')+' &middot; '+p.questoes+' questão(ões)</div></div>'
+      return '<div class="conc"><div><label style="display:inline-flex;align-items:center;gap:8px;margin:0"><input type="checkbox" class="pf-sel" value="'+p.id+'" style="width:auto"><b>'+esc(p.nome)+'</b></label>'+(p.ativo?'':' <span class="tag">inativo</span>')+(p.supervisor?' <span class="tag">supervisor</span>':'')+'<div class="meta">'+esc(p.email)+(p.disciplina?(' &middot; '+esc(p.disciplina)):'')+' &middot; '+p.questoes+' questão(ões)</div></div>'
         +'<div class="row-actions"><button class="mini" onclick="editarProfessor('+p.id+')">Editar</button><button class="del" onclick="delProfessor('+p.id+')">Excluir</button></div></div>';
     }).join('') : '<p class="hint">Nenhum professor cadastrado nesta empresa.</p>';
   }
@@ -2365,6 +2370,17 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
         +PFI_RES.map(function(x){return '<tr style="border-top:1px solid #eef2f6"><td>'+esc(x.nome)+'</td><td>'+esc(x.email)+'</td><td><b>'+esc(x.senha||'')+'</b></td><td>'+esc(x.situacao)+'</td></tr>';}).join('')+'</table>';
       $('pfi_txt').value=''; carregarProfessores();
     }catch(e){ $('pfi_status').textContent=''; alert(e.message); }
+  }
+  function pfMarcarTodos(v){ document.querySelectorAll('.pf-sel').forEach(function(x){x.checked=v;}); }
+  async function pfNovasSenhas(){
+    var ids=Array.prototype.map.call(document.querySelectorAll('.pf-sel:checked'),function(x){return parseInt(x.value);});
+    if(!ids.length){ alert('Marque os professores na lista abaixo.'); return; }
+    if(!confirm('Gerar senhas novas para '+ids.length+' professor(es)? A senha antiga deles deixa de valer.')) return;
+    try{
+      var r=await fetch('/admin/professores/novas-senhas',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:ids})});
+      var j=await r.json(); if(!r.ok) throw new Error(j.erro||'Erro');
+      PFI_RES=j.resultado; pfBaixarSenhas(); alert(j.resultado.length+' senha(s) gerada(s). A planilha foi baixada.');
+    }catch(e){ alert(e.message); }
   }
   function pfBaixarSenhas(){
     var q=function(v){return '"'+String(v==null?'':v).replace(/"/g,'""')+'"';};

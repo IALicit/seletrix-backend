@@ -605,7 +605,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'redacao-v8-desfazer', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'senhas-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -4556,6 +4556,20 @@ app.post('/admin/professor', exigirSenha, async (req, res) => {
   res.json({ ok: true, id: r.rows[0].id });
 });
 // Importação em lote: cada linha "Nome; e-mail". Cria quem ainda não existe, com senha gerada (devolvida uma única vez).
+// Gera senhas novas para os professores marcados (a senha antiga deixa de valer) e devolve a lista uma única vez.
+app.post('/admin/professores/novas-senhas', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const ids = (Array.isArray((req.body || {}).ids) ? req.body.ids : []).map((x) => parseInt(x)).filter(Boolean);
+  if (!ids.length) return res.status(400).json({ erro: 'Marque pelo menos um professor.' });
+  const { rows } = await pool.query('SELECT id,nome,email FROM professores WHERE id = ANY($1::int[]) ORDER BY nome', [ids]);
+  const out = [];
+  for (const p of rows) {
+    const senha = senhaProvisoria();
+    await pool.query('UPDATE professores SET senha_hash=$1 WHERE id=$2', [hashSenha(senha), p.id]);
+    out.push({ nome: p.nome, email: p.email, senha, situacao: 'senha nova' });
+  }
+  res.json({ ok: true, resultado: out });
+});
 app.post('/admin/professores/importar', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
   const b = req.body || {}; const emp = parseInt(b.empresa_id) || null;
