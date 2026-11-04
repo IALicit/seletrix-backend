@@ -73,10 +73,21 @@
   </div>
 </div>
 
+<div class="center" id="tela_senha" style="display:none">
+  <div class="card" style="max-width:420px;width:100%">
+    <h2>Crie a sua senha</h2>
+    <p class="leg" id="ts_leg">Este é o seu primeiro acesso. Crie uma senha pessoal para continuar (mínimo 6 caracteres).</p>
+    <label>Nova senha</label><input id="ts_nova" type="password" autocomplete="new-password">
+    <label>Repita a nova senha</label><input id="ts_nova2" type="password" autocomplete="new-password">
+    <div style="margin-top:16px;display:flex;gap:8px"><button id="ts_btn" onclick="trocarSenha()" style="flex:1">Salvar senha</button><button class="sec" id="ts_cancel" onclick="voltarBancas()" style="display:none">Cancelar</button></div>
+    <div class="erro" id="ts_erro"></div>
+  </div>
+</div>
+
 <div id="tela_bancas" style="display:none">
   <header class="topo">
     <div><div class="marca">Correção de Redações</div><div class="sub" id="b_nome"></div></div>
-    <div><a href="#" onclick="sair();return false">Sair ↩</a></div>
+    <div><a href="#" onclick="abrirTrocaSenha(false);return false">Trocar senha</a><a href="#" onclick="sair();return false">Sair ↩</a></div>
   </header>
   <div class="container">
     <div id="b_lista"></div>
@@ -211,7 +222,7 @@ async function api(url, extra){
   if(!r.ok) throw new Error(j.erro||'Erro de comunicação. Tente de novo.');
   return j;
 }
-function mostrar(t){ ['tela_login','tela_bancas','tela_corr','tela_sup'].forEach(function(x){ $(x).style.display = x===t ? '' : 'none'; }); }
+function mostrar(t){ ['tela_login','tela_bancas','tela_corr','tela_sup','tela_senha'].forEach(function(x){ $(x).style.display = x===t ? '' : 'none'; }); }
 
 async function entrar(){
   $('login_erro').style.display='none';
@@ -228,7 +239,28 @@ async function entrar(){
 }
 function sair(){ SES=null; try{ sessionStorage.removeItem('red_ses'); }catch(e){} $('in_senha').value=''; mostrar('tela_login'); }
 async function voltarBancas(){ try{ mostrarBancas(await api('/api/redacao/bancas')); }catch(e){ alert(e.message); } }
+function abrirTrocaSenha(obrigatoria){
+  mostrar('tela_senha'); $('ts_nova').value=''; $('ts_nova2').value=''; $('ts_erro').style.display='none';
+  $('ts_leg').textContent = obrigatoria ? 'Este é o seu primeiro acesso. Crie uma senha pessoal para continuar (mínimo 6 caracteres).' : 'Escolha a sua nova senha (mínimo 6 caracteres).';
+  $('ts_cancel').style.display = obrigatoria ? 'none' : '';
+  setTimeout(function(){ $('ts_nova').focus(); },50);
+}
+async function trocarSenha(){
+  var n=$('ts_nova').value, n2=$('ts_nova2').value; $('ts_erro').style.display='none';
+  var e=function(m){ $('ts_erro').textContent=m; $('ts_erro').style.display='block'; };
+  if(n.length<6) return e('A senha precisa ter pelo menos 6 caracteres.');
+  if(n!==n2) return e('As duas senhas não são iguais.');
+  $('ts_btn').disabled=true;
+  try{
+    await api('/api/professor/senha',{nova:n});
+    SES.senha=n; try{ sessionStorage.setItem('red_ses', JSON.stringify(SES)); }catch(x){}
+    alert('Senha alterada! Use a nova senha nos próximos acessos.');
+    await voltarBancas();
+  }catch(x){ e(x.message); }
+  $('ts_btn').disabled=false;
+}
 function mostrarBancas(j){
+  if(j.trocar_senha){ abrirTrocaSenha(true); return; }
   mostrar('tela_bancas');
   $('b_nome').textContent = j.nome ? ('Olá, ' + j.nome) : '';
   var sup='';
@@ -500,6 +532,7 @@ async function supAtribuir(cid, quem){
   try{ await api('/api/redacao/sup/atribuir',{banca_id:SUP_ID, correcao_id:cid, professor_id:pid}); await supCarregar(); }catch(e){ alert(e.message); }
 }
 $('in_senha').addEventListener('keydown',function(e){ if(e.key==='Enter') entrar(); });
+$('ts_nova2').addEventListener('keydown',function(e){ if(e.key==='Enter') trocarSenha(); });
 (function(){
   try{ var s=JSON.parse(sessionStorage.getItem('red_ses')||'null'); if(s&&s.email){ SES=s; voltarBancas(); return; } }catch(e){}
   mostrar('tela_login');

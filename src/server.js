@@ -257,6 +257,7 @@ async function inicializarBanco() {
     corrigido_em TIMESTAMPTZ, criado_em TIMESTAMPTZ DEFAULT now(), UNIQUE(texto_id, ordem));`);
   await pool.query('CREATE INDEX IF NOT EXISTS red_corr_prof ON red_correcoes (banca_id, professor_id, status)');
   await pool.query('ALTER TABLE professores ADD COLUMN IF NOT EXISTS supervisor BOOLEAN DEFAULT FALSE');
+  await pool.query('ALTER TABLE professores ADD COLUMN IF NOT EXISTS trocar_senha BOOLEAN DEFAULT FALSE');
   await pool.query("ALTER TABLE red_bancas ADD COLUMN IF NOT EXISTS duplas TEXT DEFAULT '[]'");
   {
     const pri = await pool.query('SELECT id FROM empresas ORDER BY id LIMIT 1');
@@ -605,7 +606,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'senhas-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'senhas-v2', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -4364,6 +4365,7 @@ async function redSupBanca(req, res) {
   if (!pool) { res.status(503).json({ erro: 'Indisponível.' }); return null; }
   const p = await autenticaProfessor(req.body);
   if (!p) { res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' }); return null; }
+  if (p.trocar_senha) { res.status(403).json({ erro: 'Crie a sua senha pessoal antes de continuar.', trocar_senha: true }); return null; }
   if (!p.supervisor) { res.status(403).json({ erro: 'Acesso só para supervisor.' }); return null; }
   const banca = await redBanca((req.body || {}).banca_id);
   if (!banca || (banca.empresa_id || null) !== (p.empresa_id || null)) { res.status(404).json({ erro: 'Correção não encontrada.' }); return null; }
@@ -4465,12 +4467,13 @@ app.post('/api/redacao/bancas', async (req, res) => {
       FROM red_bancas b WHERE b.empresa_id IS NOT DISTINCT FROM $1 ORDER BY b.id DESC`, [p.empresa_id]);
     sup = sb.rows;
   }
-  res.json({ nome: p.nome, bancas: rows, supervisor: !!p.supervisor, sup_bancas: sup });
+  res.json({ nome: p.nome, bancas: rows, supervisor: !!p.supervisor, sup_bancas: sup, trocar_senha: !!p.trocar_senha });
 });
 app.post('/api/redacao/proxima', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
   const p = await autenticaProfessor(req.body);
   if (!p) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
+  if (p.trocar_senha) return res.status(403).json({ erro: 'Crie a sua senha pessoal antes de continuar.', trocar_senha: true });
   const banca = await redBanca((req.body || {}).banca_id);
   if (!banca) return res.status(404).json({ erro: 'Correção não encontrada.' });
   const { rows } = await pool.query(`SELECT c.*, t.seq FROM red_correcoes c JOIN red_textos t ON t.id=c.texto_id
@@ -4486,6 +4489,7 @@ app.post('/api/redacao/abrir', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
   const p = await autenticaProfessor(req.body);
   if (!p) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
+  if (p.trocar_senha) return res.status(403).json({ erro: 'Crie a sua senha pessoal antes de continuar.', trocar_senha: true });
   const c = await redProfCorrecao(p, (req.body || {}).correcao_id);
   if (!c) return res.status(404).json({ erro: 'Redação não encontrada.' });
   const banca = await redBanca(c.banca_id);
@@ -4495,6 +4499,7 @@ app.post('/api/redacao/minhas', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
   const p = await autenticaProfessor(req.body);
   if (!p) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
+  if (p.trocar_senha) return res.status(403).json({ erro: 'Crie a sua senha pessoal antes de continuar.', trocar_senha: true });
   const { rows } = await pool.query(`SELECT c.id, t.seq, c.status, c.total, c.zero_motivo, c.ordem, c.corrigido_em
     FROM red_correcoes c JOIN red_textos t ON t.id=c.texto_id WHERE c.banca_id=$1 AND c.professor_id=$2 ORDER BY t.seq`,
     [parseInt((req.body || {}).banca_id) || 0, p.id]);
@@ -4504,6 +4509,7 @@ app.post('/api/redacao/salvar', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
   const p = await autenticaProfessor(req.body);
   if (!p) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
+  if (p.trocar_senha) return res.status(403).json({ erro: 'Crie a sua senha pessoal antes de continuar.', trocar_senha: true });
   const b = req.body || {};
   const c = await redProfCorrecao(p, b.correcao_id);
   if (!c) return res.status(404).json({ erro: 'Redação não encontrada.' });
@@ -4569,6 +4575,28 @@ app.post('/admin/professores/novas-senhas', exigirSenha, async (req, res) => {
     out.push({ nome: p.nome, email: p.email, senha, situacao: 'senha nova' });
   }
   res.json({ ok: true, resultado: out });
+});
+// O próprio professor troca a senha (obrigatório no primeiro acesso quando a coordenação deu uma senha inicial igual para todos).
+app.post('/api/professor/senha', async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
+  const p = await autenticaProfessor(req.body);
+  if (!p) return res.status(401).json({ erro: 'Senha atual incorreta.' });
+  const nova = String((req.body || {}).nova || '');
+  if (nova.length < 6) return res.status(400).json({ erro: 'A nova senha precisa ter pelo menos 6 caracteres.' });
+  if (nova === String(req.body.senha || '')) return res.status(400).json({ erro: 'A nova senha precisa ser diferente da atual.' });
+  if (/^(\d)\1+$/.test(nova) || ['123456', '1234567', '12345678', '654321', 'senha123', 'abcdef'].includes(nova.toLowerCase())) return res.status(400).json({ erro: 'Escolha uma senha menos óbvia.' });
+  await pool.query('UPDATE professores SET senha_hash=$1, trocar_senha=FALSE WHERE id=$2', [hashSenha(nova), p.id]);
+  res.json({ ok: true });
+});
+// Senha inicial igual para os marcados: no primeiro acesso cada um é obrigado a criar a sua.
+app.post('/admin/professores/senha-inicial', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const ids = (Array.isArray((req.body || {}).ids) ? req.body.ids : []).map((x) => parseInt(x)).filter(Boolean);
+  const senha = String((req.body || {}).senha || '');
+  if (!ids.length) return res.status(400).json({ erro: 'Marque pelo menos um professor.' });
+  if (senha.length < 6) return res.status(400).json({ erro: 'A senha inicial precisa ter pelo menos 6 caracteres.' });
+  const r = await pool.query('UPDATE professores SET senha_hash=$1, trocar_senha=TRUE WHERE id = ANY($2::int[])', [hashSenha(senha), ids]);
+  res.json({ ok: true, alterados: r.rowCount });
 });
 app.post('/admin/professores/importar', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });

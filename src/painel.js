@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v42-senhas -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v43-senha-inicial -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -559,6 +559,11 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
       <h3 style="color:var(--navy);margin-bottom:6px">Logins e senhas para enviar aos professores</h3>
       <p class="hint" style="margin-bottom:10px">As senhas ficam guardadas de forma protegida e não podem ser vistas depois. Para entregar os acessos, marque os professores e gere <b>senhas novas</b>: o sistema baixa uma planilha com nome, e-mail (login), senha e o endereço de acesso. A senha antiga de quem for marcado deixa de valer.</p>
       <div style="display:flex;gap:10px;flex-wrap:wrap"><button class="sec" onclick="pfMarcarTodos(true)">Marcar todos</button><button class="sec" onclick="pfMarcarTodos(false)">Desmarcar todos</button><button onclick="pfNovasSenhas()">Gerar senhas novas e baixar planilha</button></div>
+      <div style="border-top:1px solid #e5edf2;margin-top:14px;padding-top:12px">
+        <b style="color:var(--navy)">Ou: senha inicial igual para todos</b>
+        <p class="hint" style="margin:4px 0 8px">Os marcados recebem a mesma senha inicial. No primeiro acesso, o sistema obriga cada professor a criar a senha dele antes de corrigir. Use uma senha inicial que não seja óbvia (ex.: CPII2026) e mande só para os corretores.</p>
+        <div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap"><div><label>Senha inicial</label><input id="pf_senha_ini" placeholder="mín. 6 caracteres"></div><button onclick="pfSenhaInicial()">Definir senha inicial para os marcados</button></div>
+      </div>
     </div>
     <div class="card"><div id="pf_lista"></div></div>
   </section>
@@ -2370,6 +2375,14 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
         +PFI_RES.map(function(x){return '<tr style="border-top:1px solid #eef2f6"><td>'+esc(x.nome)+'</td><td>'+esc(x.email)+'</td><td><b>'+esc(x.senha||'')+'</b></td><td>'+esc(x.situacao)+'</td></tr>';}).join('')+'</table>';
       $('pfi_txt').value=''; carregarProfessores();
     }catch(e){ $('pfi_status').textContent=''; alert(e.message); }
+  }
+  async function pfSenhaInicial(){
+    var ids=Array.prototype.map.call(document.querySelectorAll('.pf-sel:checked'),function(x){return parseInt(x.value);});
+    var senha=$('pf_senha_ini').value;
+    if(!ids.length){ alert('Marque os professores na lista abaixo.'); return; }
+    if(senha.length<6){ alert('A senha inicial precisa ter pelo menos 6 caracteres.'); return; }
+    if(!confirm('Definir a senha inicial para '+ids.length+' professor(es)? A senha atual deles deixa de valer e, no primeiro acesso, cada um cria a sua.')) return;
+    try{ var r=await fetch('/admin/professores/senha-inicial',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:ids,senha:senha})}); var j=await r.json(); if(!r.ok) throw new Error(j.erro||'Erro'); alert(j.alterados+' professor(es) com a senha inicial definida.'); }catch(e){ alert(e.message); }
   }
   function pfMarcarTodos(v){ document.querySelectorAll('.pf-sel').forEach(function(x){x.checked=v;}); }
   async function pfNovasSenhas(){
