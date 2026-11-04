@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v43-senha-inicial -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v44-travar -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -624,6 +624,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
         <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
           <button class="sec" onclick="rdResumo()">Atualizar</button>
           <button class="sec" onclick="rdCsv()">Baixar resultado (planilha)</button>
+          <button class="sec" id="rd_btn_trava" onclick="rdTravar()">Travar para os corretores</button>
           <button class="sec" id="rd_btn_enc" onclick="rdEncerrar()">Encerrar correção</button>
           <button class="del" onclick="rdExcluir()">Excluir correção</button>
         </div>
@@ -2491,6 +2492,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     $('rd_painel').style.display='block';
     if($('rd_mv_dest')) $('rd_mv_dest').innerHTML='<option value="">Escolha...</option>'+RD_BANCAS.filter(function(b){return b.id!==RD_BANCA.id;}).map(function(b){return '<option value="'+b.id+'">'+esc(b.titulo)+' ('+b.textos+')</option>';}).join('');
     $('rd_btn_enc').textContent = RD_BANCA.encerrada ? 'Reabrir correção' : 'Encerrar correção';
+    $('rd_btn_trava').textContent = RD_BANCA.pausada ? 'Liberar para os corretores' : 'Travar para os corretores';
     rdResumo();
   }
   function rdNova(){
@@ -2663,6 +2665,11 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     }catch(e){ alert(e.message); }
   }
   function rdCsv(){ location.href='/admin/redacao/banca/'+RD_BANCA.id+'/resultado.csv'; }
+  async function rdTravar(){
+    if(!RD_BANCA) return; var v=!RD_BANCA.pausada;
+    if(!confirm(v?'Travar esta correção para os corretores?':'Liberar esta correção para os corretores?')) return;
+    try{ await rdJson(await fetch('/admin/redacao/banca/'+RD_BANCA.id+'/pausar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pausada:v})})); carregarRedacoes(RD_BANCA.id); }catch(e){ alert(e.message); }
+  }
   async function rdEncerrar(){
     var enc=!RD_BANCA.encerrada;
     if(!confirm(enc?'Encerrar? Os professores não poderão mais lançar nem alterar notas.':'Reabrir para os professores?')) return;

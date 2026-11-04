@@ -100,6 +100,7 @@
     <div><a href="#" onclick="supCarregar();return false">Atualizar ↻</a><a href="#" onclick="voltarBancas();return false">← Voltar</a><a href="#" onclick="sair();return false">Sair ↩</a></div>
   </header>
   <div class="container" style="max-width:1000px">
+    <div class="card" id="s_trava" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap"></div>
     <div class="card"><h3>Andamento</h3><div class="nums" id="s_nums"></div><div class="barra"><div id="s_barra" style="width:0"></div></div></div>
     <div class="card"><h3>3ª correção</h3>
       <p class="leg">Redações em que as duas notas ficaram muito diferentes. Escolha quem faz a 3ª correção, ou clique em <b>Eu corrijo</b> — ela aparece na sua lista de correção.</p>
@@ -269,7 +270,7 @@ function mostrarBancas(j){
       var pct = b.total ? Math.round(b.feitas*100/b.total) : 0;
       return '<div class="card"><div class="banca"><div style="flex:1;min-width:220px"><h3 style="margin:0">'+esc(b.titulo)+'</h3>'
         +'<div class="hint" style="margin-top:4px">'+b.textos+' redações · '+b.feitas+' de '+b.total+' correções feitas'
-        +(b.terceiras_sem_prof?(' · <b style="color:#8a5300">'+b.terceiras_sem_prof+' 3ª correção(ões) aguardando você definir</b>'):'')+(b.encerrada?' · <b>encerrada</b>':'')+'</div>'
+        +(b.terceiras_sem_prof?(' · <b style="color:#8a5300">'+b.terceiras_sem_prof+' 3ª correção(ões) aguardando você definir</b>'):'')+(b.encerrada?' · <b>encerrada</b>':'')+(b.pausada?' · <span class="tag t3">travada para os corretores</span>':'')+'</div>'
         +'<div class="barra"><div style="width:'+pct+'%"></div></div></div>'
         +'<button onclick="supAbrir('+b.id+')">Acompanhar</button></div></div>';
     }).join('') : '<div class="card"><p class="hint">Nenhuma correção cadastrada ainda.</p></div>')
@@ -280,9 +281,9 @@ function mostrarBancas(j){
     var pct = b.total ? Math.round(b.feitas*100/b.total) : 0;
     var falta = b.total - b.feitas;
     return '<div class="card"><div class="banca"><div style="flex:1;min-width:220px"><h3 style="margin:0">'+esc(b.titulo)+'</h3>'
-      +'<div class="hint" style="margin-top:4px">'+b.feitas+' de '+b.total+' corrigidas'+(falta?(' · faltam '+falta):'')+(b.encerrada?' · <b>encerrada</b>':'')+'</div>'
+      +'<div class="hint" style="margin-top:4px">'+b.feitas+' de '+b.total+' corrigidas'+(falta?(' · faltam '+falta):'')+(b.encerrada?' · <b>encerrada</b>':'')+(b.pausada?' · <b>aguardando liberação da supervisão</b>':'')+'</div>'
       +'<div class="barra"><div style="width:'+pct+'%"></div></div></div>'
-      +'<button onclick="iniciar('+b.id+')">'+(b.encerrada?'Ver':(falta?'Corrigir':'Revisar'))+'</button></div></div>';
+      +(b.pausada && !j.supervisor ? '<button disabled>Ainda não liberada</button>' : '<button onclick="iniciar('+b.id+')">'+(b.encerrada?'Ver':(falta?'Corrigir':'Revisar'))+'</button>')+'</div></div>';
   }).join('');
 }
 
@@ -409,6 +410,9 @@ async function supCarregar(){
   try{
     var j=await api('/api/redacao/sup/resumo',{banca_id:SUP_ID}); SUP=j; SUP_TEXTOS=null; supPreencherGestao(); scPreencher();
     $('s_titulo').textContent=j.banca.titulo+(j.banca.encerrada?' — encerrada':'');
+    $('s_trava').innerHTML = j.banca.pausada
+      ? '<div><b style="color:#8a5300">Correção TRAVADA para os corretores.</b><div class="hint">Eles veem a correção, mas não conseguem abrir as redações. Você pode configurar e distribuir normalmente.</div></div><button onclick="supTravar(false)">Liberar para os corretores</button>'
+      : '<div><b style="color:#0f6b41">Correção LIBERADA para os corretores.</b><div class="hint">Os corretores já podem abrir e corrigir as redações distribuídas.</div></div><button class="sec" onclick="supTravar(true)">Travar correção</button>';
     var pend3=j.terceiras.filter(function(t){return t.status!=='feita';}).length;
     $('s_nums').innerHTML=
       '<div><b>'+j.textos+'</b><span>redações</span></div>'
@@ -499,6 +503,10 @@ async function supDistribuir(){
 async function supDesfazer(){
   if(!confirm('Desfazer a distribuição? Todas as redações que ninguém corrigiu ainda ficam sem corretor, para você distribuir de novo.')) return;
   try{ var j=await api('/api/redacao/sup/desfazer',{banca_id:SUP_ID}); alert(j.removidas+' correção(ões) desfeita(s).'+(j.redacoes_mantidas?(' '+j.redacoes_mantidas+' redação(ões) com nota já dada continuam como estavam.'):'')+' Agora é só distribuir de novo.'); await supCarregar(); }catch(e){ alert(e.message); }
+}
+async function supTravar(v){
+  if(!confirm(v?'Travar esta correção? Os corretores não vão conseguir abrir as redações até você liberar.':'Liberar esta correção para os corretores?')) return;
+  try{ await api('/api/redacao/sup/pausar',{banca_id:SUP_ID,pausada:v}); await supCarregar(); }catch(e){ alert(e.message); }
 }
 async function supRemanejar(){
   var de=$('s_de').value, para=$('s_para').value, q=parseInt($('s_qtd').value)||0;
