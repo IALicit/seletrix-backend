@@ -90,7 +90,7 @@ async function servirVitrine(req, res) {
 app.get('/', servirVitrine);
 app.get('/index.html', servirVitrine);
 
-app.use(express.static(path.join(__dirname, '..', 'public')));
+app.use(express.static(path.join(__dirname, '..', 'public'), { setHeaders: (res, f) => { if (f.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate'); } }));
 
 // ---- Banco --------------------------------------------------
 const temBanco = !!process.env.DATABASE_URL;
@@ -607,7 +607,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'redacao-v9-travar', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'redacao-v10-senha', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -4563,7 +4563,7 @@ app.post('/admin/professor', exigirSenha, async (req, res) => {
   if (b.id) {
     if (senha) {
       if (senha.length < 6) return res.status(400).json({ erro: 'A senha deve ter ao menos 6 caracteres.' });
-      await pool.query('UPDATE professores SET nome=$1,email=$2,disciplina=$3,ativo=$4,empresa_id=$5,senha_hash=$6 WHERE id=$7', [nome, email, disc, b.ativo !== false, emp, hashSenha(senha), b.id]);
+      await pool.query('UPDATE professores SET nome=$1,email=$2,disciplina=$3,ativo=$4,empresa_id=$5,senha_hash=$6,trocar_senha=FALSE WHERE id=$7', [nome, email, disc, b.ativo !== false, emp, hashSenha(senha), b.id]);
     } else {
       await pool.query('UPDATE professores SET nome=$1,email=$2,disciplina=$3,ativo=$4,empresa_id=$5 WHERE id=$6', [nome, email, disc, b.ativo !== false, emp, b.id]);
     }
@@ -4584,7 +4584,7 @@ app.post('/admin/professores/novas-senhas', exigirSenha, async (req, res) => {
   const out = [];
   for (const p of rows) {
     const senha = senhaProvisoria();
-    await pool.query('UPDATE professores SET senha_hash=$1 WHERE id=$2', [hashSenha(senha), p.id]);
+    await pool.query('UPDATE professores SET senha_hash=$1, trocar_senha=FALSE WHERE id=$2', [hashSenha(senha), p.id]);
     out.push({ nome: p.nome, email: p.email, senha, situacao: 'senha nova' });
   }
   res.json({ ok: true, resultado: out });

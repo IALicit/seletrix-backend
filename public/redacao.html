@@ -220,6 +220,7 @@ async function api(url, extra){
   var r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   var j={}; try{ j=await r.json(); }catch(e){}
   if(r.status===401 && SES){ sair(); throw new Error(j.erro||'Sessão expirada.'); }
+  if(j && j.trocar_senha && url!=='/api/professor/senha'){ abrirTrocaSenha(true); var q=new Error(''); q.quieto=true; throw q; }
   if(!r.ok) throw new Error(j.erro||'Erro de comunicação. Tente de novo.');
   return j;
 }
@@ -235,11 +236,11 @@ async function entrar(){
     var j=await api('/api/redacao/bancas');
     try{ sessionStorage.setItem('red_ses', JSON.stringify(SES)); }catch(e){}
     mostrarBancas(j);
-  }catch(e){ SES=null; $('login_erro').textContent=e.message; $('login_erro').style.display='block'; }
+  }catch(e){ if(e.quieto){ try{ sessionStorage.setItem('red_ses', JSON.stringify(SES)); }catch(x){} $('btn_entrar').disabled=false; return; } SES=null; $('login_erro').textContent=e.message; $('login_erro').style.display='block'; }
   $('btn_entrar').disabled=false;
 }
 function sair(){ SES=null; try{ sessionStorage.removeItem('red_ses'); }catch(e){} $('in_senha').value=''; mostrar('tela_login'); }
-async function voltarBancas(){ try{ mostrarBancas(await api('/api/redacao/bancas')); }catch(e){ alert(e.message); } }
+async function voltarBancas(){ try{ mostrarBancas(await api('/api/redacao/bancas')); }catch(e){ if(!e.quieto) alert(e.message); } }
 function abrirTrocaSenha(obrigatoria){
   mostrar('tela_senha'); $('ts_nova').value=''; $('ts_nova2').value=''; $('ts_erro').style.display='none';
   $('ts_leg').textContent = obrigatoria ? 'Este é o seu primeiro acesso. Crie uma senha pessoal para continuar (mínimo 6 caracteres).' : 'Escolha a sua nova senha (mínimo 6 caracteres).';
@@ -299,11 +300,11 @@ async function proxima(){
       return;
     }
     carregar(j);
-  }catch(e){ alert(e.message); }
+  }catch(e){ (e.quieto||alert(e.message)); }
 }
 async function abrir(cid){
   fecharMinhas();
-  try{ var j=await api('/api/redacao/abrir',{correcao_id:cid}); mostrar('tela_corr'); carregar(j); }catch(e){ alert(e.message); }
+  try{ var j=await api('/api/redacao/abrir',{correcao_id:cid}); mostrar('tela_corr'); carregar(j); }catch(e){ (e.quieto||alert(e.message)); }
 }
 function carregar(j){
   ATUAL=j; $('c_fim').style.display='none'; $('c_corpo').style.display='';
@@ -401,7 +402,7 @@ async function abrirMinhas(){
       return '<div class="it" onclick="abrir('+c.id+')"><span>Redação nº '+c.seq+(c.terceira?' <span class="tag t3">3ª</span>':'')+'</span>'+st+'</div>';
     }).join('') : '<p class="hint">Nenhuma.</p>';
     $('modal').style.display='flex';
-  }catch(e){ alert(e.message); }
+  }catch(e){ (e.quieto||alert(e.message)); }
 }
 function fecharMinhas(){ $('modal').style.display='none'; }
 var SUP_ID=null, SUP=null;
@@ -436,7 +437,7 @@ async function supCarregar(){
     $('s_profs').innerHTML = j.professores.length ? '<table class="t"><tr><th>Professor</th><th>Recebidas</th><th>Corrigidas</th><th>Faltam</th><th>3ªs</th></tr>'
       + j.professores.map(function(p){ return '<tr><td>'+esc(p.nome)+(p.ativo?'':' <span class="hint">(inativo)</span>')+'</td><td>'+p.total+'</td><td>'+p.feitas+'</td><td>'+p.pendentes+'</td><td>'+p.terceiras+'</td></tr>'; }).join('')+'</table>'
       : '<p class="hint">As redações ainda não foram distribuídas.</p>';
-  }catch(e){ alert(e.message); }
+  }catch(e){ (e.quieto||alert(e.message)); }
 }
 var NL=String.fromCharCode(10);
 function scNum(v){ return Number(String(v==null?'':v).trim().replace(',','.')); }
@@ -467,7 +468,7 @@ async function scSalvar(){
     await api('/api/redacao/sup/configurar',{banca_id:SUP_ID, titulo:SUP.banca.titulo, nota_max:$('sc_max').value, discrepancia:$('sc_disc').value,
       topicos:tops, motivos_zero:$('sc_motivos').value.split(NL).map(function(x){return x.trim();}).filter(Boolean)});
     alert('Configuração salva!'); await supCarregar();
-  }catch(e){ alert(e.message); }
+  }catch(e){ (e.quieto||alert(e.message)); }
 }
 function supAtivosOpts(sel, filtro){ return SUP.ativos.filter(filtro||function(){return true;}).map(function(p){ return '<option value="'+p.id+'"'+(p.id===sel?' selected':'')+'>'+esc(p.nome)+(p.id===SUP.eu?' (eu)':'')+'</option>'; }).join(''); }
 function supPreencherGestao(){
@@ -498,21 +499,21 @@ async function supDistribuir(){
     corpo.duplas=Array.prototype.map.call(document.querySelectorAll('#s_duplas .s-dupla'),function(d){ return [parseInt(d.querySelector('.s-d1').value)||0, parseInt(d.querySelector('.s-d2').value)||0]; });
   }
   if(!confirm('Distribuir as redações ainda não distribuídas entre '+corpo.professor_ids.length+' corretor(es)?')) return;
-  try{ var j=await api('/api/redacao/sup/distribuir',corpo); alert(j.novas+' correção(ões) atribuída(s).'); await supCarregar(); }catch(e){ alert(e.message); }
+  try{ var j=await api('/api/redacao/sup/distribuir',corpo); alert(j.novas+' correção(ões) atribuída(s).'); await supCarregar(); }catch(e){ (e.quieto||alert(e.message)); }
 }
 async function supDesfazer(){
   if(!confirm('Desfazer a distribuição? Todas as redações que ninguém corrigiu ainda ficam sem corretor, para você distribuir de novo.')) return;
-  try{ var j=await api('/api/redacao/sup/desfazer',{banca_id:SUP_ID}); alert(j.removidas+' correção(ões) desfeita(s).'+(j.redacoes_mantidas?(' '+j.redacoes_mantidas+' redação(ões) com nota já dada continuam como estavam.'):'')+' Agora é só distribuir de novo.'); await supCarregar(); }catch(e){ alert(e.message); }
+  try{ var j=await api('/api/redacao/sup/desfazer',{banca_id:SUP_ID}); alert(j.removidas+' correção(ões) desfeita(s).'+(j.redacoes_mantidas?(' '+j.redacoes_mantidas+' redação(ões) com nota já dada continuam como estavam.'):'')+' Agora é só distribuir de novo.'); await supCarregar(); }catch(e){ (e.quieto||alert(e.message)); }
 }
 async function supTravar(v){
   if(!confirm(v?'Travar esta correção? Os corretores não vão conseguir abrir as redações até você liberar.':'Liberar esta correção para os corretores?')) return;
-  try{ await api('/api/redacao/sup/pausar',{banca_id:SUP_ID,pausada:v}); await supCarregar(); }catch(e){ alert(e.message); }
+  try{ await api('/api/redacao/sup/pausar',{banca_id:SUP_ID,pausada:v}); await supCarregar(); }catch(e){ (e.quieto||alert(e.message)); }
 }
 async function supRemanejar(){
   var de=$('s_de').value, para=$('s_para').value, q=parseInt($('s_qtd').value)||0;
   if(!de||!para||de===para){ alert('Escolha dois corretores diferentes.'); return; }
   if(!q){ alert('Informe a quantidade.'); return; }
-  try{ var j=await api('/api/redacao/sup/remanejar',{banca_id:SUP_ID,de:de,para:para,quantidade:q}); alert(j.movidas+' redação(ões) remanejada(s).'); $('s_qtd').value=''; await supCarregar(); }catch(e){ alert(e.message); }
+  try{ var j=await api('/api/redacao/sup/remanejar',{banca_id:SUP_ID,de:de,para:para,quantidade:q}); alert(j.movidas+' redação(ões) remanejada(s).'); $('s_qtd').value=''; await supCarregar(); }catch(e){ (e.quieto||alert(e.message)); }
 }
 var SUP_TEXTOS=null;
 async function supBuscarTexto(){
@@ -529,15 +530,15 @@ async function supBuscarTexto(){
         var acao = c.status==='feita' ? '' : '<select id="st_'+c.id+'" style="min-width:160px">'+supAtivosOpts(c.professor_id,function(p){return outros.indexOf(p.id)<0;})+'</select> <button class="mini" onclick="supTrocar('+c.id+')">Trocar</button>';
         return '<tr><td>'+c.ordem+'ª</td><td>'+esc(c.prof||'(sem corretor)')+'</td><td>'+(c.status==='feita'?'feita: '+(c.zero_motivo?'ZERO':fmt(c.total)):'pendente')+'</td><td>'+acao+'</td></tr>';
       }).join('')+'</table>';
-  }catch(e){ alert(e.message); }
+  }catch(e){ (e.quieto||alert(e.message)); }
 }
 async function supTrocar(cid){
-  try{ await api('/api/redacao/sup/trocar',{banca_id:SUP_ID,correcao_id:cid,professor_id:$('st_'+cid).value}); SUP_TEXTOS=null; await supCarregar(); await supBuscarTexto(); }catch(e){ alert(e.message); }
+  try{ await api('/api/redacao/sup/trocar',{banca_id:SUP_ID,correcao_id:cid,professor_id:$('st_'+cid).value}); SUP_TEXTOS=null; await supCarregar(); await supBuscarTexto(); }catch(e){ (e.quieto||alert(e.message)); }
 }
 async function supAtribuir(cid, quem){
   var pid = quem || $('s3_'+cid).value;
   if(!pid){ alert('Escolha o professor.'); return; }
-  try{ await api('/api/redacao/sup/atribuir',{banca_id:SUP_ID, correcao_id:cid, professor_id:pid}); await supCarregar(); }catch(e){ alert(e.message); }
+  try{ await api('/api/redacao/sup/atribuir',{banca_id:SUP_ID, correcao_id:cid, professor_id:pid}); await supCarregar(); }catch(e){ (e.quieto||alert(e.message)); }
 }
 $('in_senha').addEventListener('keydown',function(e){ if(e.key==='Enter') entrar(); });
 $('ts_nova2').addEventListener('keydown',function(e){ if(e.key==='Enter') trocarSenha(); });
