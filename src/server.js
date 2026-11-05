@@ -229,6 +229,13 @@ async function inicializarBanco() {
   for (const col of ['resp_anexo_mime TEXT', 'resp_anexo_dados BYTEA', 'resp_anexo_nome TEXT']) {
     await pool.query(`ALTER TABLE recursos ADD COLUMN IF NOT EXISTS ${col}`);
   }
+  // Divulgação das respostas dos recursos, por fase: o candidato só vê a resposta a partir desta data/hora.
+  // Na criação da coluna, fases já sem recurso pendente ficam divulgadas (como já estavam); as demais ficam ocultas.
+  const temDiv = await pool.query("SELECT 1 FROM information_schema.columns WHERE table_name='recurso_fases' AND column_name='divulgacao'");
+  if (!temDiv.rows.length) {
+    await pool.query('ALTER TABLE recurso_fases ADD COLUMN IF NOT EXISTS divulgacao TEXT');
+    await pool.query("UPDATE recurso_fases f SET divulgacao=$1 WHERE NOT EXISTS (SELECT 1 FROM recursos r WHERE r.fase_id=f.id AND r.status='pendente')", [agoraBR()]);
+  }
   // Multiempresa: empresas + vínculo do concurso
   await pool.query(`CREATE TABLE IF NOT EXISTS empresas (id SERIAL PRIMARY KEY, slug TEXT UNIQUE, nome TEXT, subtitulo TEXT,
     logo_mime TEXT, logo_dados BYTEA, ativa BOOLEAN DEFAULT TRUE, criado_em TIMESTAMPTZ DEFAULT now());`);
@@ -607,7 +614,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'redacao-v10-senha', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'recursos-divulgacao-v1', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -999,9 +1006,12 @@ app.post('/api/candidato/login', async (req, res) => {
   const recursosPorCand = {};
   if (ids.length) {
     const rc = await pool.query(`SELECT r.id, r.candidato_id, r.texto, r.status, r.resposta, r.criado_em, r.anexo_nome, (r.anexo_dados IS NOT NULL) AS tem_anexo,
-      r.resp_anexo_nome, (r.resp_anexo_dados IS NOT NULL) AS tem_resp_anexo, f.nome AS fase_nome
+      r.resp_anexo_nome, (r.resp_anexo_dados IS NOT NULL) AS tem_resp_anexo, f.nome AS fase_nome, f.divulgacao
       FROM recursos r LEFT JOIN recurso_fases f ON f.id=r.fase_id WHERE r.candidato_id = ANY($1::int[]) ORDER BY r.id DESC`, [ids]);
-    rc.rows.forEach((x) => { (recursosPorCand[x.candidato_id] = recursosPorCand[x.candidato_id] || []).push(x); });
+    rc.rows.forEach((x) => {
+      // Resposta ainda não divulgada: o candidato só vê "em análise".
+      if (!respDivulgada(x.divulgacao, agora)) { x.status = 'pendente'; x.resposta = null; x.tem_resp_anexo = false; x.resp_anexo_nome = null; }
+      delete x.divulgacao; (recursosPorCand[x.candidato_id] = recursosPorCand[x.candidato_id] || []).push(x); });
   }
   // Provas online disponíveis para cada candidato: mesma regra do "Gerar acessos"
   // (prova ativa, do concurso dele e do cargo dele). Junta o status da tentativa,
@@ -1064,6 +1074,7 @@ app.post('/api/candidato/login', async (req, res) => {
   } catch (e) { /* ignora */ }
   res.json({ ok: true, nome: nomeCand || 'candidato', cpf, inscricoes });
 });
+function respDivulgada(div, agora) { return !!div && String(div) <= (agora || agoraBR()); }
 function calcFase(ab, fe, agora) {
   if (!ab || !fe) return { status: 'indefinido', pode: false };
   if (agora < ab) return { status: 'antes', pode: false };
@@ -1569,8 +1580,8 @@ app.get('/api/candidato/recurso/:id/resposta-anexo', async (req, res) => {
   if (!pool) return res.status(503).send('Indisponível.');
   const cpf = await autenticaCandidato({ cpf: req.query.cpf, senha: req.query.senha });
   if (!cpf) return res.status(401).send('Sessão inválida.');
-  const { rows } = await pool.query('SELECT r.resp_anexo_mime, r.resp_anexo_dados, r.resp_anexo_nome FROM recursos r JOIN candidatos k ON k.id=r.candidato_id WHERE r.id=$1 AND k.cpf=$2', [parseInt(req.params.id), cpf]);
-  if (!rows.length || !rows[0].resp_anexo_dados) return res.status(404).send('Sem anexo.');
+  const { rows } = await pool.query('SELECT r.resp_anexo_mime, r.resp_anexo_dados, r.resp_anexo_nome, f.divulgacao FROM recursos r JOIN candidatos k ON k.id=r.candidato_id LEFT JOIN recurso_fases f ON f.id=r.fase_id WHERE r.id=$1 AND k.cpf=$2', [parseInt(req.params.id), cpf]);
+  if (!rows.length || !rows[0].resp_anexo_dados || !respDivulgada(rows[0].divulgacao)) return res.status(404).send('Sem anexo.');
   res.setHeader('Content-Type', rows[0].resp_anexo_mime || 'application/octet-stream');
   res.setHeader('Content-Disposition', dispo('inline', rows[0].resp_anexo_nome || 'anexo'));
   res.send(rows[0].resp_anexo_dados);
@@ -1580,9 +1591,12 @@ app.get('/api/candidato/recurso/:id/resposta-anexo', async (req, res) => {
 app.get('/admin/recurso-fases.json', exigirSenha, async (req, res) => {
   if (!pool) return res.json({ fases: [] });
   const cid = parseInt(req.query.concurso) || 0;
-  const { rows } = await pool.query('SELECT id,nome,abertura,fechamento FROM recurso_fases WHERE concurso_id=$1 ORDER BY id', [cid]);
+  const { rows } = await pool.query(`SELECT f.id,f.nome,f.abertura,f.fechamento,f.divulgacao,
+      (SELECT count(*) FROM recursos r WHERE r.fase_id=f.id)::int AS total,
+      (SELECT count(*) FROM recursos r WHERE r.fase_id=f.id AND r.status='pendente')::int AS pendentes
+    FROM recurso_fases f WHERE f.concurso_id=$1 ORDER BY f.id`, [cid]);
   const agora = agoraBR();
-  res.json({ fases: rows.map((r) => ({ ...r, status: calcFase(r.abertura, r.fechamento, agora).status })) });
+  res.json({ fases: rows.map((r) => ({ ...r, status: calcFase(r.abertura, r.fechamento, agora).status, divulgada: respDivulgada(r.divulgacao, agora) })) });
 });
 app.post('/admin/recurso-fase', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
@@ -1593,9 +1607,17 @@ app.post('/admin/recurso-fase', exigirSenha, async (req, res) => {
   const fe = String(b.fechamento || '').trim().slice(0, 16) || null;
   if (!cid) return res.status(400).json({ erro: 'Selecione o concurso.' });
   if (!nome) return res.status(400).json({ erro: 'Informe o nome da fase.' });
-  if (b.id) { await pool.query('UPDATE recurso_fases SET nome=$1,abertura=$2,fechamento=$3 WHERE id=$4', [nome, ab, fe, b.id]); return res.json({ ok: true, id: b.id }); }
-  const r = await pool.query('INSERT INTO recurso_fases (concurso_id,nome,abertura,fechamento) VALUES ($1,$2,$3,$4) RETURNING id', [cid, nome, ab, fe]);
+  const dv = String(b.divulgacao || '').trim().slice(0, 16) || null;
+  if (b.id) { await pool.query('UPDATE recurso_fases SET nome=$1,abertura=$2,fechamento=$3,divulgacao=$4 WHERE id=$5', [nome, ab, fe, dv, b.id]); return res.json({ ok: true, id: b.id }); }
+  const r = await pool.query('INSERT INTO recurso_fases (concurso_id,nome,abertura,fechamento,divulgacao) VALUES ($1,$2,$3,$4,$5) RETURNING id', [cid, nome, ab, fe, dv]);
   res.json({ ok: true, id: r.rows[0].id });
+});
+// Publica agora (todas as respostas da fase de uma vez) ou volta a ocultar.
+app.post('/admin/recurso-fase/:id/divulgar', exigirSenha, async (req, res) => {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const ocultar = (req.body || {}).acao === 'ocultar';
+  await pool.query('UPDATE recurso_fases SET divulgacao=$1 WHERE id=$2', [ocultar ? null : agoraBR(), parseInt(req.params.id)]);
+  res.json({ ok: true });
 });
 app.delete('/admin/recurso-fase/:id', exigirSenha, async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });

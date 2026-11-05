@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v44-travar -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v45-recursos -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -486,6 +486,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
         <div><label>Nome da fase</label><input id="rf_nome" placeholder="Ex.: Recurso — Gabarito Preliminar"></div>
         <div><label>Abertura</label><input id="rf_abertura" type="datetime-local"></div>
         <div><label>Fechamento</label><input id="rf_fechamento" type="datetime-local"></div>
+        <div><label>Divulgar respostas em</label><input id="rf_divulgacao" type="datetime-local"><div class="hint">Até esta data o candidato vê só "Em análise". Em branco = só aparece quando você clicar em "Publicar respostas".</div></div>
       </div>
       <div style="margin-top:12px;display:flex;gap:10px"><button onclick="salvarFase()">Salvar fase</button><button class="sec" onclick="limparFase()">Limpar</button></div>
       <div id="rec_fases_lista" style="margin-top:14px"></div>
@@ -2147,26 +2148,36 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     limparFase(); $('rec_fases_lista').innerHTML=''; $('rec_lista').innerHTML='<p class="hint">Selecione um concurso.</p>';
   }
   function usarSugestao(i){ $('rf_nome').value=REC_SUGEST[i]; }
-  function limparFase(){ $('rf_id').value=''; $('rf_nome').value=''; $('rf_abertura').value=''; $('rf_fechamento').value=''; }
+  function limparFase(){ $('rf_id').value=''; $('rf_nome').value=''; $('rf_abertura').value=''; $('rf_fechamento').value=''; $('rf_divulgacao').value=''; }
   async function carregarFases(){
     if(!$('rec_concurso').value){ $('rec_fases_lista').innerHTML=''; return; }
     var d=await (await fetch('/admin/recurso-fases.json?concurso='+$('rec_concurso').value)).json();
     var rot={antes:'⏳ Não aberta',aberto:'🟢 Aberta',depois:'🔒 Encerrada',indefinido:'⚠️ Sem prazo definido'};
     $('rec_f_fase').innerHTML='<option value="">Todas as fases</option>'+d.fases.map(function(f){return '<option value="'+f.id+'">'+esc(f.nome)+'</option>';}).join('');
     $('rec_fases_lista').innerHTML = d.fases.length ? d.fases.map(function(f){
-      return '<div class="card" style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center"><div><b>'+esc(f.nome)+'</b> <span class="tag on">'+rot[f.status]+'</span><div class="hint">'+(f.abertura?fmtDTcurto(f.abertura):'—')+' até '+(f.fechamento?fmtDTcurto(f.fechamento):'—')+'</div></div><div class="row-actions"><button class="mini" onclick="editarFase('+f.id+')">Editar</button><button class="del" onclick="delFase('+f.id+')">Excluir</button></div></div></div>';
+      return '<div class="card" style="margin-bottom:8px"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center"><div><b>'+esc(f.nome)+'</b> <span class="tag on">'+rot[f.status]+'</span><div class="hint">'+(f.abertura?fmtDTcurto(f.abertura):'—')+' até '+(f.fechamento?fmtDTcurto(f.fechamento):'—')+' · '+f.total+' recurso(s), '+f.pendentes+' sem resposta</div>'
+        +'<div style="margin-top:4px">'+(f.divulgada?'<span class="tag on">👁️ Respostas visíveis aos candidatos</span>':(f.divulgacao?'<span class="tag">🙈 Respostas ocultas · divulgação programada para '+fmtDTcurto(f.divulgacao)+'</span>':'<span class="tag">🙈 Respostas ocultas aos candidatos</span>'))+'</div></div><div class="row-actions">'
+        +(f.divulgada?'<button class="sec" onclick="divulgarFase('+f.id+',\\'ocultar\\')">Ocultar respostas</button>':'<button class="mini" onclick="divulgarFase('+f.id+',\\'agora\\','+f.pendentes+')">Publicar respostas agora</button>')
+        +'<button class="mini" onclick="editarFase('+f.id+')">Editar</button><button class="del" onclick="delFase('+f.id+')">Excluir</button></div></div></div>';
     }).join('') : '<p class="hint">Nenhuma fase criada. Adicione acima (pode usar as sugestões).</p>';
     REC_FASES=d.fases;
   }
   var REC_FASES=[];
-  function editarFase(id){ var f=REC_FASES.find(function(x){return x.id===id;}); if(!f)return; $('rf_id').value=f.id; $('rf_nome').value=f.nome; $('rf_abertura').value=f.abertura||''; $('rf_fechamento').value=f.fechamento||''; window.scrollTo({top:0,behavior:'smooth'}); }
+  function editarFase(id){ var f=REC_FASES.find(function(x){return x.id===id;}); if(!f)return; $('rf_id').value=f.id; $('rf_nome').value=f.nome; $('rf_abertura').value=f.abertura||''; $('rf_fechamento').value=f.fechamento||''; $('rf_divulgacao').value=f.divulgacao||''; window.scrollTo({top:0,behavior:'smooth'}); }
   async function salvarFase(){
     if(!$('rec_concurso').value){alert('Selecione o concurso.');return;}
     if(!$('rf_nome').value.trim()){alert('Informe o nome da fase.');return;}
-    var body={id:$('rf_id').value||undefined, concurso_id:$('rec_concurso').value, nome:$('rf_nome').value, abertura:$('rf_abertura').value, fechamento:$('rf_fechamento').value};
+    var body={id:$('rf_id').value||undefined, concurso_id:$('rec_concurso').value, nome:$('rf_nome').value, abertura:$('rf_abertura').value, fechamento:$('rf_fechamento').value, divulgacao:$('rf_divulgacao').value};
     var r=await fetch('/admin/recurso-fase',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;}
     limparFase(); carregarFases();
+  }
+  async function divulgarFase(id, acao, pend){
+    var msg = acao==='ocultar' ? 'Ocultar as respostas desta fase? Os candidatos voltam a ver "Em análise".'
+      : ((pend?('Atenção: ainda há '+pend+' recurso(s) sem resposta nesta fase (aparecem como "Em análise").\\n\\n'):'')+'Publicar agora TODAS as respostas desta fase para os candidatos?');
+    if(!confirm(msg)) return;
+    var r=await fetch('/admin/recurso-fase/'+id+'/divulgar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({acao:acao})});
+    var j=await r.json(); if(!r.ok){alert(j.erro||'Erro');return;} carregarFases();
   }
   async function delFase(id){ if(!confirm('Excluir esta fase e TODOS os recursos interpostos nela?'))return; var r=await fetch('/admin/recurso-fase/'+id,{method:'DELETE'}); await r.json(); carregarFases(); carregarRecursos(); }
   function recZip(){
