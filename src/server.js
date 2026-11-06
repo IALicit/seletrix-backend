@@ -266,6 +266,8 @@ async function inicializarBanco() {
   await pool.query('ALTER TABLE professores ADD COLUMN IF NOT EXISTS supervisor BOOLEAN DEFAULT FALSE');
   await pool.query('ALTER TABLE professores ADD COLUMN IF NOT EXISTS trocar_senha BOOLEAN DEFAULT FALSE');
   await pool.query('ALTER TABLE red_bancas ADD COLUMN IF NOT EXISTS pausada BOOLEAN DEFAULT FALSE');
+  // 3ª correção fica retida até a coordenação liberar (padrão: retida).
+  await pool.query('ALTER TABLE red_bancas ADD COLUMN IF NOT EXISTS terceira_liberada BOOLEAN DEFAULT FALSE');
   await pool.query("ALTER TABLE red_bancas ADD COLUMN IF NOT EXISTS duplas TEXT DEFAULT '[]'");
   {
     const pri = await pool.query('SELECT id FROM empresas ORDER BY id LIMIT 1');
@@ -614,7 +616,7 @@ app.get('/health', (req, res) => {
   // A versão do painel vem do próprio HTML: assim dá para saber se o painel.js
   // foi mesmo deployado, e não só o server.js.
   const mv = String(PAINEL_HTML || '').match(/PAINEL_VERSAO:(\S+)/);
-  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'recursos-divulgacao-v1', painel: mv ? mv[1] : 'desconhecida' });
+  res.json({ ok: true, banco: temBanco, asaas: temAsaas, versao: 'redacao-v11-terceira', painel: mv ? mv[1] : 'desconhecida' });
 });
 
 function hostLimpo(req) {
@@ -3957,7 +3959,7 @@ function redParseBanca(r) {
   const j = (t, d) => { try { const v = JSON.parse(t || ''); return Array.isArray(v) ? v : d; } catch { return d; } };
   return { id: r.id, empresa_id: r.empresa_id, titulo: r.titulo, nota_max: Number(r.nota_max), discrepancia: Number(r.discrepancia),
     topicos: j(r.topicos, []), motivos_zero: j(r.motivos_zero, RED_MOTIVOS_PADRAO), professores: j(r.professores, []).map(Number),
-    encerrada: !!r.encerrada, pausada: !!r.pausada, duplas: j(r.duplas, []) };
+    encerrada: !!r.encerrada, pausada: !!r.pausada, terceira_liberada: !!r.terceira_liberada, duplas: j(r.duplas, []) };
 }
 async function redBanca(id) {
   const { rows } = await pool.query('SELECT * FROM red_bancas WHERE id=$1', [parseInt(id) || 0]);
@@ -4409,7 +4411,7 @@ app.post('/api/redacao/sup/resumo', async (req, res) => {
       professor_id: c3.professor_id, prof: c3.prof, status: c3.status, nota3: nota(c3), excluir: [c1 && c1.professor_id, c2 && c2.professor_id].filter(Boolean) };
   }).sort((a, b) => (a.status === b.status ? a.numero - b.numero : (a.status === 'feita' ? 1 : -1)));
   const profs = (await pool.query('SELECT id,nome FROM professores WHERE ativo=TRUE AND empresa_id IS NOT DISTINCT FROM $1 ORDER BY nome', [banca.empresa_id])).rows;
-  res.json({ ...r, banca: { id: banca.id, titulo: banca.titulo, encerrada: banca.encerrada, pausada: banca.pausada, discrepancia: banca.discrepancia, professores: banca.professores, duplas: banca.duplas,
+  res.json({ ...r, banca: { id: banca.id, titulo: banca.titulo, encerrada: banca.encerrada, pausada: banca.pausada, terceira_liberada: banca.terceira_liberada, discrepancia: banca.discrepancia, professores: banca.professores, duplas: banca.duplas,
       nota_max: banca.nota_max, topicos: banca.topicos, motivos_zero: banca.motivos_zero },
     professores: r.professores.filter((q) => q.na_banca || q.total), terceiras, ativos: profs, eu: p.id });
 });
@@ -4440,7 +4442,16 @@ async function redHPausar(req, res) {
   res.json({ ok: true, pausada });
 }
 app.post('/admin/redacao/banca/:id/pausar', exigirSenha, redHPausar);
+// Libera (ou volta a reter) as 3ªs correções de uma correção: enquanto retidas, ninguém abre nem corrige.
+async function redHTerceira(req, res) {
+  if (!pool) return res.status(503).json({ erro: 'Banco não configurado.' });
+  const lib = !!(req.body || {}).liberar;
+  await pool.query('UPDATE red_bancas SET terceira_liberada=$1 WHERE id=$2', [lib, parseInt(req.params.id) || 0]);
+  res.json({ ok: true, terceira_liberada: lib });
+}
+app.post('/admin/redacao/banca/:id/terceira', exigirSenha, redHTerceira);
 app.post('/api/redacao/sup/pausar', redSupComo(redHPausar, 'leitura'));
+app.post('/api/redacao/sup/terceira', redSupComo(redHTerceira, 'leitura'));
 app.post('/api/redacao/sup/atribuir', async (req, res) => {
   const x = await redSupBanca(req, res); if (!x) return;
   const { p, banca } = x;
@@ -4510,11 +4521,13 @@ app.post('/api/redacao/proxima', async (req, res) => {
   if (!banca) return res.status(404).json({ erro: 'Correção não encontrada.' });
   if (banca.pausada && !p.supervisor) return res.status(403).json({ erro: 'Esta correção ainda não foi liberada pela supervisão. Aguarde.' });
   const { rows } = await pool.query(`SELECT c.*, t.seq FROM red_correcoes c JOIN red_textos t ON t.id=c.texto_id
-    WHERE c.banca_id=$1 AND c.professor_id=$2 AND c.status='pendente' ORDER BY c.ordem DESC, t.seq LIMIT 1`, [banca.id, p.id]);
+    WHERE c.banca_id=$1 AND c.professor_id=$2 AND c.status='pendente' AND (c.ordem<>3 OR $3) ORDER BY c.ordem DESC, t.seq LIMIT 1`, [banca.id, p.id, banca.terceira_liberada]);
   if (!rows.length) {
-    const prog = await pool.query(`SELECT COUNT(*)::int total, COUNT(*) FILTER (WHERE status='feita')::int feitas
+    const prog = await pool.query(`SELECT COUNT(*)::int total, COUNT(*) FILTER (WHERE status='feita')::int feitas,
+      COUNT(*) FILTER (WHERE status='pendente' AND ordem=3)::int terceiras_retidas
       FROM red_correcoes WHERE banca_id=$1 AND professor_id=$2`, [banca.id, p.id]);
-    return res.json({ fim: true, progresso: prog.rows[0], banca: { id: banca.id, titulo: banca.titulo } });
+    const pr = prog.rows[0]; if (banca.terceira_liberada) pr.terceiras_retidas = 0;
+    return res.json({ fim: true, progresso: pr, banca: { id: banca.id, titulo: banca.titulo } });
   }
   res.json(await redPayload(rows[0], banca, p));
 });
@@ -4527,6 +4540,7 @@ app.post('/api/redacao/abrir', async (req, res) => {
   if (!c) return res.status(404).json({ erro: 'Redação não encontrada.' });
   const banca = await redBanca(c.banca_id);
   if (banca.pausada && !p.supervisor) return res.status(403).json({ erro: 'Esta correção ainda não foi liberada pela supervisão. Aguarde.' });
+  if (c.ordem === 3 && !banca.terceira_liberada) return res.status(403).json({ erro: 'A 3ª correção ainda não foi liberada pela coordenação. Ela fica para o final.' });
   res.json(await redPayload(c, banca, p));
 });
 app.post('/api/redacao/minhas', async (req, res) => {
@@ -4534,10 +4548,12 @@ app.post('/api/redacao/minhas', async (req, res) => {
   const p = await autenticaProfessor(req.body);
   if (!p) return res.status(401).json({ erro: 'Sessão inválida. Entre novamente.' });
   if (p.trocar_senha) return res.status(403).json({ erro: 'Crie a sua senha pessoal antes de continuar.', trocar_senha: true });
+  const bid = parseInt((req.body || {}).banca_id) || 0;
+  const bm = await redBanca(bid); const lib3 = !!(bm && bm.terceira_liberada);
   const { rows } = await pool.query(`SELECT c.id, t.seq, c.status, c.total, c.zero_motivo, c.ordem, c.corrigido_em
     FROM red_correcoes c JOIN red_textos t ON t.id=c.texto_id WHERE c.banca_id=$1 AND c.professor_id=$2 ORDER BY t.seq`,
-    [parseInt((req.body || {}).banca_id) || 0, p.id]);
-  res.json({ correcoes: rows.map((r) => ({ ...r, total: r.total == null ? null : Number(r.total), terceira: r.ordem === 3 })) });
+    [bid, p.id]);
+  res.json({ correcoes: rows.map((r) => ({ ...r, total: r.total == null ? null : Number(r.total), terceira: r.ordem === 3, retida: r.ordem === 3 && !lib3 })) });
 });
 app.post('/api/redacao/salvar', async (req, res) => {
   if (!pool) return res.status(503).json({ erro: 'Indisponível.' });
@@ -4550,6 +4566,7 @@ app.post('/api/redacao/salvar', async (req, res) => {
   const banca = await redBanca(c.banca_id);
   if (banca.encerrada) return res.status(400).json({ erro: 'Esta correção foi encerrada pela coordenação. Não é mais possível alterar notas.' });
   if (banca.pausada && !p.supervisor) return res.status(403).json({ erro: 'Esta correção ainda não foi liberada pela supervisão. Aguarde.' });
+  if (c.ordem === 3 && !banca.terceira_liberada) return res.status(403).json({ erro: 'A 3ª correção ainda não foi liberada pela coordenação. Ela fica para o final.' });
   if (!banca.topicos.length) return res.status(400).json({ erro: 'Os tópicos desta correção ainda não foram cadastrados.' });
   const v = redValidarNotas(banca, b.notas, String(b.zero_motivo || '').trim() || null);
   if (v.erro) return res.status(400).json({ erro: v.erro });

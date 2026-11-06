@@ -1,5 +1,5 @@
 // Painel administrativo do Seletrix (HTML servido em /admin)
-module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v45-recursos -->
+module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><!-- PAINEL_VERSAO:painel-v46-terceira -->
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Seletrix · Painel</title>
 <link rel="icon" href="/logo.png" type="image/png">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -626,6 +626,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
           <button class="sec" onclick="rdResumo()">Atualizar</button>
           <button class="sec" onclick="rdCsv()">Baixar resultado (planilha)</button>
           <button class="sec" id="rd_btn_trava" onclick="rdTravar()">Travar para os corretores</button>
+          <button class="sec" id="rd_btn_terc" onclick="rdTerceira()">Liberar 3ª correção</button>
           <button class="sec" id="rd_btn_enc" onclick="rdEncerrar()">Encerrar correção</button>
           <button class="del" onclick="rdExcluir()">Excluir correção</button>
         </div>
@@ -2504,6 +2505,7 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     if($('rd_mv_dest')) $('rd_mv_dest').innerHTML='<option value="">Escolha...</option>'+RD_BANCAS.filter(function(b){return b.id!==RD_BANCA.id;}).map(function(b){return '<option value="'+b.id+'">'+esc(b.titulo)+' ('+b.textos+')</option>';}).join('');
     $('rd_btn_enc').textContent = RD_BANCA.encerrada ? 'Reabrir correção' : 'Encerrar correção';
     $('rd_btn_trava').textContent = RD_BANCA.pausada ? 'Liberar para os corretores' : 'Travar para os corretores';
+    $('rd_btn_terc').textContent = RD_BANCA.terceira_liberada ? 'Segurar 3ª correção' : 'Liberar 3ª correção';
     rdResumo();
   }
   function rdNova(){
@@ -2680,6 +2682,11 @@ module.exports = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
     if(!RD_BANCA) return; var v=!RD_BANCA.pausada;
     if(!confirm(v?'Travar esta correção para os corretores?':'Liberar esta correção para os corretores?')) return;
     try{ await rdJson(await fetch('/admin/redacao/banca/'+RD_BANCA.id+'/pausar',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pausada:v})})); carregarRedacoes(RD_BANCA.id); }catch(e){ alert(e.message); }
+  }
+  async function rdTerceira(){
+    if(!RD_BANCA) return; var v=!RD_BANCA.terceira_liberada;
+    if(!confirm(v?'Liberar as 3ªs correções desta correção?':'Segurar as 3ªs correções (ficam para o final)?')) return;
+    try{ await rdJson(await fetch('/admin/redacao/banca/'+RD_BANCA.id+'/terceira',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({liberar:v})})); carregarRedacoes(RD_BANCA.id); }catch(e){ alert(e.message); }
   }
   async function rdEncerrar(){
     var enc=!RD_BANCA.encerrada;

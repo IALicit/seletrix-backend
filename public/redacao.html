@@ -103,6 +103,7 @@
     <div class="card" id="s_trava" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap"></div>
     <div class="card"><h3>Andamento</h3><div class="nums" id="s_nums"></div><div class="barra"><div id="s_barra" style="width:0"></div></div></div>
     <div class="card"><h3>3ª correção</h3>
+      <div id="s_terc_lib" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px"></div>
       <p class="leg">Redações em que as duas notas ficaram muito diferentes. Escolha quem faz a 3ª correção, ou clique em <b>Eu corrijo</b> — ela aparece na sua lista de correção.</p>
       <div id="s_terc"></div></div>
     <div class="card"><h3>Professores</h3><div id="s_profs"></div></div>
@@ -296,7 +297,7 @@ async function proxima(){
     if(j.fim){
       ATUAL=null; $('c_corpo').style.display='none'; $('c_fim').style.display='';
       $('c_titulo').textContent=j.banca.titulo; $('c_prog').textContent=j.progresso.feitas+' de '+j.progresso.total+' corrigidas';
-      $('c_fim_txt').textContent='Você corrigiu '+j.progresso.feitas+' redação(ões). Obrigado!';
+      $('c_fim_txt').textContent='Você corrigiu '+j.progresso.feitas+' redação(ões). Obrigado!'+(j.progresso.terceiras_retidas?(' Você tem '+j.progresso.terceiras_retidas+' redação(ões) de 3ª correção que ficam para o final: elas aparecem aqui quando a coordenação liberar.'):'');
       return;
     }
     carregar(j);
@@ -398,6 +399,7 @@ async function abrirMinhas(){
   try{
     var j=await api('/api/redacao/minhas',{banca_id:BANCA_ID});
     $('m_lista').innerHTML = j.correcoes.length ? j.correcoes.map(function(c){
+      if(c.retida) return '<div class="it" style="opacity:.6;cursor:default"><span>Redação nº '+c.seq+' <span class="tag t3">3ª</span></span><span class="hint">aguardando liberação</span></div>';
       var st = c.status==='feita' ? ('<b>'+(c.zero_motivo?'<span style="color:#a12626">ZERO</span>':fmt(c.total))+'</b>') : '<span class="hint">pendente</span>';
       return '<div class="it" onclick="abrir('+c.id+')"><span>Redação nº '+c.seq+(c.terceira?' <span class="tag t3">3ª</span>':'')+'</span>'+st+'</div>';
     }).join('') : '<p class="hint">Nenhuma.</p>';
@@ -414,6 +416,9 @@ async function supCarregar(){
     $('s_trava').innerHTML = j.banca.pausada
       ? '<div><b style="color:#8a5300">Correção TRAVADA para os corretores.</b><div class="hint">Eles veem a correção, mas não conseguem abrir as redações. Você pode configurar e distribuir normalmente.</div></div><button onclick="supTravar(false)">Liberar para os corretores</button>'
       : '<div><b style="color:#0f6b41">Correção LIBERADA para os corretores.</b><div class="hint">Os corretores já podem abrir e corrigir as redações distribuídas.</div></div><button class="sec" onclick="supTravar(true)">Travar correção</button>';
+    $('s_terc_lib').innerHTML = j.banca.terceira_liberada
+      ? '<div><b style="color:#0f6b41">3ª correção LIBERADA.</b><div class="hint">Quem recebeu 3ª correção já pode corrigir.</div></div><button class="sec" onclick="supTerceira(false)">Segurar 3ª correção</button>'
+      : '<div><b style="color:#8a5300">3ª correção RETIDA (fica para o final).</b><div class="hint">As redações vão se acumulando aqui; ninguém corrige até você liberar.</div></div><button onclick="supTerceira(true)">Liberar 3ª correção</button>';
     var pend3=j.terceiras.filter(function(t){return t.status!=='feita';}).length;
     $('s_nums').innerHTML=
       '<div><b>'+j.textos+'</b><span>redações</span></div>'
@@ -504,6 +509,10 @@ async function supDistribuir(){
 async function supDesfazer(){
   if(!confirm('Desfazer a distribuição? Todas as redações que ninguém corrigiu ainda ficam sem corretor, para você distribuir de novo.')) return;
   try{ var j=await api('/api/redacao/sup/desfazer',{banca_id:SUP_ID}); alert(j.removidas+' correção(ões) desfeita(s).'+(j.redacoes_mantidas?(' '+j.redacoes_mantidas+' redação(ões) com nota já dada continuam como estavam.'):'')+' Agora é só distribuir de novo.'); await supCarregar(); }catch(e){ (e.quieto||alert(e.message)); }
+}
+async function supTerceira(v){
+  if(!confirm(v?'Liberar agora as 3ªs correções desta correção? Elas passam a aparecer para quem vai corrigi-las.':'Segurar as 3ªs correções? Elas deixam de aparecer até você liberar de novo.')) return;
+  try{ await api('/api/redacao/sup/terceira',{banca_id:SUP_ID,liberar:v}); await supCarregar(); }catch(e){ (e.quieto||alert(e.message)); }
 }
 async function supTravar(v){
   if(!confirm(v?'Travar esta correção? Os corretores não vão conseguir abrir as redações até você liberar.':'Liberar esta correção para os corretores?')) return;
